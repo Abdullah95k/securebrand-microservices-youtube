@@ -84,6 +84,7 @@ type Server struct {
 	blocks        []*blockRule
 	requests      []Recorded
 	pages         map[string]string
+	redirects     map[string]string
 
 	// StickyContinuations makes the fake behave like YouTube appears to:
 	// a continuation token only works through the proxy (visitor) that
@@ -100,6 +101,7 @@ func New() *Server {
 		handlers:      map[string]Handler{},
 		feeds:         map[string][]FeedEntry{},
 		pages:         map[string]string{},
+		redirects:     map[string]string{},
 		tokenVia:      map[string]string{},
 	}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
@@ -221,7 +223,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case "page":
 		s.mu.Lock()
 		page, ok := s.pages[r.URL.Path]
+		loc, moved := s.redirects[r.URL.Path]
 		s.mu.Unlock()
+		if moved {
+			http.Redirect(w, r, loc, http.StatusFound)
+			return
+		}
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -307,6 +314,13 @@ func (s *Server) SetPage(path, html string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pages[path] = html
+}
+
+// SetRedirect answers GET path with a 302 to location.
+func (s *Server) SetRedirect(path, location string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.redirects[path] = location
 }
 
 func feedHash(entries []FeedEntry) int64 {

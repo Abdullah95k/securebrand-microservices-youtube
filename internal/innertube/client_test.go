@@ -192,6 +192,17 @@ func TestNotFound(t *testing.T) {
 	}
 }
 
+// An unexpected redirect is not followed; the error says where it pointed,
+// so a failed channel lookup can be diagnosed from the log.
+func TestUnexpectedRedirectSaysWhere(t *testing.T) {
+	r := newRig(t, 1)
+	r.yt.SetRedirect("/@moved", "https://www.youtube.com/@elsewhere?x=1")
+	_, err := r.client.Get(context.Background(), proxypool.ClassWatch, "/@moved", nil)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 302 redirect to www.youtube.com/@elsewhere") {
+		t.Fatalf("err = %v; want the redirect target in the message", err)
+	}
+}
+
 func TestFallbackVersionWhenHomepageUnreadable(t *testing.T) {
 	// Two proxies: the one blocked on the homepage rests, the other serves.
 	r := newRig(t, 2)

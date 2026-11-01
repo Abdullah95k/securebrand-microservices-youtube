@@ -1,6 +1,7 @@
 package ytparse
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -275,14 +276,20 @@ func fromLockup(r map[string]any) VideoItem {
 		Title:   jsonx.String(jsonx.First(r, "lockupMetadataViewModel"), "title", "content"),
 		Kind:    KindVideo,
 	}
-	// Metadata rows hold channel name, views and date in display text.
+	// Metadata rows hold channel name, views and date. The grid shows them
+	// in short form ("12K", "3d ago"); each part's screen-reader label spells
+	// them out ("12 thousand views", "3 days ago"), so the label is read
+	// first and the short text is the fallback.
 	for _, parts := range jsonx.FindAll(jsonx.First(r, "lockupMetadataViewModel"), "metadataParts") {
 		arr, _ := parts.([]any)
 		for _, p := range arr {
 			txt := jsonx.String(p, "text", "content")
+			label := jsonx.String(p, "accessibilityLabel")
 			switch {
-			case isViewsText(txt):
-				v.Views = ParseCount(txt)
+			case isViewsText(label) || isViewsText(txt) || countOnlyRe.MatchString(foldDigits(txt)):
+				v.Views = ParseCount(firstNonEmpty(label, txt))
+			case ParseRelativeTime(label, time.Now()).OK:
+				v.PublishedText = label
 			case ParseRelativeTime(txt, time.Now()).OK:
 				v.PublishedText = txt
 			case v.ChannelName == "" && txt != "":
@@ -308,6 +315,10 @@ func fromLockup(r map[string]any) VideoItem {
 	}
 	return v
 }
+
+// countOnlyRe matches a bare count such as "12K", "1.2M" or "345": the
+// grid's short form of a view count.
+var countOnlyRe = regexp.MustCompile(`^\s*\d[\d,]*(?:\.\d+)?\s*(?:[KMBkmb]|ألف|مليون|مليار)?\s*$`)
 
 func isViewsText(s string) bool {
 	l := strings.ToLower(s)

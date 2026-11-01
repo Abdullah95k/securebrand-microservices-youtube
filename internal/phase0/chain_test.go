@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,8 +100,10 @@ func TestResolveFallsBackToChannelPage(t *testing.T) {
 	if cost.ByEndpoint["page:channel"] != 2 {
 		t.Errorf("want the channel page fetched once per input, cost %v", cost.ByEndpoint)
 	}
-	if _, err := col.Resolve(context.Background(), "@doesnotexist", &cost); err == nil {
-		t.Error("want an error for an unknown handle")
+	// A failure says what each step got back, so the log explains it.
+	if _, err := col.Resolve(context.Background(), "@doesnotexist", &cost); err == nil ||
+		!strings.Contains(err.Error(), "resolve_url answered no endpoint") || !strings.Contains(err.Error(), "channel page: innertube: not found") {
+		t.Errorf("unknown handle: err = %v; want both steps' outcomes", err)
 	}
 	// Channel IDs and /channel/ URLs need no request at all.
 	before := cost.Requests
@@ -121,5 +124,40 @@ func TestSkeletonsAreCappedPerKind(t *testing.T) {
 	files, _ := os.ReadDir(filepath.Join(s.Dir(), "skeletons"))
 	if len(files) != maxSkeletonsPerKind+1 {
 		t.Errorf("got %d skeleton files; want %d of one kind plus 1 of another", len(files), maxSkeletonsPerKind)
+	}
+}
+
+// TestShortsWindowUsesPlayerDate: Shorts carry no date on the tab, so the
+// last Short of each page is dated through the player and the listing stops
+// at the page that crosses the window instead of reading every page.
+func TestShortsWindowUsesPlayerDate(t *testing.T) {
+	recent := time.Now().Add(-24 * time.Hour).Format(time.RFC3339)
+	old := time.Now().Add(-400 * 24 * time.Hour).Format(time.RFC3339)
+	var vs []fakeyt.FakeVideo
+	for i := 0; i < 7; i++ {
+		pd := recent
+		if i >= 3 {
+			pd = old
+		}
+		vs = append(vs, fakeyt.FakeVideo{ID: fmt.Sprintf("fakeS%02d", i), Title: "s", Views: 5, Short: true, PublishDate: pd})
+	}
+	ch := fakeyt.FakeChannel{ID: chOne, Handle: "@fakeone", Title: "c", Subscribers: "1 subscriber", Videos: vs}
+	_, col := stickyRig(t, []fakeyt.FakeChannel{ch})
+	var cost Cost
+	res, err := col.Tab(context.Background(), chOne, "TAB_shorts", time.Now().Add(-365*24*time.Hour), 10, &cost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pages of 2: [s0 s1] ends recent, [s2 s3] ends old, so stop there.
+	if res.Pages != 2 || len(res.Items) != 4 || res.DateProbes != 2 || cost.ByEndpoint["player:date"] != 2 {
+		t.Fatalf("pages %d items %d probes %d (cost %v); want 2 pages, 4 items, 2 probes", res.Pages, len(res.Items), res.DateProbes, cost.ByEndpoint)
+	}
+	// Regular videos are dated by the grid itself: no player requests.
+	ch.Videos = manyVideos(5)
+	_, col = stickyRig(t, []fakeyt.FakeChannel{ch})
+	cost = Cost{}
+	res, err = col.Tab(context.Background(), chOne, "TAB_videos", time.Now().Add(-365*24*time.Hour), 10, &cost)
+	if err != nil || len(res.Items) != 5 || res.DateProbes != 0 || res.Undated != 0 {
+		t.Fatalf("videos: %d items, %d probes, %d undated, err %v; want 5, 0, 0", len(res.Items), res.DateProbes, res.Undated, err)
 	}
 }

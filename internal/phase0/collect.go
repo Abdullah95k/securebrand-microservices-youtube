@@ -427,8 +427,11 @@ type SweepResult struct {
 // comments in total. channelID (the video's channel) identifies replies
 // from the creator even when YouTube's creator flag is missing. prefer is
 // the proxy that read the watch page: the whole sweep stays on it.
+//
+// limit caps the comments read (top-level plus replies); 0 reads them all.
 func (c *Collector) Sweep(ctx context.Context, videoID, channelID, commentsToken, prefer string, limit int, cost *Cost) (SweepResult, error) {
 	res := SweepResult{PrecisionBuckets: map[string]int{}, channelID: channelID}
+	room := func() bool { return limit <= 0 || res.TopLevel+res.Replies < limit }
 	if commentsToken == "" {
 		res.NoCommentsToken = true
 		return res, nil
@@ -453,7 +456,7 @@ func (c *Collector) Sweep(ctx context.Context, videoID, channelID, commentsToken
 	for k, v := range first.ReplyTokens {
 		replyTokens[k] = v
 	}
-	for token != "" && res.TopLevel+res.Replies < limit {
+	for token != "" && room() {
 		r, err := c.callVia(ctx, cost, innertube.Next, "next:comments", map[string]any{"continuation": token}, prefer)
 		if err != nil {
 			return res, err
@@ -474,7 +477,7 @@ func (c *Collector) Sweep(ctx context.Context, videoID, channelID, commentsToken
 		token = p.NextToken
 	}
 	for _, tok := range replyTokens {
-		for tok != "" && res.TopLevel+res.Replies < limit {
+		for tok != "" && room() {
 			r, err := c.callVia(ctx, cost, innertube.Next, "next:replies", map[string]any{"continuation": tok}, prefer)
 			if err != nil {
 				return res, err
@@ -485,7 +488,7 @@ func (c *Collector) Sweep(ctx context.Context, videoID, channelID, commentsToken
 			tok = p.NextToken
 		}
 	}
-	res.Capped = res.TopLevel+res.Replies >= limit
+	res.Capped = limit > 0 && res.TopLevel+res.Replies >= limit
 	return res, nil
 }
 

@@ -16,7 +16,7 @@ type CrawlOptions struct {
 	Window          time.Duration // backfill window (D12: 365 days)
 	MaxTabPages     int           // safety limit per tab
 	VideosPerChan   int           // videos sampled for the deep check
-	CommentLimit    int           // comments read per video at most
+	CommentLimit    int           // comments read per video at most; 0 = all
 	Workers         int           // channels processed in parallel
 	WithPlayer      bool          // also call the player endpoint
 	IncludeComments bool
@@ -26,7 +26,7 @@ type CrawlOptions struct {
 // DefaultCrawlOptions returns the Phase 0 defaults.
 func DefaultCrawlOptions() CrawlOptions {
 	return CrawlOptions{
-		Window: 365 * 24 * time.Hour, MaxTabPages: 80, VideosPerChan: 8, CommentLimit: 2000,
+		Window: 365 * 24 * time.Hour, MaxTabPages: 80, VideosPerChan: 8, CommentLimit: 0,
 		Workers: 4, WithPlayer: true, IncludeComments: true,
 	}
 }

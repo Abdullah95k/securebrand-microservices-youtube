@@ -103,7 +103,7 @@ docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/
 docker run -d --name ytprobe-detect --restart unless-stopped -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe detect
 ```
 
-8. Start the crawl in the background. It reads each channel's last 365 days of uploads and checks 8 videos per channel in depth, including their comments (up to 2,000 per video). Expect a few hours for 20 channels:
+8. Start the crawl in the background. It reads each channel's last 365 days of uploads and checks 8 videos per channel in depth, including all their comments and replies. Expect a few hours for 20 channels, longer when a video has tens of thousands of comments:
 
 ```bash
 docker run -d --name ytprobe-crawl -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe crawl
@@ -228,10 +228,10 @@ docker rm ytprobe-crawl
 rm -rf /var/lib/securebrand-youtube/phase0/crawl_channels.jsonl /var/lib/securebrand-youtube/phase0/crawl_videos.jsonl /var/lib/securebrand-youtube/phase0/snapshots /var/lib/securebrand-youtube/phase0/skeletons
 ```
 
-4. Run a quick test on the first 5 channels. It finishes on its own in a few minutes:
+4. Run a quick test on the first 5 channels. It finishes on its own; expect up to an hour, depending on how much those channels upload and how many comments their videos have:
 
 ```bash
-docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe crawl -limit 5 -interval 4s -videos 4 -comments 1000
+docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe crawl -limit 5 -interval 4s -videos 4
 ```
 
 5. Check the report before starting the full crawl again:
@@ -272,11 +272,11 @@ Add these after the command name, for example `ytprobe crawl -videos 12`:
 |---|---|---|---|
 | any | `-interval` | `3s` | Minimum gap between requests on one proxy IP |
 | `crawl` | `-videos` | `8` | Videos per channel checked in depth |
-| `crawl` | `-comments` | `2000` | Maximum comments read per video |
+| `crawl` | `-comments` | `0` (all) | Maximum comments read per video; 0 reads every comment and reply |
 | `crawl` | `-workers` | `4` | Channels processed at the same time |
 | `crawl` | `-limit` | `0` (all) | Crawl only the first N channels of the list; use it for a quick test |
 | `crawl` | `-window-days` | `365` | Backfill window |
 | `crawl` | `-no-player` | off | Skip the player endpoint (tags, category) |
 | `detect` | `-rss-every` | `15m` | Feed check interval per channel |
-| `resweep` | `-comments` | `2000` | Use the same value as the crawl |
+| `resweep` | `-comments` | `0` (all) | Use the same value as the crawl |
 | `accuracy` | `-max` | `200` | Videos to compare |

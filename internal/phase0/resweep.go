@@ -46,7 +46,7 @@ func Resweep(ctx context.Context, col *Collector, limit int, log *slog.Logger) e
 			continue
 		}
 		rec := ResweepRecord{At: col.Now(), VideoHash: shortHash(snap.VideoID), DaysSince: col.Now().Sub(snap.Taken).Hours() / 24, Before: len(snap.Comments)}
-		rec.CappedBefore = len(snap.Comments) >= limit
+		rec.CappedBefore = limit > 0 && len(snap.Comments) >= limit
 
 		known := map[string]SnapComment{}
 		for _, c := range snap.Comments {

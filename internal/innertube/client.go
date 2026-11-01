@@ -136,8 +136,8 @@ func (c *Client) Call(ctx context.Context, ep Endpoint, payload map[string]any) 
 
 // CallPrefer is Call sent through the preferred proxy when it is healthy.
 // Pass the previous response's Proxy to keep a chain of continuation
-// requests on one IP and one anonymous visitor ID; YouTube can refuse a
-// continuation token that arrives from a different visitor.
+// requests on one IP and one anonymous visitor ID, as a browser does while
+// scrolling.
 func (c *Client) CallPrefer(ctx context.Context, ep Endpoint, payload map[string]any, prefer string) (*Response, error) {
 	version := c.clientVersion(ctx)
 	body := map[string]any{}

@@ -366,3 +366,43 @@ func TestParsePosts(t *testing.T) {
 		t.Errorf("next = %q", next)
 	}
 }
+
+// aboutHeader is a channel header whose description opens the About panel
+// with a "load more" item of its own, as every tab's first page carries.
+func aboutHeader() M {
+	return M{"pageHeaderRenderer": M{"content": M{"pageHeaderViewModel": M{
+		"description": M{"descriptionPreviewViewModel": M{"rendererContext": M{"commandContext": M{"onTap": M{"innertubeCommand": M{"showEngagementPanelEndpoint": M{
+			"engagementPanel": M{"engagementPanelSectionListRenderer": M{"content": M{"sectionListRenderer": M{"contents": A{
+				M{"itemSectionRenderer": M{"contents": A{token("ABOUT_PANEL")}}},
+			}}}}},
+		}}}}}}},
+	}}}}
+}
+
+func gridItem(id string) M {
+	return M{"richItemRenderer": M{"content": M{"lockupViewModel": M{"contentId": id, "contentType": "LOCKUP_CONTENT_TYPE_VIDEO"}}}}
+}
+
+func TestListTokenIgnoresTheAboutPanel(t *testing.T) {
+	grid := func(items ...any) M {
+		return M{"twoColumnBrowseResultsRenderer": M{"tabs": A{M{"tabRenderer": M{"selected": true,
+			"content": M{"richGridRenderer": M{"contents": A(items)}}}}}}}
+	}
+	cases := []struct {
+		name string
+		resp M
+		want string
+	}{
+		{"first page with more to come", M{"header": aboutHeader(), "contents": grid(gridItem("fakevid0001"), gridItem("fakevid0002"), token("GRID_NEXT"))}, "GRID_NEXT"},
+		{"first page that is also the last", M{"header": aboutHeader(), "contents": grid(gridItem("fakevid0001"))}, ""},
+		{"continuation page", M{"onResponseReceivedActions": A{M{"appendContinuationItemsAction": M{"continuationItems": A{gridItem("fakevid0003"), token("PAGE_3")}}}}}, "PAGE_3"},
+		{"a token alone in its own list is not the list's", M{"contents": grid(gridItem("fakevid0001"),
+			M{"richItemRenderer": M{"content": M{"commentRepliesRenderer": M{"contents": A{token("REPLIES")}}}}})}, ""},
+	}
+	for _, c := range cases {
+		l := ParseList(doc(t, c.resp), now)
+		if l.NextToken != c.want {
+			t.Errorf("%s: next token = %q, want %q", c.name, l.NextToken, c.want)
+		}
+	}
+}

@@ -66,17 +66,28 @@ func ChannelBrowse(c FakeChannel) M {
 		"metadata": M{"channelMetadataRenderer": M{"externalId": c.ID, "title": c.Title, "description": "Generated channel",
 			"vanityChannelUrl": "http://www.youtube.com/" + c.Handle,
 			"avatar":           M{"thumbnails": A{M{"url": "https://img.example/" + c.ID, "width": 900}}}}},
-		"header": M{"pageHeaderRenderer": M{"content": M{"pageHeaderViewModel": M{
-			"metadata": M{"contentMetadataViewModel": M{"metadataRows": A{
-				M{"metadataParts": A{M{"text": M{"content": c.Handle}}}},
-				M{"metadataParts": A{M{"text": M{"content": c.Subscribers}}, M{"text": M{"content": fmt.Sprintf("%d videos", len(c.Videos))}}}},
-			}}},
-			"description": M{"descriptionPreviewViewModel": M{"onTap": M{"innertubeCommand": M{"showEngagementPanelEndpoint": M{
-				"engagementPanel": M{"content": A{Token("ABOUT_" + c.ID)}},
-			}}}}},
-		}}}},
+		"header":   channelHeader(c),
 		"contents": M{"twoColumnBrowseResultsRenderer": M{"tabs": A{tab("Videos", "videos"), tab("Shorts", "shorts"), tab("Posts", "posts")}}},
 	}
+}
+
+// channelHeader is the page header YouTube sends with the channel page and
+// with the first page of every tab. Its description opens the About panel
+// through a "load more" item of its own, nested in lists as on the live site,
+// so a parser that takes any "load more" item as the next page of a tab
+// follows it by mistake.
+func channelHeader(c FakeChannel) M {
+	return M{"pageHeaderRenderer": M{"content": M{"pageHeaderViewModel": M{
+		"metadata": M{"contentMetadataViewModel": M{"metadataRows": A{
+			M{"metadataParts": A{M{"text": M{"content": c.Handle}}}},
+			M{"metadataParts": A{M{"text": M{"content": c.Subscribers}}, M{"text": M{"content": fmt.Sprintf("%d videos", len(c.Videos))}}}},
+		}}},
+		"description": M{"descriptionPreviewViewModel": M{"rendererContext": M{"commandContext": M{"onTap": M{"innertubeCommand": M{"showEngagementPanelEndpoint": M{
+			"engagementPanel": M{"engagementPanelSectionListRenderer": M{"content": M{"sectionListRenderer": M{"contents": A{
+				M{"itemSectionRenderer": M{"contents": A{Token("ABOUT_" + c.ID)}}},
+			}}}}},
+		}}}}}}},
+	}}}}
 }
 
 // About is the About-panel continuation response.
@@ -131,7 +142,10 @@ func Tab(c FakeChannel, shorts bool, page, pageSize int) M {
 		items = append(items, Token(fmt.Sprintf("TABPAGE_%s_%s_%d", c.ID, key, page+1)))
 	}
 	if page == 0 {
-		return M{"contents": M{"twoColumnBrowseResultsRenderer": M{"tabs": A{M{"tabRenderer": M{"selected": true, "content": M{"richGridRenderer": M{"contents": items}}}}}}}}
+		return M{
+			"header":   channelHeader(c),
+			"contents": M{"twoColumnBrowseResultsRenderer": M{"tabs": A{M{"tabRenderer": M{"selected": true, "content": M{"richGridRenderer": M{"contents": items}}}}}}},
+		}
 	}
 	return M{"onResponseReceivedActions": A{M{"appendContinuationItemsAction": M{"continuationItems": items}}}}
 }
@@ -313,7 +327,7 @@ func (s *Server) ServeChannels(chans []FakeChannel, tabPageSize, commentPageSize
 		case "TAB_shorts":
 			return 200, Tab(c, true, 0, tabPageSize)
 		case "TAB_posts":
-			return 200, M{"contents": A{}}
+			return 200, M{"header": channelHeader(c), "contents": A{}}
 		}
 		return 200, ChannelBrowse(c)
 	})

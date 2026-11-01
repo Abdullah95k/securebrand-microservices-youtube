@@ -1,0 +1,131 @@
+# Seed keywords: Iraq, the Kurdistan Region, the governorates and their main cities.
+#
+# Public place and national names only (plan §5.1, §8.10). Brand, person and topic
+# keywords are entered in the database and never committed to this public repo.
+#
+# Columns, separated by one tab:
+#   id         unique keyword ID
+#   group      the governorate a place belongs to; "iraq" for country-level names,
+#              "kurdistan-region" for the region
+#   kind       what the keyword names; every row here is "place" (plan §5.1 kinds:
+#              place, person, brand, topic, hashtag)
+#   lang       languages the variants cover, comma-separated:
+#                ar  = Arabic
+#                ckb = Kurdish Sorani (Arabic script)
+#                kmr = Kurdish Kurmanji (Latin script)
+#                en  = English and other common Latin transliterations
+#                tr  = Turkish and Iraqi Turkmen
+#   ambiguous  1 if the spellings are also common words, people's names, brands or
+#              other places, so a match needs another Iraq signal; otherwise 0
+#   variants   spellings separated by "|". They are normalized before matching
+#              (see Normalize), so accents, hamza forms and ة/ه differences do not
+#              need separate entries. Matching is whole-word.
+#
+# Conventions:
+#   - One row per place. A spelling shared by several languages is listed once.
+#   - "<id>-ambiguous" holds the spellings of an otherwise clear name that collide with
+#     a common word or another name in one language. Examples: Turkish "Bağdat" is also
+#     a well-known Istanbul avenue; Arabic "الرمادي" also means "the grey"; Arabic
+#     "بعقوبة" also reads as "with a penalty".
+#   - "<id>-governorate" holds "X Governorate" phrases for governorates whose bare name
+#     is ambiguous. The phrase itself is clear.
+#   - Kurmanji oblique forms ending in -ê (for example "Hewlêrê", "in Erbil") are listed
+#     because they are common in running text and matching is whole-word.
+#   - Halabja is included as a governorate; the Kurdistan Region lists it as one.
+#
+# id	group	kind	lang	ambiguous	variants
+
+# Country and nationality
+iraq	iraq	place	ar,ckb,kmr,en,tr	0	العراق|عراق|عێراق|Iraq|Îraq|Iraqê|Irak|Iraque
+iraqi	iraq	place	ar,ckb,kmr,en,tr	0	عراقي|العراقي|عراقية|العراقية|عراقيون|العراقيون|عراقيين|العراقيين|عراقيات|العراقيات|عێراقی|عێراقییەکان|عێراقیەکان|Iraqî|Iraqi|Iraqis|Iraklı|Iraklılar
+
+# Kurdistan Region
+kurdistan-region	kurdistan-region	place	ar,ckb,kmr,en,tr	0	إقليم كردستان|إقليم كوردستان|إقليم كردستان العراق|إقليم كوردستان العراق|كردستان العراق|كوردستان العراق|هەرێمی کوردستان|هەرێمی کوردستانی عێراق|کوردستانی عێراق|باشووری کوردستان|Herêma Kurdistanê|Başûrê Kurdistanê|Kurdistana Başûr|Kurdistan Region|Iraqi Kurdistan|Kürdistan Bölgesi|Irak Kürdistanı
+
+# Baghdad
+baghdad	baghdad	place	ar,ckb,kmr,en	0	بغداد|بەغدا|بەغداد|Bexda|Bexdayê|Baghdad|Bagdad
+baghdad-ambiguous	baghdad	place	tr	1	Bağdat
+
+# Basra
+basra	basra	place	ar,ckb,kmr,en,tr	0	البصرة|بەسرە|Besra|Besrayê|Basra|Basrah
+
+# Nineveh and Mosul
+nineveh	nineveh	place	ar,ckb,kmr,en,tr	0	نينوى|نەینەوا|Neynewa|Nineveh|Ninawa|Ninewa|Ninova
+mosul	nineveh	place	ar,ckb,kmr,en,tr	0	الموصل|موسڵ|Mûsil|Mûsilê|Mosul|Mossul|Mawsil|Musul
+
+# Erbil
+erbil	erbil	place	ar,ckb,kmr,en,tr	0	أربيل|هولير|هەولێر|Hewlêr|Hewlêrê|Erbil|Arbil|Irbil|Hawler
+
+# Sulaymaniyah. Arabic "السليمانية" is also a district of Riyadh and the Süleymaniye
+# Mosque; after normalization Sorani "سلێمانی" and Kurmanji "Silêmanî" equal the
+# surname Soleimani; Turkish "Süleymaniye" is usually the Istanbul mosque.
+sulaymaniyah	sulaymaniyah	place	ar,ckb,en	0	محافظة السليمانية|پارێزگای سلێمانی|شاری سلێمانی|Sulaymaniyah|Sulaymaniya|Sulaymaniyya|Sulaimaniyah|Sulaimaniya|Suleimaniyah|Suleimaniya|Slemani|Sulaimani
+sulaymaniyah-ambiguous	sulaymaniyah	place	ar,ckb,kmr,tr	1	السليمانية|سلێمانی|Silêmanî|Silêmaniyê|Süleymaniye
+
+# Duhok
+duhok	duhok	place	ar,ckb,kmr,en,tr	0	دهوك|دهۆک|Duhok|Duhokê|Dihok|Dihokê|Dohuk|Dahuk
+
+# Halabja
+halabja	halabja	place	ar,ckb,kmr,en,tr	0	حلبجة|هەڵەبجە|Helebce|Helebceyê|Halabja|Halabjah|Halepçe
+
+# Kirkuk
+kirkuk	kirkuk	place	ar,ckb,kmr,en,tr	0	كركوك|کەرکووک|کەرکوک|Kerkûk|Kerkûkê|Kirkuk|Kerkük
+
+# Diyala and Baqubah
+diyala	diyala	place	ar,ckb,kmr,en,tr	0	ديالى|دیالە|Diyala|Diyalah
+baqubah	diyala	place	ckb,kmr,en,tr	0	بەعقووبە|بەعقوبە|Baqûbe|Baqubah|Baquba|Ba'qubah|Bakuba
+baqubah-ambiguous	diyala	place	ar	1	بعقوبة
+
+# Anbar, Ramadi and Fallujah
+anbar	anbar	place	ar,ckb,kmr,en,tr	0	الأنبار|ئەنبار|Enbar|Anbar
+ramadi	anbar	place	ckb,kmr,en,tr	0	ڕومادی|ڕەمادی|Remadî|Ramadi
+ramadi-ambiguous	anbar	place	ar	1	الرمادي
+fallujah	anbar	place	ar,ckb,kmr,en,tr	0	الفلوجة|فەللووجە|فەلووجە|Felûce|Fallujah|Falluja|Fallouja|Felluce
+
+# Babil and Hillah. "Babil"/"Babylon" is also the ancient city, a common brand and
+# a film/TV title. Arabic "الحلة" is also "the outfit" and, in Gulf Arabic, "the pot".
+babil	babil	place	ar,ckb,kmr,en,tr	1	بابل|Babil|Babylon
+babil-governorate	babil	place	ar,ckb,en	0	محافظة بابل|پارێزگای بابل|Babil Governorate|Babylon Governorate|Babil Province|Babylon Province
+hillah	babil	place	ckb,kmr,en,tr	0	حیللە|Hille|Hillah|Hilla
+hillah-ambiguous	babil	place	ar	1	الحلة
+
+# Karbala
+karbala	karbala	place	ar,ckb,kmr,en,tr	0	كربلاء|كربلا|کەربەلا|Kerbela|Kerbelayê|Karbala|Kerbala
+
+# Najaf
+najaf	najaf	place	ar,ckb,kmr,en,tr	0	النجف|نەجەف|Necef|Necefê|Najaf
+
+# Wasit and Kut. Arabic "واسط" also means "middle"/"go-between". "Kut"/"الكوت" is
+# also a Turkic word and surname, Iraqi slang for "coat", and a Dutch swear word.
+wasit	wasit	place	ar,ckb,kmr,en,tr	1	واسط|واست|واسیت|Wasit|Wassit|Vasıt
+wasit-governorate	wasit	place	ar,ckb,en	0	محافظة واسط|پارێزگای واست|پارێزگای واسیت|Wasit Governorate|Wasit Province
+kut	wasit	place	ar,ckb,kmr,en,tr	1	الكوت|کووت|Kût|Kut
+
+# Maysan and Amarah. Arabic "العمارة" also means "the building"/"architecture";
+# "Amarah" is also a given name.
+maysan	maysan	place	ar,ckb,kmr,en,tr	0	ميسان|مەیسان|Meysan|Maysan|Misan|Maisan
+amarah	maysan	place	ar,ckb,en	1	العمارة|عەمارە|Amarah
+
+# Dhi Qar and Nasiriyah. Arabic "الناصرية" is also "Nasserism".
+dhi-qar	dhi-qar	place	ar,ckb,kmr,en,tr	0	ذي قار|ذيقار|زیقار|زی قار|Zîqar|Dhi Qar|Dhiqar|Thi Qar|Thiqar|Zikar
+nasiriyah	dhi-qar	place	ckb,kmr,en,tr	0	ناسرییە|ناسریە|Nasiriye|Nasiriyah|Nasiriya|Nassiriya|Nassiriyah
+nasiriyah-ambiguous	dhi-qar	place	ar	1	الناصرية
+
+# Muthanna and Samawah. "المثنى" is also a given name and the Arabic grammatical dual.
+muthanna	muthanna	place	ar,ckb,kmr,en,tr	1	المثنى|موسەننا|Musenna|Müsenna|Muthanna
+muthanna-governorate	muthanna	place	ar,ckb,en	0	محافظة المثنى|پارێزگای موسەننا|Muthanna Governorate|Muthanna Province
+samawah	muthanna	place	ar,ckb,kmr,en,tr	0	السماوة|سەماوە|Semawe|Samawah|Samawa|Semave
+
+# Al-Qadisiyyah and Diwaniyah. "القادسية" is also a historic battle and the name of
+# several sports clubs. Arabic "الديوانية" is also a Gulf reception hall (diwaniya).
+qadisiyyah	qadisiyyah	place	ar,ckb,kmr,en,tr	1	القادسية|قادسیە|قادسییە|Qadisiye|Qadisiyyah|Qadisiyah|Qadisiya|Qadissiya|Kadisiye
+qadisiyyah-governorate	qadisiyyah	place	ar,ckb,en	0	محافظة القادسية|پارێزگای قادسیە|Qadisiyyah Governorate|Qadisiyah Governorate|Qadisiyyah Province|Qadisiyah Province
+diwaniyah	qadisiyyah	place	ckb,kmr,en,tr	0	دیوانییە|Diwaniye|Diwaniyah|Diwaniya|Divaniye
+diwaniyah-ambiguous	qadisiyyah	place	ar,ckb	1	الديوانية|دیوانیە
+
+# Saladin, Tikrit and Samarra. "Saladin"/"صلاح الدين" is also the historical figure
+# and a very common given name.
+saladin	saladin	place	ar,ckb,kmr,en,tr	1	صلاح الدين|سەلاحەدین|Selahedîn|Saladin|Salahuddin|Salah ad-Din|Salah al-Din|Salaheddin|Selahaddin
+saladin-governorate	saladin	place	ar,ckb,en	0	محافظة صلاح الدين|پارێزگای سەلاحەدین|Saladin Governorate|Salahuddin Governorate|Salah al-Din Governorate|Saladin Province|Salahuddin Province|Salah al-Din Province
+tikrit	saladin	place	ar,ckb,kmr,en,tr	0	تكريت|تکریت|Tikrît|Tikrit
+samarra	saladin	place	ar,ckb,kmr,en,tr	0	سامراء|سامرا|سامەڕا|Samerra|Samarra|Samarrah

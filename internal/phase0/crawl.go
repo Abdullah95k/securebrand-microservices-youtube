@@ -44,6 +44,8 @@ type ChannelRecord struct {
 	LiveInWindow   int             `json:"live_in_window"`
 	TabPages       int             `json:"tab_pages"`
 	TabLimitHit    bool            `json:"tab_limit_hit"`
+	Undated        int             `json:"undated"`     // regular videos without a readable date
+	DateProbes     int             `json:"date_probes"` // player requests to date Shorts pages
 	PostsFound     int             `json:"posts_found"`
 	ListCost       Cost            `json:"list_cost"` // channel + about + tabs + posts
 	Elapsed        time.Duration   `json:"elapsed_ns"`
@@ -144,6 +146,8 @@ func crawlChannel(ctx context.Context, col *Collector, input string, o CrawlOpti
 		tr, err := col.Tab(ctx, id, t.Params, since, o.MaxTabPages, &rec.ListCost)
 		rec.TabPages += tr.Pages
 		rec.TabLimitHit = rec.TabLimitHit || tr.ReachedLimit
+		rec.Undated += tr.Undated
+		rec.DateProbes += tr.DateProbes
 		if err != nil {
 			log.Warn("tab failed", "channel", rec.ChannelHash, "tab", key, "err", err)
 		}
@@ -168,7 +172,8 @@ func crawlChannel(ctx context.Context, col *Collector, input string, o CrawlOpti
 	rec.Elapsed = col.Now().Sub(start)
 	_ = col.Store.Append("crawl_channels", rec)
 	log.Info("channel crawled", "channel", rec.ChannelHash, "videos", rec.VideosInWindow, "shorts", rec.ShortsInWindow,
-		"live", rec.LiveInWindow, "requests", rec.ListCost.Requests, "blocks", rec.ListCost.Blocks)
+		"live", rec.LiveInWindow, "pages", rec.TabPages, "capped", rec.TabLimitHit, "undated", rec.Undated,
+		"date_probes", rec.DateProbes, "requests", rec.ListCost.Requests, "blocks", rec.ListCost.Blocks)
 
 	for _, v := range sampleVideos(all, o.VideosPerChan) {
 		if ctx.Err() != nil {

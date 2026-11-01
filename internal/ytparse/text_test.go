@@ -29,6 +29,12 @@ func TestParseCount(t *testing.T) {
 		{"12 months", 12, 13, true},
 		{"1.2K views", 1200, 1300, false},
 		{"5M", 5000000, 5100000, false},
+		// Screen-reader labels spell the unit out.
+		{"12 thousand views", 12000, 13000, false},
+		{"1.2 thousand views", 1200, 1300, false},
+		{"3.4 million views", 3400000, 3500000, false},
+		{"2 billion views", 2000000000, 2100000000, false},
+		{"345 views", 345, 346, true},
 	}
 	for _, tc := range tests {
 		c := ParseCount(tc.in)
@@ -77,6 +83,14 @@ func TestParseRelativeTime(t *testing.T) {
 		{"قبل يومين", 2 * day, day, false},
 		{"بُث قبل ٥ ساعات", 5 * time.Hour, time.Hour, false},
 		{"just now", 0, time.Minute, false},
+		// The video grid's short form (live recordings, 1 November 2026).
+		{"3d ago", 3 * day, day, false},
+		{"12h ago", 12 * time.Hour, time.Hour, false},
+		{"2w ago", 14 * day, 7 * day, false},
+		{"Streamed 5mo ago", 5 * 30 * day, 30 * day, false},
+		{"1y ago", 365 * day, 365 * day, false},
+		{"45m ago", 45 * time.Minute, time.Minute, false},
+		{"Streamed 3 months ago", 3 * 30 * day, 30 * day, false},
 	}
 	for _, tc := range tests {
 		te := ParseRelativeTime(tc.in, now)

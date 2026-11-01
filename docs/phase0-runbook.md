@@ -114,6 +114,15 @@ docker run -d --name ytprobe-crawl -v /etc/securebrand-youtube:/etc/securebrand-
 docker logs -f ytprobe-crawl
 ```
 
+   Each `channel crawled` line counts the uploads found in the window. It also shows:
+
+   - `pages`: tab pages read;
+   - `capped`: whether a tab hit the 80-page limit;
+   - `undated`: videos whose date couldn't be read (should be 0);
+   - `date_probes`: extra requests used to date Shorts, which show no date on the Shorts tab.
+
+   If a channel can't be found, the `channel not resolved` line says what YouTube answered at each step. Listing that channel by its channel ID (`UC…`) avoids the lookup.
+
 10. Check whether the crawl has finished. `Exited (0)` means done:
 
 ```bash

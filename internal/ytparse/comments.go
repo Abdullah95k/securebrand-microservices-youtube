@@ -98,9 +98,8 @@ func ParseComments(data any, now time.Time) CommentsPage {
 		if st := toolbarStates[jsonx.String(vm, "toolbarStateKey")]; st != nil {
 			c.Hearted = jsonx.String(st, "heartState") == "TOOLBAR_HEART_STATE_HEARTED"
 		}
-		if !c.Hearted && jsonx.String(e, "toolbar", "heartActiveTooltip") != "" {
-			c.Hearted = true
-		}
+		// Not toolbar.heartActiveTooltip: every comment carries that tooltip
+		// text, hearted or not (live recordings, 1 November 2026).
 		add(c)
 	}
 

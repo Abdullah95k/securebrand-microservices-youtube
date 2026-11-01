@@ -36,7 +36,8 @@ var (
 		"٫", ".", "٬", ",", " ", " ", " ", " ", "‎", "", "‏", "", "؜", "",
 	)
 	// A K/M/B suffix must not be the start of a word ("1 member" is not 1M).
-	numberRe = regexp.MustCompile(`(\d[\d,]*(?:\.\d+)?)\s*((?:[KMBkmb](?:[^A-Za-z]|$))|ألف|آلاف|الف|مليون|ملايين|مليار|مليارات)?`)
+	// Screen-reader labels spell the unit out ("12 thousand views").
+	numberRe = regexp.MustCompile(`(\d[\d,]*(?:\.\d+)?)\s*((?:[KMBkmb](?:[^A-Za-z]|$))|(?i:thousand|million|billion)|ألف|آلاف|الف|مليون|ملايين|مليار|مليارات)?`)
 	noneRe   = regexp.MustCompile(`(?i)\bno\b|لا توجد|لا يوجد|بلا`)
 )
 
@@ -66,11 +67,11 @@ func ParseCount(text string) Count {
 	switch strings.ToLower(suffix) {
 	case "":
 		unit = 1
-	case "k", "ألف", "آلاف", "الف":
+	case "k", "thousand", "ألف", "آلاف", "الف":
 		unit = 1e3
-	case "m", "مليون", "ملايين":
+	case "m", "million", "مليون", "ملايين":
 		unit = 1e6
-	case "b", "مليار", "مليارات":
+	case "b", "billion", "مليار", "مليارات":
 		unit = 1e9
 	}
 	if unit == 1 {
@@ -125,6 +126,14 @@ var englishUnits = map[string]time.Duration{
 	"day": day, "week": 7 * day, "month": 30 * day, "year": 365 * day,
 }
 
+var compactUnits = map[string]time.Duration{
+	"s": time.Second, "sec": time.Second, "secs": time.Second,
+	"m": time.Minute, "min": time.Minute, "mins": time.Minute,
+	"h": time.Hour, "hr": time.Hour, "hrs": time.Hour,
+	"d": day, "w": 7 * day, "mo": 30 * day, "mos": 30 * day,
+	"y": 365 * day, "yr": 365 * day, "yrs": 365 * day,
+}
+
 // Arabic unit words, including dual forms that carry the number themselves
 // ("يومين" = two days). Keys are normalized by normArabic.
 var arabicUnits = map[string]unitInfo{
@@ -140,6 +149,8 @@ var arabicUnits = map[string]unitInfo{
 
 var (
 	englishAgoRe = regexp.MustCompile(`(?i)(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago`)
+	// The video grid's short form: "3d ago", "12h ago", "2w ago", "5mo ago".
+	compactAgoRe = regexp.MustCompile(`(?i)(\d+)\s*(mo|mos|min|mins|hr|hrs|sec|secs|yr|yrs|[smhdwy])\s+ago\b`)
 	arabicAgoRe  = regexp.MustCompile(`(?:منذ|قبل)\s+(?:(\d+)\s+)?(\S+)`)
 	editedRe     = regexp.MustCompile(`(?i)\(edited\)|\(تم التعديل\)|\(معدّل\)|\(معدل\)`)
 	justNowRe    = regexp.MustCompile(`(?i)just now|الآن|للتو`)
@@ -152,14 +163,21 @@ func normArabic(s string) string {
 	return r.Replace(s)
 }
 
-// ParseRelativeTime reads "3 days ago", "Streamed 2 weeks ago",
-// "منذ 3 أيام", "قبل 3 أيام", "منذ يومين", "منذ ساعة (تم التعديل)" relative to now.
+// ParseRelativeTime reads "3 days ago", "Streamed 2 weeks ago", "3d ago",
+// "5mo ago", "منذ 3 أيام", "قبل 3 أيام", "منذ يومين",
+// "منذ ساعة (تم التعديل)" relative to now.
 func ParseRelativeTime(text string, now time.Time) TimeEstimate {
 	te := TimeEstimate{Text: text, Edited: editedRe.MatchString(text)}
 	s := foldDigits(text)
 	if m := englishAgoRe.FindStringSubmatch(s); m != nil {
 		n, _ := strconv.Atoi(m[1])
 		d := englishUnits[strings.ToLower(m[2])]
+		te.At, te.Precision, te.OK = now.Add(-time.Duration(n)*d), d, true
+		return te
+	}
+	if m := compactAgoRe.FindStringSubmatch(s); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		d := compactUnits[strings.ToLower(m[2])]
 		te.At, te.Precision, te.OK = now.Add(-time.Duration(n)*d), d, true
 		return te
 	}

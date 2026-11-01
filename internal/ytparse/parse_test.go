@@ -271,12 +271,12 @@ func TestParseCommentsNewLayout(t *testing.T) {
 			M{"payload": M{"commentEntityPayload": M{
 				"properties": M{"commentId": "UgxFAKE1", "content": M{"content": "تعليق أول"}, "publishedTime": "منذ ساعتين (تم التعديل)", "replyLevel": 0},
 				"author":     M{"channelId": fakeAuthor, "displayName": "@viewer1", "avatarThumbnailUrl": "https://img.example/v1", "isVerified": false, "isCreator": false},
-				"toolbar":    M{"likeCountNotliked": "1.2K", "replyCount": "3"},
+				"toolbar":    M{"likeCountNotliked": "1.2K", "replyCount": "3", "heartActiveTooltip": "liked by creator"},
 			}}},
 			M{"payload": M{"commentEntityPayload": M{
 				"properties": M{"commentId": "UgxFAKE2", "content": M{"content": "second"}, "publishedTime": "5 days ago", "replyLevel": 0},
 				"author":     M{"channelId": fakeCh, "displayName": "@fakechan", "isCreator": true, "isVerified": true},
-				"toolbar":    M{"likeCountNotliked": "", "replyCount": ""},
+				"toolbar":    M{"likeCountNotliked": "", "replyCount": "", "heartActiveTooltip": "liked by creator"},
 			}}},
 			M{"payload": M{"engagementToolbarStateEntityPayload": M{"key": "ts1", "heartState": "TOOLBAR_HEART_STATE_HEARTED"}}},
 			M{"payload": M{"engagementToolbarStateEntityPayload": M{"key": "ts2", "heartState": "TOOLBAR_HEART_STATE_UNHEARTED"}}},
@@ -403,6 +403,46 @@ func TestListTokenIgnoresTheAboutPanel(t *testing.T) {
 		l := ParseList(doc(t, c.resp), now)
 		if l.NextToken != c.want {
 			t.Errorf("%s: next token = %q, want %q", c.name, l.NextToken, c.want)
+		}
+	}
+}
+
+// TestLockupReadsLabelsAndShortForms uses the grid layout of the live site
+// (1 November 2026): short text on screen, spelled-out screen-reader labels.
+func TestLockupReadsLabelsAndShortForms(t *testing.T) {
+	part := func(text, label string) M {
+		p := M{"text": M{"content": text}}
+		if label != "" {
+			p["accessibilityLabel"] = label
+		}
+		return p
+	}
+	lockup := func(id string, parts ...any) M {
+		return M{"richItemRenderer": M{"content": M{"lockupViewModel": M{"contentId": id, "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+			"metadata": M{"lockupMetadataViewModel": M{"title": M{"content": "t"}, "metadata": M{"contentMetadataViewModel": M{
+				"metadataRows": A{M{"metadataParts": A(parts)}}}}}}}}}}
+	}
+	d := doc(t, M{"contents": M{"richGridRenderer": M{"contents": A{
+		lockup("fakevid0001", part("12K", "12 thousand views"), part("3d ago", "3 days ago")),
+		lockup("fakevid0002", part("1.2K", ""), part("2w ago", "")), // no labels: short forms alone
+		lockup("fakevid0003", part("1.2K", "1.2 ألف مشاهدة"), part("قبل 5 أيام", "منذ 5 أيام")),
+		lockup("fakevid0004", part("345", "345 views"), part("Streamed 5mo ago", "Streamed 5 months ago")),
+	}}}})
+	want := map[string]struct {
+		views int64
+		ago   time.Duration
+	}{
+		"fakevid0001": {12000, 3 * day}, "fakevid0002": {1200, 14 * day},
+		"fakevid0003": {1200, 5 * day}, "fakevid0004": {345, 150 * day},
+	}
+	l := ParseList(d, now)
+	if len(l.Videos) != len(want) {
+		t.Fatalf("videos: %+v", l.Videos)
+	}
+	for _, v := range l.Videos {
+		w := want[v.VideoID]
+		if v.Views.Min != w.views || !v.Published.OK || now.Sub(v.Published.At) != w.ago || v.ChannelName != "" {
+			t.Errorf("%s: views %+v published %+v channel %q; want %d views, %v ago, no channel name", v.VideoID, v.Views, v.Published, v.ChannelName, w.views, w.ago)
 		}
 	}
 }

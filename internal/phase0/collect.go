@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -100,27 +101,62 @@ func (c *Collector) Resolve(ctx context.Context, input string, cost *Cost) (stri
 	if strings.HasPrefix(in, "@") {
 		url = "https://www.youtube.com/" + in
 	}
+	// why collects each step's outcome, so a failure says what YouTube
+	// answered (only endpoint kinds, page types and HTTP statuses).
+	var why []string
 	r, err := c.call(ctx, cost, innertube.ResolveURL, "resolve", map[string]any{"url": url})
 	if err == nil {
 		if id := channelIDIn(r.Data); id != "" {
 			return id, nil
 		}
 		c.Store.SaveSkeleton("resolve-"+shortHash(in), r.Body)
+		why = append(why, "resolve_url answered "+endpointKind(r.Data))
+	} else {
+		why = append(why, "resolve_url: "+err.Error())
 	}
 	// Fallback: the channel's own page names its channel ID.
 	if path := youtubePath(url); path != "" {
 		pr, perr := c.Client.Get(ctx, proxypool.ClassWatch, path, nil)
 		cost.add("page:channel", pr)
-		if perr == nil {
+		switch {
+		case perr != nil:
+			why = append(why, "channel page: "+perr.Error())
+		default:
 			if id := channelIDInHTML(pr.Body); id != "" {
 				return id, nil
 			}
+			why = append(why, fmt.Sprintf("channel page (HTTP %d, %d bytes) names no channel ID", pr.Status, len(pr.Body)))
 		}
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("could not resolve %q to a channel: %s: %w", input, strings.Join(why, "; "), err)
 	}
-	return "", fmt.Errorf("could not resolve %q to a channel", input)
+	return "", fmt.Errorf("could not resolve %q to a channel: %s", input, strings.Join(why, "; "))
+}
+
+// endpointKind describes a resolve_url answer without IDs, for example
+// "urlEndpoint to www.youtube.com/@name (WEB_PAGE_TYPE_UNKNOWN)".
+func endpointKind(data any) string {
+	ep := jsonx.Map(data, "endpoint")
+	kind := "no endpoint"
+	keys := make([]string, 0, len(ep))
+	for k := range ep {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if strings.HasSuffix(k, "Endpoint") {
+			kind = k
+			break
+		}
+	}
+	if u, err := url.Parse(jsonx.String(ep, "urlEndpoint", "url")); err == nil && u.Host != "" {
+		kind += " to " + u.Host + u.Path
+	}
+	if t := jsonx.String(ep, "commandMetadata", "webCommandMetadata", "webPageType"); t != "" {
+		kind += " (" + t + ")"
+	}
+	return kind
 }
 
 var channelIDRe = regexp.MustCompile(`^UC[A-Za-z0-9_-]{22}$`)
@@ -195,6 +231,8 @@ type TabResult struct {
 	Items        []ytparse.VideoItem
 	Pages        int
 	ReachedLimit bool // stopped at maxPages before the window ended
+	Undated      int  // regular videos whose date could not be read
+	DateProbes   int  // player requests made to date an undated page
 }
 
 // Tab lists a channel tab, newest first, until items are older than since
@@ -224,13 +262,28 @@ func (c *Collector) Tab(ctx context.Context, channelID, params string, since tim
 				c.warn("next page of a channel tab was empty", "page", res.Pages, "bytes", len(r.Body))
 			}
 		}
-		old := false
+		old, dated := false, 0
 		for _, v := range l.Videos {
+			if v.Published.OK {
+				dated++
+			} else if v.Kind == ytparse.KindVideo {
+				res.Undated++
+			}
 			if v.Published.OK && v.Published.At.Before(since) {
 				old = true
 				continue
 			}
 			res.Items = append(res.Items, v)
+		}
+		// Shorts carry no date on the tab. When a page with more to come
+		// holds no dated item, the player gives its last item's publish
+		// date (one request per page), so the window still ends the list.
+		// The page that crosses the window is kept whole.
+		if !old && dated == 0 && len(l.Videos) > 0 && l.NextToken != "" {
+			if at, ok := c.publishedAt(ctx, l.Videos[len(l.Videos)-1].VideoID, cost); ok {
+				res.DateProbes++
+				old = at.Before(since)
+			}
 		}
 		if old || l.NextToken == "" {
 			return res, nil
@@ -239,6 +292,26 @@ func (c *Collector) Tab(ctx context.Context, channelID, params string, since tim
 	}
 	res.ReachedLimit = true
 	return res, nil
+}
+
+// publishedAt reads a video's publish date from the player endpoint.
+func (c *Collector) publishedAt(ctx context.Context, id string, cost *Cost) (time.Time, bool) {
+	r, err := c.call(ctx, cost, innertube.Player, "player:date", map[string]any{"videoId": id})
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsePublishDate(ytparse.ParsePlayer(r.Data).PublishDate)
+}
+
+// parsePublishDate reads the player's publishDate: a date-time with offset,
+// or a plain date on older responses.
+func parsePublishDate(s string) (time.Time, bool) {
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // VideoResult is a video's watch page and player data.

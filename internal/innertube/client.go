@@ -228,6 +228,9 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 		case SignalServerError:
 			return proxypool.Transient, fmt.Errorf("innertube: HTTP %d", resp.StatusCode)
 		case SignalBadRequest:
+			if u, err := resp.Location(); err == nil {
+				return proxypool.Fatal, fmt.Errorf("innertube: HTTP %d redirect to %s%s", resp.StatusCode, u.Host, u.Path)
+			}
 			return proxypool.Fatal, fmt.Errorf("innertube: HTTP %d", resp.StatusCode)
 		case SignalNotFound:
 			out = r

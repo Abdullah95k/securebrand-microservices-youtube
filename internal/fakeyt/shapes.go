@@ -40,6 +40,7 @@ type FakeVideo struct {
 	Short       bool
 	Comments    []FakeComment
 	CommentsTxt string // displayed count, e.g. "12"
+	PublishDate string // player publishDate (RFC 3339); a fixed date when empty
 }
 
 // FakeComment is a generated comment.
@@ -130,7 +131,7 @@ func Tab(c FakeChannel, shorts bool, page, pageSize int) M {
 			"contentImage": M{"thumbnailViewModel": M{"overlays": A{M{"thumbnailOverlayBadgeViewModel": M{"thumbnailBadges": A{
 				M{"thumbnailBadgeViewModel": M{"text": fmt.Sprintf("%d:%02d", v.LengthSec/60, v.LengthSec%60)}}}}}}}},
 			"metadata": M{"lockupMetadataViewModel": M{"title": M{"content": v.Title}, "metadata": M{"contentMetadataViewModel": M{"metadataRows": A{
-				M{"metadataParts": A{M{"text": M{"content": fmt.Sprintf("%d views", v.Views)}}, M{"text": M{"content": v.Ago}}}},
+				M{"metadataParts": A{viewsPart(v.Views), M{"text": M{"content": shortAgo(v.Ago)}, "accessibilityLabel": v.Ago}}},
 			}}}}},
 		}}}})
 	}
@@ -148,6 +149,31 @@ func Tab(c FakeChannel, shorts bool, page, pageSize int) M {
 		}
 	}
 	return M{"onResponseReceivedActions": A{M{"appendContinuationItemsAction": M{"continuationItems": items}}}}
+}
+
+// viewsPart is a grid view count as the live site sends it: short text
+// ("1.2K") with a spelled-out screen-reader label ("1.2 thousand views").
+func viewsPart(n int64) M {
+	text, label := fmt.Sprint(n), fmt.Sprintf("%d views", n)
+	switch {
+	case n >= 10000:
+		text, label = fmt.Sprintf("%dK", n/1000), fmt.Sprintf("%d thousand views", n/1000)
+	case n >= 1000:
+		text, label = fmt.Sprintf("%.1fK", float64(n/100)/10), fmt.Sprintf("%.1f thousand views", float64(n/100)/10)
+	}
+	return M{"text": M{"content": text}, "accessibilityLabel": label}
+}
+
+// shortAgo turns "3 days ago" into the grid's short form "3d ago".
+func shortAgo(s string) string {
+	f := strings.Fields(s)
+	if len(f) == 3 && f[2] == "ago" {
+		ab := map[string]string{"second": "s", "minute": "m", "hour": "h", "day": "d", "week": "w", "month": "mo", "year": "y"}[strings.TrimSuffix(f[1], "s")]
+		if ab != "" {
+			return f[0] + ab + " ago"
+		}
+	}
+	return s
 }
 
 // Watch is the "next" response for a video.
@@ -169,13 +195,20 @@ func Watch(c FakeChannel, v FakeVideo) M {
 	}
 }
 
+func publishDate(v FakeVideo) string {
+	if v.PublishDate != "" {
+		return v.PublishDate
+	}
+	return "2026-10-03T08:00:12-07:00"
+}
+
 // Player is the "player" response for a video (no stream data).
 func Player(c FakeChannel, v FakeVideo) M {
 	return M{
 		"playabilityStatus": M{"status": "OK"},
 		"videoDetails": M{"videoId": v.ID, "title": v.Title, "lengthSeconds": fmt.Sprint(v.LengthSec), "keywords": A{"fake", "tag"},
 			"channelId": c.ID, "shortDescription": "Description of " + v.Title, "viewCount": fmt.Sprint(v.Views)},
-		"microformat": M{"playerMicroformatRenderer": M{"category": "News & Politics", "publishDate": "2026-10-03T08:00:12-07:00", "uploadDate": "2026-10-03T08:00:12-07:00", "isFamilySafe": true}},
+		"microformat": M{"playerMicroformatRenderer": M{"category": "News & Politics", "publishDate": publishDate(v), "uploadDate": publishDate(v), "isFamilySafe": true}},
 	}
 }
 
@@ -256,7 +289,7 @@ func commentMutations(cm FakeComment, level, replies int) A {
 		M{"payload": M{"commentEntityPayload": M{
 			"properties": M{"commentId": cm.ID, "content": M{"content": cm.Text}, "publishedTime": cm.Ago, "replyLevel": level},
 			"author":     M{"channelId": cm.Author, "displayName": "@" + strings.ToLower(cm.Author[len(cm.Author)-6:])},
-			"toolbar":    M{"likeCountNotliked": cm.Likes, "replyCount": rc},
+			"toolbar":    M{"likeCountNotliked": cm.Likes, "replyCount": rc, "heartActiveTooltip": "liked by the creator"},
 		}}},
 		M{"payload": M{"engagementToolbarStateEntityPayload": M{"key": "ts_" + cm.ID, "heartState": heart}}},
 	}

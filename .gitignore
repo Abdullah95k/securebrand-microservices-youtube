@@ -1,0 +1,27 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+/coverage.*
+
+# Secrets: never commit (plan §7.1, §8.10). They live in files on the server.
+.env
+.env.*
+*.key
+*.pem
+/secrets/
+proxies*.txt
+youtube_api_key*
+
+# Real data and captured responses: never commit (the repo is public).
+/data/
+/phase0/
+/phase0-data/
+/captures/
+*.har
+
+# Editors and OS files
+.idea/
+.vscode/
+.DS_Store

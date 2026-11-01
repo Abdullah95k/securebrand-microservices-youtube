@@ -28,6 +28,16 @@ jobs:
       - name: fixture scanner (no real data or secrets in the repo)
         run: go run ./cmd/fixturescan .
 
+  docker:
+    name: docker (ytprobe image builds)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: build image
+        run: docker build -t ytprobe:ci .
+      - name: image runs and prints its usage
+        run: docker run --rm ytprobe:ci help
+
   secrets:
     name: gitleaks (secret scan of full history)
     runs-on: ubuntu-24.04

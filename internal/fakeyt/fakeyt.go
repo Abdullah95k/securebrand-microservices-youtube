@@ -149,6 +149,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		endpoint = strings.TrimPrefix(r.URL.Path, "/youtubei/v1/")
 	case r.URL.Path == "/feeds/videos.xml":
 		endpoint = "feed"
+	case strings.HasPrefix(r.URL.Path, "/youtube/v3/"):
+		// Official Data API routes, answered by handlers named "api:<method>".
+		endpoint = "api:" + strings.TrimPrefix(r.URL.Path, "/youtube/v3/")
 	}
 	var body map[string]any
 	if r.Method == http.MethodPost {
@@ -209,6 +212,19 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case "page":
 		http.NotFound(w, r)
 	default:
+		if strings.HasPrefix(endpoint, "api:") {
+			if handler == nil {
+				writeJSON(w, r, http.StatusNotFound, map[string]any{"error": map[string]any{"code": 404}})
+				return
+			}
+			q := map[string]any{}
+			for k, v := range r.URL.Query() {
+				q[k] = strings.Join(v, ",")
+			}
+			status, resp := handler(q)
+			writeJSON(w, r, status, resp)
+			return
+		}
 		if block == BlockPlayerBotCheck {
 			writeJSON(w, r, http.StatusOK, map[string]any{
 				"responseContext": map[string]any{"visitorData": visitor},

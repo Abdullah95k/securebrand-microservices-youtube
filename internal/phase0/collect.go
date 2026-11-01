@@ -101,16 +101,47 @@ func (c *Collector) Resolve(ctx context.Context, input string, cost *Cost) (stri
 	if strings.HasPrefix(in, "@") {
 		url = "https://www.youtube.com/" + in
 	}
-	// why collects each step's outcome, so a failure says what YouTube
-	// answered (only endpoint kinds, page types and HTTP statuses).
+	// A handle can point to the channel's older custom URL: on 2 November
+	// 2026 /@TRTArabi answered resolve_url with a urlEndpoint to /trtarabi
+	// and its page with a 303 there. Such a youtube.com pointer is followed
+	// once. why collects each step's outcome, so a failure says what YouTube
+	// answered (only endpoint kinds, page types, statuses and paths).
 	var why []string
+	var firstErr error
+	for hop := 0; hop < 2; hop++ {
+		id, next, w, err := c.resolveOnce(ctx, url, in, cost)
+		if id != "" {
+			return id, nil
+		}
+		why = append(why, w...)
+		if firstErr == nil {
+			firstErr = err
+		}
+		if next == "" || sameYouTubePath(next, url) {
+			break
+		}
+		why = append(why, "following to "+youtubePath(next))
+		url = next
+	}
+	if firstErr != nil {
+		return "", fmt.Errorf("could not resolve %q to a channel: %s: %w", input, strings.Join(why, "; "), firstErr)
+	}
+	return "", fmt.Errorf("could not resolve %q to a channel: %s", input, strings.Join(why, "; "))
+}
+
+// resolveOnce tries resolve_url, then the page itself. When neither names a
+// channel, next is a youtube.com URL that either of them pointed to.
+func (c *Collector) resolveOnce(ctx context.Context, url, in string, cost *Cost) (id, next string, why []string, err error) {
 	r, err := c.call(ctx, cost, innertube.ResolveURL, "resolve", map[string]any{"url": url})
 	if err == nil {
 		if id := channelIDIn(r.Data); id != "" {
-			return id, nil
+			return id, "", nil, nil
 		}
 		c.Store.SaveSkeleton("resolve-"+shortHash(in), r.Body)
 		why = append(why, "resolve_url answered "+endpointKind(r.Data))
+		if u := jsonx.String(r.Data, "endpoint", "urlEndpoint", "url"); youtubePath(u) != "" && !sameYouTubePath(u, url) {
+			return "", u, why, nil // go straight there: this page would only redirect
+		}
 	} else {
 		why = append(why, "resolve_url: "+err.Error())
 	}
@@ -118,20 +149,27 @@ func (c *Collector) Resolve(ctx context.Context, input string, cost *Cost) (stri
 	if path := youtubePath(url); path != "" {
 		pr, perr := c.Client.Get(ctx, proxypool.ClassWatch, path, nil)
 		cost.add("page:channel", pr)
+		var re *innertube.RedirectError
 		switch {
+		case errors.As(perr, &re):
+			why = append(why, "channel page: "+perr.Error())
+			if loc := re.Location.String(); youtubePath(loc) != "" {
+				next = loc
+			}
 		case perr != nil:
 			why = append(why, "channel page: "+perr.Error())
 		default:
 			if id := channelIDInHTML(pr.Body); id != "" {
-				return id, nil
+				return id, "", nil, nil
 			}
 			why = append(why, fmt.Sprintf("channel page (HTTP %d, %d bytes) names no channel ID", pr.Status, len(pr.Body)))
 		}
 	}
-	if err != nil {
-		return "", fmt.Errorf("could not resolve %q to a channel: %s: %w", input, strings.Join(why, "; "), err)
-	}
-	return "", fmt.Errorf("could not resolve %q to a channel: %s", input, strings.Join(why, "; "))
+	return "", next, why, err
+}
+
+func sameYouTubePath(a, b string) bool {
+	return strings.EqualFold(strings.TrimSuffix(youtubePath(a), "/"), strings.TrimSuffix(youtubePath(b), "/"))
 }
 
 // endpointKind describes a resolve_url answer without IDs, for example
@@ -190,7 +228,10 @@ func channelIDInHTML(body []byte) string {
 // youtubePath returns the path (and query) of a youtube.com URL, or "".
 func youtubePath(raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil || !strings.HasSuffix(strings.ToLower(u.Hostname()), "youtube.com") || u.Path == "" {
+	if err != nil || u.Path == "" {
+		return ""
+	}
+	if h := strings.ToLower(u.Hostname()); h != "youtube.com" && !strings.HasSuffix(h, ".youtube.com") {
 		return ""
 	}
 	return u.RequestURI()

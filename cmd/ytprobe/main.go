@@ -9,7 +9,7 @@
 //	YT_CHANNELS_FILE  channels to measure; default /etc/securebrand-youtube/phase0-channels.txt
 //	YT_DATA_DIR       results, deleted after 14 days; default /var/lib/securebrand-youtube/phase0
 //
-// Commands: check, crawl, detect, resweep, accuracy, report, cleanup.
+// Commands: check, resolve, crawl, detect, resweep, accuracy, report, cleanup.
 package main
 
 import (
@@ -31,6 +31,7 @@ const usage = `ytprobe: Phase 0 measurement kit (docs/phase0-runbook.md)
 Usage: ytprobe <command> [flags]
 
   check      test every proxy once, the API key (1 quota unit) and the channel list
+  resolve    look up channels (the whole list, or the ones given) and say why any is not found
   crawl      measure channels: listing cost, fields, comments (E3, E5, E6, E13)
   detect     watch feeds and channel tabs for new uploads; runs until stopped (E8)
   resweep    re-read comments of crawled videos to find edits and deletions (E7)
@@ -59,6 +60,16 @@ func main() {
 		fs.Parse(args)
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
 		if !phase0.Check(ctx, os.Stdout, env.Proxies, env.BaseURL, env.API, env.Channels) {
+			os.Exit(1)
+		}
+	case "resolve":
+		fs.Parse(args)
+		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+		inputs := fs.Args()
+		if len(inputs) == 0 {
+			inputs = env.Channels
+		}
+		if !phase0.ResolveList(ctx, os.Stdout, env.Collector, inputs) {
 			os.Exit(1)
 		}
 	case "crawl":

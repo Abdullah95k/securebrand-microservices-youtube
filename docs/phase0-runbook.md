@@ -16,6 +16,7 @@ This is how to run the Phase 0 measurements (plan §9) on your DigitalOcean drop
 | Experiment | Command | When |
 |---|---|---|
 | Setup check | `check` | Day 0 |
+| Channel list check | `resolve` | Whenever the list changes |
 | New-upload detection (E8) | `detect` (runs in the background for 14 days) | Day 0 → Day 14 |
 | Channel cost, fields, comments, parser check (E3, E5, E6, E13) | `crawl` | Day 0 |
 | Accuracy against the official API (E4) | `accuracy` | After the crawl |
@@ -192,6 +193,18 @@ Phase 0 data deletes itself after 14 days. To delete it all immediately:
 ```bash
 sudo rm -rf /var/lib/securebrand-youtube/phase0
 ```
+
+## Checking the channel list
+
+`resolve` looks up every channel in the list and prints its channel ID. When a channel can't be found, it says what YouTube answered. It sends one or two requests per channel and changes nothing:
+
+```bash
+docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe resolve
+```
+
+To check only some channels, put them after `resolve`, for example `ytprobe resolve @TRTArabi https://www.youtube.com/@bbcnewsarabic`.
+
+Some handles redirect to the channel's older address (for example `@TRTArabi` → `youtube.com/trtarabi`); ytprobe follows that one step. If a channel still isn't found, put its channel ID (`UC…`) in the list instead.
 
 ## Re-running the crawl
 

@@ -161,3 +161,78 @@ func TestShortsWindowUsesPlayerDate(t *testing.T) {
 		t.Fatalf("videos: %d items, %d probes, %d undated, err %v; want 5, 0, 0", len(res.Items), res.DateProbes, res.Undated, err)
 	}
 }
+
+// TestResolveFollowsMovedHandle: on 2 November 2026 /@TRTArabi answered
+// resolve_url with a urlEndpoint to /trtarabi and its page with a 303 there.
+// Either pointer is followed once to the page that names the channel.
+func TestResolveFollowsMovedHandle(t *testing.T) {
+	legacyPage := `<html><head><link rel="canonical" href="https://www.youtube.com/channel/` + chOne + `"></head></html>`
+	t.Run("resolve_url points to the old custom URL", func(t *testing.T) {
+		yt, col := stickyRig(t, fakeChannels())
+		yt.Handle("navigation/resolve_url", func(body map[string]any) (int, any) {
+			u, _ := body["url"].(string)
+			if strings.HasSuffix(u, "/@moved") {
+				u = "https://www.youtube.com/legacyone"
+			}
+			return 200, map[string]any{"endpoint": map[string]any{"urlEndpoint": map[string]any{"url": u},
+				"commandMetadata": map[string]any{"webCommandMetadata": map[string]any{"webPageType": "WEB_PAGE_TYPE_UNKNOWN"}}}}
+		})
+		yt.SetRedirect("/@moved", "https://www.youtube.com/legacyone")
+		yt.SetPage("/legacyone", legacyPage)
+		var cost Cost
+		id, err := col.Resolve(context.Background(), "https://www.youtube.com/@moved", &cost)
+		if err != nil || id != chOne {
+			t.Fatalf("Resolve = %q, %v; want %s", id, err, chOne)
+		}
+		// The handle's own page would only redirect, so it is skipped.
+		if cost.ByEndpoint["resolve"] != 2 || cost.ByEndpoint["page:channel"] != 1 {
+			t.Errorf("cost %v; want 2 resolve_url calls and 1 page", cost.ByEndpoint)
+		}
+	})
+	t.Run("only the page redirects", func(t *testing.T) {
+		yt, col := stickyRig(t, fakeChannels())
+		yt.Handle("navigation/resolve_url", func(map[string]any) (int, any) {
+			return 200, map[string]any{"endpoint": map[string]any{}}
+		})
+		yt.SetRedirect("/@moved", "https://www.youtube.com/legacyone")
+		yt.SetPage("/legacyone", legacyPage)
+		var cost Cost
+		if id, err := col.Resolve(context.Background(), "@moved", &cost); err != nil || id != chOne {
+			t.Fatalf("Resolve = %q, %v; want %s", id, err, chOne)
+		}
+	})
+	t.Run("a redirect loop ends with the reasons", func(t *testing.T) {
+		yt, col := stickyRig(t, fakeChannels())
+		yt.Handle("navigation/resolve_url", func(map[string]any) (int, any) {
+			return 200, map[string]any{"endpoint": map[string]any{}}
+		})
+		yt.SetRedirect("/@a", "https://www.youtube.com/@b")
+		yt.SetRedirect("/@b", "https://www.youtube.com/@a")
+		var cost Cost
+		_, err := col.Resolve(context.Background(), "@a", &cost)
+		if err == nil || !strings.Contains(err.Error(), "following to /@b") || cost.Requests > 4 {
+			t.Fatalf("err = %v after %d requests; want a bounded failure naming the hop", err, cost.Requests)
+		}
+	})
+	t.Run("pointers off youtube.com are not followed", func(t *testing.T) {
+		yt, col := stickyRig(t, fakeChannels())
+		yt.Handle("navigation/resolve_url", func(map[string]any) (int, any) {
+			return 200, map[string]any{"endpoint": map[string]any{"urlEndpoint": map[string]any{"url": "https://evilyoutube.com/x"}}}
+		})
+		var cost Cost
+		if _, err := col.Resolve(context.Background(), "@nowhere", &cost); err == nil || strings.Contains(err.Error(), "following") {
+			t.Fatalf("err = %v; want a failure without following", err)
+		}
+	})
+}
+
+func TestResolveListSaysWhy(t *testing.T) {
+	_, col := stickyRig(t, fakeChannels())
+	var out strings.Builder
+	ok := ResolveList(context.Background(), &out, col, []string{"@fakeone", "", chTwo, "@doesnotexist"})
+	s := out.String()
+	if ok || !strings.Contains(s, "found      @fakeone  ->  "+chOne) || !strings.Contains(s, "NOT FOUND  @doesnotexist") ||
+		!strings.Contains(s, "Resolved 2 of 3 channel(s).") {
+		t.Errorf("ok=%v output:\n%s", ok, s)
+	}
+}

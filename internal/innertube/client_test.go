@@ -198,8 +198,9 @@ func TestUnexpectedRedirectSaysWhere(t *testing.T) {
 	r := newRig(t, 1)
 	r.yt.SetRedirect("/@moved", "https://www.youtube.com/@elsewhere?x=1")
 	_, err := r.client.Get(context.Background(), proxypool.ClassWatch, "/@moved", nil)
-	if err == nil || !strings.Contains(err.Error(), "HTTP 302 redirect to www.youtube.com/@elsewhere") {
-		t.Fatalf("err = %v; want the redirect target in the message", err)
+	var re *RedirectError
+	if !errors.As(err, &re) || re.Location.Path != "/@elsewhere" || !strings.Contains(err.Error(), "HTTP 302 redirect to www.youtube.com/@elsewhere") {
+		t.Fatalf("err = %v; want a RedirectError naming the target", err)
 	}
 }
 

@@ -59,9 +59,9 @@ func Resweep(ctx context.Context, col *Collector, limit int, log *slog.Logger) e
 			_ = col.Store.Append("resweep", rec)
 			continue
 		}
-		rec.StopEarlyNew, rec.StopEarlyReqs = stopEarlyScan(ctx, col, vr.Watch.CommentsToken, known, &rec.Cost)
+		rec.StopEarlyNew, rec.StopEarlyReqs = stopEarlyScan(ctx, col, vr.Watch.CommentsToken, vr.Proxy, known, &rec.Cost)
 
-		sw, err := col.Sweep(ctx, snap.VideoID, vr.Watch.ChannelID, vr.Watch.CommentsToken, limit, &rec.Cost)
+		sw, err := col.Sweep(ctx, snap.VideoID, vr.Watch.ChannelID, vr.Watch.CommentsToken, vr.Proxy, limit, &rec.Cost)
 		if err != nil {
 			rec.Error = err.Error()
 		}
@@ -103,20 +103,22 @@ func Resweep(ctx context.Context, col *Collector, limit int, log *slog.Logger) e
 	return nil
 }
 
-func stopEarlyScan(ctx context.Context, col *Collector, commentsToken string, known map[string]SnapComment, cost *Cost) (newFound, pages int) {
+func stopEarlyScan(ctx context.Context, col *Collector, commentsToken, prefer string, known map[string]SnapComment, cost *Cost) (newFound, pages int) {
 	if commentsToken == "" {
 		return 0, 0
 	}
-	r, err := col.call(ctx, cost, "next", "next:comments", map[string]any{"continuation": commentsToken})
+	r, err := col.callVia(ctx, cost, "next", "next:comments", map[string]any{"continuation": commentsToken}, prefer)
 	if err != nil {
 		return 0, 0
 	}
+	prefer = r.Proxy
 	token := ytparse.ParseComments(r.Data, col.Now()).NewestFirstToken
 	for token != "" && pages < 50 {
-		r, err := col.call(ctx, cost, "next", "next:comments", map[string]any{"continuation": token})
+		r, err := col.callVia(ctx, cost, "next", "next:comments", map[string]any{"continuation": token}, prefer)
 		if err != nil {
 			return newFound, pages
 		}
+		prefer = r.Proxy
 		pages++
 		p := ytparse.ParseComments(r.Data, col.Now())
 		fresh := 0

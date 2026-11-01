@@ -31,10 +31,17 @@ type Result struct {
 //     TransientAttempts times.
 //   - Fatal: returned immediately.
 func (p *Pool) Do(ctx context.Context, c Class, fn Func) (Result, error) {
+	return p.DoPrefer(ctx, c, "", fn)
+}
+
+// DoPrefer is Do starting on the preferred proxy when it is healthy (see
+// AcquirePrefer). After a block or proxy failure the request moves to other
+// IPs exactly as in Do.
+func (p *Pool) DoPrefer(ctx context.Context, c Class, prefer string, fn Func) (Result, error) {
 	var res Result
 	blocked := map[string]bool{}
 	for {
-		lease, err := p.Acquire(ctx, c, blocked)
+		lease, err := p.AcquirePrefer(ctx, c, blocked, prefer)
 		if err != nil {
 			if err == ErrNoProxy && len(blocked) > 0 {
 				// Every remaining IP already blocked this request.
@@ -57,6 +64,7 @@ func (p *Pool) Do(ctx context.Context, c Class, fn Func) (Result, error) {
 			}
 			return res, ferr
 		case Blocked:
+			prefer = "" // the chain's IP is resting; move on
 			blocked[px.ID()] = true
 			res.BlockedOn = append(res.BlockedOn, px.ID())
 			if len(blocked) >= p.cfg.ParkAfter {
@@ -66,6 +74,7 @@ func (p *Pool) Do(ctx context.Context, c Class, fn Func) (Result, error) {
 				return res, err
 			}
 		case ProxyFailed:
+			prefer = ""
 			res.ProxyFailures++
 			if res.ProxyFailures > p.cfg.MaxProxyFailures {
 				return res, fmt.Errorf("too many proxy failures: %w", errOrGeneric(ferr))

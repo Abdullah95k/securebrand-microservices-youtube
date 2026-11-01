@@ -140,7 +140,7 @@ var arabicUnits = map[string]unitInfo{
 
 var (
 	englishAgoRe = regexp.MustCompile(`(?i)(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago`)
-	arabicAgoRe  = regexp.MustCompile(`منذ\s+(?:(\d+)\s+)?(\S+)`)
+	arabicAgoRe  = regexp.MustCompile(`(?:منذ|قبل)\s+(?:(\d+)\s+)?(\S+)`)
 	editedRe     = regexp.MustCompile(`(?i)\(edited\)|\(تم التعديل\)|\(معدّل\)|\(معدل\)`)
 	justNowRe    = regexp.MustCompile(`(?i)just now|الآن|للتو`)
 )
@@ -153,7 +153,7 @@ func normArabic(s string) string {
 }
 
 // ParseRelativeTime reads "3 days ago", "Streamed 2 weeks ago",
-// "منذ 3 أيام", "منذ يومين", "منذ ساعة (تم التعديل)" relative to now.
+// "منذ 3 أيام", "قبل 3 أيام", "منذ يومين", "منذ ساعة (تم التعديل)" relative to now.
 func ParseRelativeTime(text string, now time.Time) TimeEstimate {
 	te := TimeEstimate{Text: text, Edited: editedRe.MatchString(text)}
 	s := foldDigits(text)

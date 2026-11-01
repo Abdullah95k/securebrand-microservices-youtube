@@ -29,7 +29,7 @@ func makeProxies(t *testing.T, hosts ...string) []*Proxy {
 // take simulates Acquire at a fixed time.
 func take(t *testing.T, p *Pool, now time.Time, c Class) *proxyState {
 	t.Helper()
-	st, wait := p.pickAt(now, c, nil)
+	st, wait := p.pickAt(now, c, nil, "")
 	if st == nil {
 		t.Fatalf("no proxy ready at %v (wait until %v)", now.Sub(t0), wait)
 	}
@@ -46,12 +46,12 @@ func TestPacingPerIP(t *testing.T) {
 	if a == b {
 		t.Fatal("an IP must handle one request at a time")
 	}
-	if st, _ := p.pickAt(t0, ClassBrowse, nil); st != nil {
+	if st, _ := p.pickAt(t0, ClassBrowse, nil, ""); st != nil {
 		t.Fatal("both IPs are busy; nothing should be ready")
 	}
 	p.releaseAt(t0, a, ClassBrowse, OK)
 	p.releaseAt(t0, b, ClassBrowse, OK)
-	st, wait := p.pickAt(t0.Add(time.Second), ClassBrowse, nil)
+	st, wait := p.pickAt(t0.Add(time.Second), ClassBrowse, nil, "")
 	if st != nil {
 		t.Fatal("IPs must wait MinInterval between requests")
 	}
@@ -82,7 +82,7 @@ func TestCooldownScheduleAndStrikeReset(t *testing.T) {
 		if got := cs.coolUntil.Sub(now); got != w {
 			t.Fatalf("block %d: cooldown %v, want %v", i+1, got, w)
 		}
-		if s, _ := p.pickAt(now.Add(w-time.Second), ClassSearch, nil); s != nil {
+		if s, _ := p.pickAt(now.Add(w-time.Second), ClassSearch, nil, ""); s != nil {
 			t.Fatalf("block %d: IP available before its cooldown ended", i+1)
 		}
 		now = cs.coolUntil
@@ -101,10 +101,10 @@ func TestHealthIsPerEndpointClass(t *testing.T) {
 	st := take(t, p, t0, ClassSearch)
 	p.releaseAt(t0, st, ClassSearch, Blocked)
 	later := t0.Add(10 * time.Second)
-	if s, _ := p.pickAt(later, ClassSearch, nil); s != nil {
+	if s, _ := p.pickAt(later, ClassSearch, nil, ""); s != nil {
 		t.Error("blocked for search; must not serve search")
 	}
-	if s, _ := p.pickAt(later, ClassBrowse, nil); s == nil {
+	if s, _ := p.pickAt(later, ClassBrowse, nil, ""); s == nil {
 		t.Error("blocked for search only; should still serve browse")
 	}
 }
@@ -124,7 +124,7 @@ func TestQuarantineAfterBlocksOnThreeDays(t *testing.T) {
 	if !p.byID[ps[0].ID()].quarantined {
 		t.Fatal("want quarantine after blocks on 3 distinct days")
 	}
-	if s, _ := p.pickAt(t0.Add(30*24*time.Hour), ClassBrowse, map[string]bool{ps[1].ID(): true}); s != nil {
+	if s, _ := p.pickAt(t0.Add(30*24*time.Hour), ClassBrowse, map[string]bool{ps[1].ID(): true}, ""); s != nil {
 		t.Error("a quarantined IP must not be used")
 	}
 	if !p.Unquarantine(ps[0].ID()) || p.byID[ps[0].ID()].quarantined {
@@ -142,13 +142,13 @@ func TestSubnetCooldown(t *testing.T) {
 	}
 	later := t0.Add(time.Minute)
 	exclude := map[string]bool{ps[4].ID(): true}
-	if s, _ := p.pickAt(later, ClassSearch, exclude); s != nil {
+	if s, _ := p.pickAt(later, ClassSearch, exclude, ""); s != nil {
 		t.Errorf("192.0.2.4 shares the blocked subnet and should be cooling, got %s", s.p.id)
 	}
-	if s, _ := p.pickAt(later, ClassSearch, nil); s == nil || s.p.id != ps[4].ID() {
+	if s, _ := p.pickAt(later, ClassSearch, nil, ""); s == nil || s.p.id != ps[4].ID() {
 		t.Error("the IP in another network should still serve search")
 	}
-	if s, _ := p.pickAt(later, ClassBrowse, exclude); s == nil {
+	if s, _ := p.pickAt(later, ClassBrowse, exclude, ""); s == nil {
 		t.Error("subnet cooldown is per class; browse should still work")
 	}
 }
@@ -203,11 +203,11 @@ func TestBrakePausesWhenMostIPsBlocked(t *testing.T) {
 	if pause < 30*time.Minute || pause > 60*time.Minute {
 		t.Fatalf("pause = %v, want 30–60 min", pause)
 	}
-	st, wait := p.pickAt(t0.Add(time.Minute), ClassRSS, nil)
+	st, wait := p.pickAt(t0.Add(time.Minute), ClassRSS, nil, "")
 	if st != nil || !wait.Equal(p.pausedUntil) {
 		t.Error("while paused nothing may be sent, on any endpoint")
 	}
-	if s, _ := p.pickAt(p.pausedUntil, ClassRSS, nil); s == nil {
+	if s, _ := p.pickAt(p.pausedUntil, ClassRSS, nil, ""); s == nil {
 		t.Error("work resumes after the pause")
 	}
 }
@@ -216,10 +216,10 @@ func TestProxyFailureRestsBriefly(t *testing.T) {
 	p := New(makeProxies(t, "192.0.2.1:80"), Config{Jitter: noJitter, MinInterval: time.Second}, 1)
 	st := take(t, p, t0, ClassBrowse)
 	p.releaseAt(t0, st, ClassBrowse, ProxyFailed)
-	if s, _ := p.pickAt(t0.Add(4*time.Minute), ClassBrowse, nil); s != nil {
+	if s, _ := p.pickAt(t0.Add(4*time.Minute), ClassBrowse, nil, ""); s != nil {
 		t.Error("a failed proxy rests for ProxyErrorCooldown")
 	}
-	if s, _ := p.pickAt(t0.Add(5*time.Minute), ClassBrowse, nil); s == nil {
+	if s, _ := p.pickAt(t0.Add(5*time.Minute), ClassBrowse, nil, ""); s == nil {
 		t.Error("the proxy should be back after its rest")
 	}
 	if st.blocks != 0 {
@@ -280,5 +280,54 @@ func TestSingleIPBlockPausesWithBrake(t *testing.T) {
 	p.releaseAt(t0, st, ClassSearch, Blocked)
 	if p.pausedUntil.IsZero() {
 		t.Error("want a pause when every IP in the pool is blocked")
+	}
+}
+
+func TestPreferKeepsAChainOnOneIP(t *testing.T) {
+	ps := makeProxies(t, "192.0.2.1:80", "198.51.100.1:80")
+	p := New(ps, Config{MinInterval: 2 * time.Second, Jitter: noJitter, DisableBrake: true}, 1)
+	b := ps[1].ID()
+
+	// Ready: the preferred IP is used even though the other is idle longer.
+	st, _ := p.pickAt(t0, ClassBrowse, nil, b)
+	if st == nil || st.p.id != b {
+		t.Fatalf("want the preferred proxy, got %v", st)
+	}
+	st.inFlight = true
+	p.releaseAt(t0, st, ClassBrowse, OK)
+
+	// Pacing: wait for the preferred IP's next slot instead of switching.
+	st, wait := p.pickAt(t0.Add(time.Second), ClassBrowse, nil, b)
+	if st != nil || !wait.Equal(t0.Add(2*time.Second)) {
+		t.Fatalf("want to wait for the preferred IP until +2s, got %v wait %v", st, wait.Sub(t0))
+	}
+
+	// Cooling down: fall back to another IP.
+	bs := p.byID[b]
+	bs.inFlight = true
+	p.releaseAt(t0.Add(2*time.Second), bs, ClassBrowse, Blocked)
+	st, _ = p.pickAt(t0.Add(3*time.Second), ClassBrowse, nil, b)
+	if st == nil || st.p.id == b {
+		t.Fatalf("a cooling preferred IP must not be used; got %v", st)
+	}
+}
+
+func TestDoPreferStartsOnPreferredAndFailsOver(t *testing.T) {
+	ps := makeProxies(t, "192.0.2.1:80", "198.51.100.1:80", "203.0.113.1:80")
+	p := New(ps, fastConfig(), 1)
+	want := ps[2].ID()
+	var used []string
+	_, err := p.DoPrefer(context.Background(), ClassNext, want, func(_ context.Context, px *Proxy) (Outcome, error) {
+		used = append(used, px.ID())
+		if len(used) == 1 {
+			return Blocked, nil
+		}
+		return OK, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used[0] != want || used[1] == want {
+		t.Errorf("want first attempt on the preferred IP and the retry elsewhere, used %v", used)
 	}
 }

@@ -29,9 +29,14 @@ const Retention = 14 * 24 * time.Hour
 
 // Store writes JSON-lines records and helper files under one folder.
 type Store struct {
-	dir string
-	mu  sync.Mutex
+	dir   string
+	mu    sync.Mutex
+	skels map[string]int // skeletons saved per kind
 }
+
+// maxSkeletonsPerKind keeps a systematic parser problem from filling the
+// disk: a few examples of each kind are enough to diagnose it.
+const maxSkeletonsPerKind = 5
 
 // OpenStore creates the folder (owner-only permissions) if needed.
 func OpenStore(dir string) (*Store, error) {
@@ -154,6 +159,14 @@ func (s *Store) SaveSkeleton(name string, body []byte) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	kind, _, _ := strings.Cut(name, "-")
+	if s.skels == nil {
+		s.skels = map[string]int{}
+	}
+	if s.skels[kind] >= maxSkeletonsPerKind {
+		return
+	}
+	s.skels[kind]++
 	dir := filepath.Join(s.dir, "skeletons")
 	if os.MkdirAll(dir, 0o700) != nil {
 		return

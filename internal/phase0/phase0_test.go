@@ -57,6 +57,7 @@ func TestEndToEnd(t *testing.T) {
 	defer yt.Close()
 	chans := fakeChannels()
 	yt.ServeChannels(chans, 2, 2)
+	yt.StickyContinuations = true // continuations only work through the proxy that received the token
 	yt.Handle("api:videos", func(q map[string]any) (int, any) {
 		var items []any
 		for _, id := range strings.Split(q["id"].(string), ",") {

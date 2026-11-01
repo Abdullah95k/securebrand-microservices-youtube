@@ -20,6 +20,7 @@ type CrawlOptions struct {
 	Workers         int           // channels processed in parallel
 	WithPlayer      bool          // also call the player endpoint
 	IncludeComments bool
+	Limit           int // crawl only the first N channels (0 = all)
 }
 
 // DefaultCrawlOptions returns the Phase 0 defaults.
@@ -66,6 +67,9 @@ type VideoRecord struct {
 
 // Crawl runs the crawl experiment over the given channel inputs.
 func Crawl(ctx context.Context, col *Collector, inputs []string, o CrawlOptions, log *slog.Logger) error {
+	if o.Limit > 0 && len(inputs) > o.Limit {
+		inputs = inputs[:o.Limit]
+	}
 	jobs := make(chan string)
 	var wg sync.WaitGroup
 	workers := o.Workers
@@ -249,7 +253,7 @@ func crawlVideo(ctx context.Context, col *Collector, chHash string, item ytparse
 		"publish_date_only": p.PublishDate != "" && !strings.Contains(p.PublishDate, "T"), "captions_listed": len(p.CaptionLangs) > 0,
 	}
 	if o.IncludeComments {
-		sw, err := col.Sweep(ctx, item.VideoID, w.ChannelID, w.CommentsToken, o.CommentLimit, &rec.CommentCost)
+		sw, err := col.Sweep(ctx, item.VideoID, w.ChannelID, w.CommentsToken, vr.Proxy, o.CommentLimit, &rec.CommentCost)
 		if err != nil {
 			rec.Error = "comments: " + err.Error()
 		}

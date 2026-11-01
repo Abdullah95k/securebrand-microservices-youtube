@@ -67,6 +67,7 @@ func main() {
 		fs.IntVar(&o.VideosPerChan, "videos", o.VideosPerChan, "videos per channel checked in depth")
 		fs.IntVar(&o.CommentLimit, "comments", o.CommentLimit, "maximum comments read per video")
 		fs.IntVar(&o.Workers, "workers", o.Workers, "channels processed in parallel")
+		fs.IntVar(&o.Limit, "limit", 0, "crawl only the first N channels of the list (0 = all); for quick tests")
 		noPlayer := fs.Bool("no-player", false, "skip the player endpoint (tags, category)")
 		fs.Parse(args)
 		o.Window = time.Duration(*days) * 24 * time.Hour
@@ -140,6 +141,7 @@ func mustSetup(cfg proxypool.Config, log *slog.Logger) *phase0.Env {
 		log.Error("setup failed", "err", err)
 		os.Exit(2)
 	}
+	env.Collector.Log = log
 	return env
 }
 

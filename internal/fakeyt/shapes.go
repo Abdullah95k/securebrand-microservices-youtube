@@ -261,6 +261,9 @@ func (s *Server) ServeChannels(chans []FakeChannel, tabPageSize, commentPageSize
 	for _, c := range chans {
 		byID[c.ID] = c
 		byHandle[c.Handle] = c
+		// The channel page names its own ID, as YouTube's does.
+		s.SetPage("/"+c.Handle, fmt.Sprintf(`<html><head><link rel="canonical" href="https://www.youtube.com/channel/%s"></head>`+
+			`<body><script>var ytInitialData = {"metadata":{"channelMetadataRenderer":{"externalId":"%s"}}};</script></body></html>`, c.ID, c.ID))
 		for _, v := range c.Videos {
 			videos[v.ID] = struct {
 				c FakeChannel

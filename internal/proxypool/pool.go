@@ -274,10 +274,19 @@ func (l *Lease) Release(o Outcome) {
 // Acquire waits until a proxy may send a request of class c, skipping the
 // proxy IDs in exclude. It returns ErrNoProxy if no proxy can ever serve it.
 func (p *Pool) Acquire(ctx context.Context, c Class, exclude map[string]bool) (*Lease, error) {
+	return p.AcquirePrefer(ctx, c, exclude, "")
+}
+
+// AcquirePrefer is Acquire with a preferred proxy. While that proxy is healthy
+// for class c it is used, waiting for its next pacing slot if needed, so a
+// chain of requests (the pages of one list, one comment section) stays on
+// one IP and one anonymous visitor ID, as a browser's would. If it is cooling
+// down, failed, excluded or quarantined, any other proxy is chosen as usual.
+func (p *Pool) AcquirePrefer(ctx context.Context, c Class, exclude map[string]bool, prefer string) (*Lease, error) {
 	for {
 		p.mu.Lock()
 		now := p.now()
-		st, wait := p.pickAt(now, c, exclude)
+		st, wait := p.pickAt(now, c, exclude, prefer)
 		if st != nil {
 			st.inFlight = true
 			st.requests++
@@ -309,7 +318,7 @@ func (p *Pool) Acquire(ctx context.Context, c Class, exclude map[string]bool) (*
 
 // pickAt chooses a ready proxy, or returns the time worth waiting until.
 // A zero time means no proxy can serve class c. Caller holds p.mu.
-func (p *Pool) pickAt(now time.Time, c Class, exclude map[string]bool) (*proxyState, time.Time) {
+func (p *Pool) pickAt(now time.Time, c Class, exclude map[string]bool, prefer string) (*proxyState, time.Time) {
 	p.recoverAt(now)
 	eligible := false
 	for _, st := range p.states {
@@ -323,6 +332,20 @@ func (p *Pool) pickAt(now time.Time, c Class, exclude map[string]bool) (*proxySt
 	}
 	if now.Before(p.pausedUntil) {
 		return nil, p.pausedUntil
+	}
+	if st := p.byID[prefer]; st != nil && !st.quarantined && !exclude[prefer] {
+		cs := st.class(c)
+		if !maxTime(cs.coolUntil, st.proxyErrUntil, p.subnetCool[st.p.subnet][c]).After(now) {
+			// Healthy: use it, or wait for it rather than switch IPs.
+			if !st.inFlight && !st.nextAllowed.After(now) {
+				return st, time.Time{}
+			}
+			wait := st.nextAllowed
+			if st.inFlight || !wait.After(now) {
+				wait = now.Add(50 * time.Millisecond)
+			}
+			return nil, wait
+		}
 	}
 	var ready []*proxyState
 	var earliest time.Time

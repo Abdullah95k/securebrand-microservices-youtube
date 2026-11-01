@@ -131,6 +131,14 @@ type Response struct {
 // fields (browseId, continuation, videoId, query…); the client context is
 // added automatically.
 func (c *Client) Call(ctx context.Context, ep Endpoint, payload map[string]any) (*Response, error) {
+	return c.CallPrefer(ctx, ep, payload, "")
+}
+
+// CallPrefer is Call sent through the preferred proxy when it is healthy.
+// Pass the previous response's Proxy to keep a chain of continuation
+// requests on one IP and one anonymous visitor ID; YouTube can refuse a
+// continuation token that arrives from a different visitor.
+func (c *Client) CallPrefer(ctx context.Context, ep Endpoint, payload map[string]any, prefer string) (*Response, error) {
 	version := c.clientVersion(ctx)
 	body := map[string]any{}
 	for k, v := range payload {
@@ -161,7 +169,7 @@ func (c *Client) Call(ctx context.Context, ep Endpoint, payload map[string]any) 
 		req.Header.Set("X-YouTube-Client-Version", version)
 		req.Header.Set("Origin", c.opt.BaseURL)
 		return req, nil
-	}, ep == Player, true)
+	}, ep == Player, true, prefer)
 }
 
 // Get fetches a page or feed under the base URL (for example
@@ -181,7 +189,7 @@ func (c *Client) Get(ctx context.Context, cl proxypool.Class, path string, extra
 			}
 		}
 		return req, nil
-	}, false, false)
+	}, false, false, "")
 }
 
 func (c *Client) browserHeaders(req *http.Request, px *proxypool.Proxy) {
@@ -193,9 +201,9 @@ func (c *Client) browserHeaders(req *http.Request, px *proxypool.Proxy) {
 	}
 }
 
-func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypool.Proxy) (*http.Request, error), isPlayer, isJSON bool) (*Response, error) {
+func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypool.Proxy) (*http.Request, error), isPlayer, isJSON bool, prefer string) (*Response, error) {
 	var out *Response
-	attempt, err := c.opt.Pool.Do(ctx, cl, func(ctx context.Context, px *proxypool.Proxy) (proxypool.Outcome, error) {
+	attempt, err := c.opt.Pool.DoPrefer(ctx, cl, prefer, func(ctx context.Context, px *proxypool.Proxy) (proxypool.Outcome, error) {
 		req, err := build(px)
 		if err != nil {
 			return proxypool.Fatal, err

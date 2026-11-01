@@ -6,10 +6,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/jsonx"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytparse"
 )
 
@@ -55,12 +60,26 @@ type Collector struct {
 	Client *innertube.Client
 	Store  *Store
 	Now    func() time.Time
+	Log    *slog.Logger // optional
 }
 
 func (c *Collector) call(ctx context.Context, cost *Cost, ep innertube.Endpoint, label string, payload map[string]any) (*innertube.Response, error) {
-	r, err := c.Client.Call(ctx, ep, payload)
+	return c.callVia(ctx, cost, ep, label, payload, "")
+}
+
+// callVia sends the request through the preferred proxy when it is healthy.
+// Chains of continuation requests pass the previous response's proxy, so
+// every page of a list is read by the same IP and visitor ID.
+func (c *Collector) callVia(ctx context.Context, cost *Cost, ep innertube.Endpoint, label string, payload map[string]any, prefer string) (*innertube.Response, error) {
+	r, err := c.Client.CallPrefer(ctx, ep, payload, prefer)
 	cost.add(label, r)
 	return r, err
+}
+
+func (c *Collector) warn(msg string, args ...any) {
+	if c.Log != nil {
+		c.Log.Warn(msg, args...)
+	}
 }
 
 // Resolve turns an input line (channel ID, @handle or channel URL) into a
@@ -82,14 +101,63 @@ func (c *Collector) Resolve(ctx context.Context, input string, cost *Cost) (stri
 		url = "https://www.youtube.com/" + in
 	}
 	r, err := c.call(ctx, cost, innertube.ResolveURL, "resolve", map[string]any{"url": url})
+	if err == nil {
+		if id := channelIDIn(r.Data); id != "" {
+			return id, nil
+		}
+		c.Store.SaveSkeleton("resolve-"+shortHash(in), r.Body)
+	}
+	// Fallback: the channel's own page names its channel ID.
+	if path := youtubePath(url); path != "" {
+		pr, perr := c.Client.Get(ctx, proxypool.ClassWatch, path, nil)
+		cost.add("page:channel", pr)
+		if perr == nil {
+			if id := channelIDInHTML(pr.Body); id != "" {
+				return id, nil
+			}
+		}
+	}
 	if err != nil {
 		return "", err
 	}
-	id := firstString(r.Data, "browseId")
-	if !strings.HasPrefix(id, "UC") {
-		return "", fmt.Errorf("could not resolve %q to a channel", input)
+	return "", fmt.Errorf("could not resolve %q to a channel", input)
+}
+
+var channelIDRe = regexp.MustCompile(`^UC[A-Za-z0-9_-]{22}$`)
+
+// channelIDIn returns the first channel ID found under a "browseId" key.
+func channelIDIn(data any) string {
+	for _, v := range jsonx.FindAll(data, "browseId") {
+		if s, ok := v.(string); ok && channelIDRe.MatchString(s) {
+			return s
+		}
 	}
-	return id, nil
+	return ""
+}
+
+var htmlChannelIDRes = []*regexp.Regexp{
+	regexp.MustCompile(`<link rel="canonical" href="https://www\.youtube\.com/channel/(UC[A-Za-z0-9_-]{22})"`),
+	regexp.MustCompile(`"externalId"\s*:\s*"(UC[A-Za-z0-9_-]{22})"`),
+	regexp.MustCompile(`"channelId"\s*:\s*"(UC[A-Za-z0-9_-]{22})"`),
+}
+
+// channelIDInHTML reads a channel page's own channel ID.
+func channelIDInHTML(body []byte) string {
+	for _, re := range htmlChannelIDRes {
+		if m := re.FindSubmatch(body); m != nil {
+			return string(m[1])
+		}
+	}
+	return ""
+}
+
+// youtubePath returns the path (and query) of a youtube.com URL, or "".
+func youtubePath(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || !strings.HasSuffix(strings.ToLower(u.Hostname()), "youtube.com") || u.Path == "" {
+		return ""
+	}
+	return u.RequestURI()
 }
 
 // ChannelResult is a channel page plus its About panel.
@@ -111,7 +179,7 @@ func (c *Collector) Channel(ctx context.Context, id string, cost *Cost) (Channel
 		c.Store.SaveSkeleton("channel-"+shortHash(id), r.Body)
 	}
 	if res.Channel.AboutToken != "" {
-		ar, err := c.call(ctx, cost, innertube.Browse, "browse:about", map[string]any{"continuation": res.Channel.AboutToken})
+		ar, err := c.callVia(ctx, cost, innertube.Browse, "browse:about", map[string]any{"continuation": res.Channel.AboutToken}, r.Proxy)
 		if err == nil {
 			res.About, res.HasAbout = ytparse.ParseAbout(ar.Data)
 			if !res.HasAbout {
@@ -137,15 +205,24 @@ func (c *Collector) Tab(ctx context.Context, channelID, params string, since tim
 		return res, errors.New("tab not found on channel page")
 	}
 	payload := map[string]any{"browseId": channelID, "params": params}
+	prefer := ""
 	for res.Pages < maxPages {
-		r, err := c.call(ctx, cost, innertube.Browse, "browse:tab", payload)
+		r, err := c.callVia(ctx, cost, innertube.Browse, "browse:tab", payload, prefer)
 		if err != nil {
 			return res, err
 		}
 		res.Pages++
+		prefer = r.Proxy
 		l := ytparse.ParseList(r.Data, c.Now())
-		if res.Pages == 1 && len(l.Videos) == 0 && l.NextToken == "" {
-			c.Store.SaveSkeleton("tab-"+shortHash(channelID+params), r.Body)
+		if len(l.Videos) == 0 && l.NextToken == "" {
+			if res.Pages == 1 {
+				c.Store.SaveSkeleton("tab-"+shortHash(channelID+params), r.Body)
+			} else {
+				// A "next page" that holds nothing is suspicious: keep its
+				// structure so the cause can be found.
+				c.Store.SaveSkeleton("tabnext-"+shortHash(channelID+params), r.Body)
+				c.warn("next page of a channel tab was empty", "page", res.Pages, "bytes", len(r.Body))
+			}
 		}
 		old := false
 		for _, v := range l.Videos {
@@ -169,6 +246,7 @@ type VideoResult struct {
 	Watch     ytparse.WatchInfo
 	Player    ytparse.PlayerInfo
 	PlayerErr string
+	Proxy     string // proxy that read the watch page; comment chains start there
 }
 
 // Video fetches the watch page ("next") and the player data. A blocked
@@ -180,11 +258,12 @@ func (c *Collector) Video(ctx context.Context, id string, withPlayer bool, cost 
 		return res, err
 	}
 	res.Watch = ytparse.ParseWatch(r.Data)
+	res.Proxy = r.Proxy
 	if res.Watch.Title == "" {
 		c.Store.SaveSkeleton("watch-"+shortHash(id), r.Body)
 	}
 	if withPlayer {
-		pr, err := c.call(ctx, cost, innertube.Player, "player", map[string]any{"videoId": id})
+		pr, err := c.callVia(ctx, cost, innertube.Player, "player", map[string]any{"videoId": id}, r.Proxy)
 		if err != nil {
 			res.PlayerErr = err.Error()
 		} else {
@@ -232,39 +311,47 @@ type SweepResult struct {
 
 // Sweep reads all comments (newest first) and their replies, up to limit
 // comments in total. channelID (the video's channel) identifies replies
-// from the creator even when YouTube's creator flag is missing.
-func (c *Collector) Sweep(ctx context.Context, videoID, channelID, commentsToken string, limit int, cost *Cost) (SweepResult, error) {
+// from the creator even when YouTube's creator flag is missing. prefer is
+// the proxy that read the watch page: the whole sweep stays on it.
+func (c *Collector) Sweep(ctx context.Context, videoID, channelID, commentsToken, prefer string, limit int, cost *Cost) (SweepResult, error) {
 	res := SweepResult{PrecisionBuckets: map[string]int{}, channelID: channelID}
 	if commentsToken == "" {
 		res.NoCommentsToken = true
 		return res, nil
 	}
-	r, err := c.call(ctx, cost, innertube.Next, "next:comments", map[string]any{"continuation": commentsToken})
+	r, err := c.callVia(ctx, cost, innertube.Next, "next:comments", map[string]any{"continuation": commentsToken}, prefer)
 	if err != nil {
 		return res, err
 	}
+	prefer = r.Proxy
 	first := ytparse.ParseComments(r.Data, c.Now())
 	res.Displayed = first.Total
 	token := first.NewestFirstToken
 	if token == "" {
 		// No sort menu: read the default order instead.
-		c.Store.SaveSkeleton("comments-header-"+shortHash(videoID), r.Body)
+		c.Store.SaveSkeleton("commentsheader-"+shortHash(videoID), r.Body)
 		res.absorb(first, c.Now())
 		token = first.NextToken
+	} else if !first.Total.OK {
+		c.Store.SaveSkeleton("commentscount-"+shortHash(videoID), r.Body)
 	}
 	replyTokens := map[string]string{}
 	for k, v := range first.ReplyTokens {
 		replyTokens[k] = v
 	}
 	for token != "" && res.TopLevel+res.Replies < limit {
-		r, err := c.call(ctx, cost, innertube.Next, "next:comments", map[string]any{"continuation": token})
+		r, err := c.callVia(ctx, cost, innertube.Next, "next:comments", map[string]any{"continuation": token}, prefer)
 		if err != nil {
 			return res, err
 		}
 		res.Pages++
+		prefer = r.Proxy
 		p := ytparse.ParseComments(r.Data, c.Now())
-		if res.Pages == 1 && len(p.Comments) == 0 && p.NextToken == "" && res.Displayed.Min > 0 {
-			c.Store.SaveSkeleton("comments-page-"+shortHash(videoID), r.Body)
+		if res.Pages == 1 && len(p.Comments) == 0 && p.NextToken == "" {
+			c.Store.SaveSkeleton("commentspage-"+shortHash(videoID), r.Body)
+			if res.Displayed.Min > 0 {
+				c.warn("first comment page was empty", "displayed", res.Displayed.Min, "bytes", len(r.Body))
+			}
 		}
 		res.absorb(p, c.Now())
 		for k, v := range p.ReplyTokens {
@@ -274,7 +361,7 @@ func (c *Collector) Sweep(ctx context.Context, videoID, channelID, commentsToken
 	}
 	for _, tok := range replyTokens {
 		for tok != "" && res.TopLevel+res.Replies < limit {
-			r, err := c.call(ctx, cost, innertube.Next, "next:replies", map[string]any{"continuation": tok})
+			r, err := c.callVia(ctx, cost, innertube.Next, "next:replies", map[string]any{"continuation": tok}, prefer)
 			if err != nil {
 				return res, err
 			}
@@ -347,26 +434,4 @@ func precisionBucket(t ytparse.TimeEstimate) string {
 func shortHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:8])
-}
-
-// firstString finds the first string stored under key anywhere in v.
-func firstString(v any, key string) string {
-	switch t := v.(type) {
-	case map[string]any:
-		if s, ok := t[key].(string); ok {
-			return s
-		}
-		for _, x := range t {
-			if s := firstString(x, key); s != "" {
-				return s
-			}
-		}
-	case []any:
-		for _, x := range t {
-			if s := firstString(x, key); s != "" {
-				return s
-			}
-		}
-	}
-	return ""
 }

@@ -184,6 +184,40 @@ Phase 0 data deletes itself after 14 days. To delete it all immediately:
 sudo rm -rf /var/lib/securebrand-youtube/phase0
 ```
 
+## Re-running the crawl
+
+To start a crawl again, for example after an update, first remove the old container and the earlier crawl's results, so the two runs don't mix.
+
+1. Stop the crawl if it is still running:
+
+```bash
+docker stop ytprobe-crawl
+```
+
+2. Remove its container:
+
+```bash
+docker rm ytprobe-crawl
+```
+
+3. Delete the earlier crawl's results (detection data is kept):
+
+```bash
+rm -rf /var/lib/securebrand-youtube/phase0/crawl_channels.jsonl /var/lib/securebrand-youtube/phase0/crawl_videos.jsonl /var/lib/securebrand-youtube/phase0/snapshots /var/lib/securebrand-youtube/phase0/skeletons
+```
+
+4. Run a quick test on the first 5 channels. It finishes on its own in a few minutes:
+
+```bash
+docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe crawl -limit 5 -interval 4s -videos 4 -comments 1000
+```
+
+5. Check the report before starting the full crawl again:
+
+```bash
+docker run --rm -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe report
+```
+
 ## Updating to a newer version
 
 When I tell you a fix or the next experiments are merged:
@@ -218,6 +252,7 @@ Add these after the command name, for example `ytprobe crawl -videos 12`:
 | `crawl` | `-videos` | `8` | Videos per channel checked in depth |
 | `crawl` | `-comments` | `2000` | Maximum comments read per video |
 | `crawl` | `-workers` | `4` | Channels processed at the same time |
+| `crawl` | `-limit` | `0` (all) | Crawl only the first N channels of the list; use it for a quick test |
 | `crawl` | `-window-days` | `365` | Backfill window |
 | `crawl` | `-no-player` | off | Skip the player endpoint (tags, category) |
 | `detect` | `-rss-every` | `15m` | Feed check interval per channel |

@@ -83,6 +83,13 @@ type Server struct {
 	feeds         map[string][]FeedEntry
 	blocks        []*blockRule
 	requests      []Recorded
+	pages         map[string]string
+
+	// StickyContinuations makes the fake behave like YouTube appears to:
+	// a continuation token only works through the proxy (visitor) that
+	// received it; from any other proxy the answer is empty.
+	StickyContinuations bool
+	tokenVia            map[string]string
 }
 
 // New starts a fake server.
@@ -92,6 +99,8 @@ func New() *Server {
 		visitorData:   DefaultVisitorData,
 		handlers:      map[string]Handler{},
 		feeds:         map[string][]FeedEntry{},
+		pages:         map[string]string{},
+		tokenVia:      map[string]string{},
 	}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	s.URL = s.srv.URL
@@ -210,7 +219,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		writeBody(w, r, "application/atom+xml", FeedXML(r.URL.Query().Get("channel_id"), feed))
 	case "page":
-		http.NotFound(w, r)
+		s.mu.Lock()
+		page, ok := s.pages[r.URL.Path]
+		s.mu.Unlock()
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		writeBody(w, r, "text/html", []byte(page))
 	default:
 		if strings.HasPrefix(endpoint, "api:") {
 			if handler == nil {
@@ -239,14 +255,58 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, r, http.StatusNotFound, map[string]any{"error": map[string]any{"code": 404}})
 			return
 		}
+		via := r.Header.Get("X-Fake-Proxy")
+		if tok, _ := body["continuation"].(string); tok != "" {
+			s.mu.Lock()
+			owner, known := s.tokenVia[tok]
+			sticky := s.StickyContinuations
+			s.mu.Unlock()
+			if sticky && known && owner != via {
+				writeJSON(w, r, http.StatusOK, map[string]any{"responseContext": map[string]any{"visitorData": visitor}})
+				return
+			}
+		}
 		status, resp := handler(body)
 		if m, ok := resp.(map[string]any); ok {
 			if _, has := m["responseContext"]; !has {
 				m["responseContext"] = map[string]any{"visitorData": visitor}
 			}
 		}
+		var toks []string
+		collectTokens(resp, &toks)
+		s.mu.Lock()
+		for _, tok := range toks {
+			s.tokenVia[tok] = via
+		}
+		s.mu.Unlock()
 		writeJSON(w, r, status, resp)
 	}
+}
+
+// collectTokens finds every continuation token in a response.
+func collectTokens(v any, out *[]string) {
+	switch t := v.(type) {
+	case map[string]any:
+		if cc, ok := t["continuationCommand"].(map[string]any); ok {
+			if tok, ok := cc["token"].(string); ok {
+				*out = append(*out, tok)
+			}
+		}
+		for _, x := range t {
+			collectTokens(x, out)
+		}
+	case []any:
+		for _, x := range t {
+			collectTokens(x, out)
+		}
+	}
+}
+
+// SetPage serves an HTML page at path (for example "/@handle").
+func (s *Server) SetPage(path, html string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pages[path] = html
 }
 
 func feedHash(entries []FeedEntry) int64 {

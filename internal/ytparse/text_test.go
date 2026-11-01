@@ -73,6 +73,9 @@ func TestParseRelativeTime(t *testing.T) {
 		{"منذ سنتين", 2 * 365 * day, 365 * day, false},
 		{"منذ 25 دقيقة", 25 * time.Minute, time.Minute, false},
 		{"منذ أسبوع", 7 * day, 7 * day, false},
+		{"قبل 3 أيام", 3 * day, day, false},
+		{"قبل يومين", 2 * day, day, false},
+		{"بُث قبل ٥ ساعات", 5 * time.Hour, time.Hour, false},
 		{"just now", 0, time.Minute, false},
 	}
 	for _, tc := range tests {

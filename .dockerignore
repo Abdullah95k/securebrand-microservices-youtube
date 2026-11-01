@@ -1,0 +1,15 @@
+# Keep secrets, data and build output out of the image build context.
+.git
+.env
+.env.*
+*.key
+*.pem
+secrets/
+proxies*.txt
+youtube_api_key*
+data/
+phase0/
+phase0-data/
+captures/
+bin/
+dist/

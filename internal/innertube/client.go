@@ -35,6 +35,8 @@ const (
 	Next   Endpoint = "next"
 	Player Endpoint = "player"
 	Search Endpoint = "search"
+	// ResolveURL turns a channel URL or @handle into a channel ID.
+	ResolveURL Endpoint = "navigation/resolve_url"
 )
 
 func (e Endpoint) class() proxypool.Class {

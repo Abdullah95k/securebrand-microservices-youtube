@@ -1,4 +1,4 @@
-# SecureBrand YouTube collector: plan v3 (draft for approval)
+# SecureBrand YouTube collector: plan v4 (draft for approval)
 
 Status: **proposal, nothing built yet.** Nothing gets implemented until you approve this plan.
 Last updated: 1 November 2026. All times are **Iraq time (UTC+3)**.
@@ -7,7 +7,9 @@ History:
 
 - **v1:** first draft.
 - **v2:** scraping for collection, API for search.
-- **v3 (this version):** coverage of every Iraq-relevant channel, IP failover, dynamic keywords, 365-day backfill.
+- **v3:** coverage of every Iraq-relevant channel, IP failover, dynamic keywords, 365-day backfill.
+- **v4 (this version):** keep all data with full identities, commenter enrichment, compressed archive, server recommendation,
+  cost-optimized configuration.
 
 Legend: **[verify]** marks a fact I could not check against a primary source. Google's developer site is blocked from my build sandbox,
 and YouTube's internal website endpoints are undocumented. Phase 0 (§9) confirms or rejects every [verify] item before we build on it.
@@ -33,12 +35,21 @@ and YouTube's internal website endpoints are undocumented. Phase 0 (§9) confirm
 | **D11** | 1 Nov 2026 | **Coverage as large as realistically possible**; final size not fixed yet |
 | **D12** | 1 Nov 2026 | **Backfill 365 days** for each new channel |
 | **D13** | 1 Nov 2026 | A one-time official-API accuracy check in Phase 0 is fine |
+| D14 | 1 Nov 2026 | Core vs mention split approved |
+| D15 | 1 Nov 2026 | Keyword suggestions are switched on automatically |
+| D16 | 1 Nov 2026 | The seed keyword list is approved as a start |
+| D17 | 1 Nov 2026 | "Mentioning Iraq" = a keyword match in the title, description, tags, hashtags or post text of something the channel itself posted |
+| **D18** | 1 Nov 2026 | **Keep everything; no automatic deletion. Store full commenter names, IDs and every other public detail we can collect** |
+| D19 | 1 Nov 2026 | Servers: my recommendation (fbs uses DigitalOcean) → §7.2 |
+| D20 | 1 Nov 2026 | Outgoing data and alerts: mostly webhooks, designed later |
+| D21 | 1 Nov 2026 | Budget: as affordable as possible without giving up data, accuracy, speed or stability → §7.4–7.5 |
 
 Your non-negotiable rules still apply:
 
 - **public data only, never log in**;
 - **never solve or get around bot checks or CAPTCHAs**, never generate YouTube's anti-bot tokens, and keep pacing;
-- privacy controls for comment data;
+- erasure requests (by author and by channel) with a suppression list, so erased data never comes back. D18 switches off automatic
+  deletion and pseudonymization by default; both remain available as settings;
 - credentials only in files or environment variables;
 - no real data in the public repo.
 
@@ -46,69 +57,72 @@ D7 changes how "back off when blocked" works: it now means **the blocked IP back
 
 ### 0.2 The short version
 
-- **Coverage model.** Every channel with at least one Iraq-relevant video, Short or post is on the list. Collection depth depends on the
-  channel's type:
-  - **Core channels** (mostly Iraq-focused) are collected fully: all videos, comments and posts.
-  - **Mention channels** (for example an international news channel that posted one video about Iraq) are on the list and watched for new
-    uploads. **Full details and comments are collected only for their Iraq-relevant items.**
-
-  Without this split, a few huge global channels would use most of the capacity on content that has nothing to do with Iraq. This is my
-  recommendation, and question N1 asks you to confirm it.
-- **Discovery** runs continuously:
+- **Coverage model (D14).** Every channel with at least one Iraq-relevant video, Short or post is on the list.
+  - **Core channels** (mostly Iraq-focused) are collected fully.
+  - **Mention channels** are watched for new uploads, and only their Iraq-relevant items are collected in full.
+- **Discovery** runs all the time, from four sources:
   - the official search API (≈ 100 searches/day);
-  - **scraped YouTube search** (no quota, much wider);
-  - the "channel graph": channels that listed channels mention, feature or collaborate with.
-  Keywords, spellings and languages live in a database you can edit at any time. The system also **suggests new keywords** from trending
-  Iraq-related hashtags and terms.
-- **Scale.** Nobody knows yet how many channels this finds; Phase 0 measures it. Three sizes are modelled:
+  - scraped YouTube search (no quota);
+  - the "channel graph": channels that listed channels mention, feature or collaborate with;
+  - **commenters who upload videos themselves**.
+
+  Keywords and languages are edited live. New keywords are suggested and switched on automatically (D15).
+- **Everything is kept (D18):**
+  - no automatic deletion;
+  - full commenter names, handles, IDs, avatars and badges;
+  - comments their authors later delete, marked as deleted;
+  - the public details on commenters' own channel pages, read only when there is spare capacity.
+
+  Data older than 12 months moves to a **compressed archive**, so storage stays cheap and the data stays searchable. **Erasure requests
+  and the suppression list still work:** that was in your original rules, and the law requires it when someone asks.
+- **Servers (D19):**
+  - production runs on **Hetzner dedicated servers**. For this storage-heavy, always-on job they cost roughly 55–65% less than equivalent
+    DigitalOcean machines, and include unmetered traffic;
+  - Phase 0 runs on one small DigitalOcean droplet in your existing account.
+- **Scale and cost** (cost-optimized configuration, §7):
 
   | Channels on the list | Requests/day after backfill | Proxy IPs | Monthly cost |
   |---|---|---|---|
-  | 20,000 | ~300,000 | 20–50 | **~$160–360** |
-  | 100,000 | ~1.5 million | 80–250 | **~$510–1,500** |
-  | 300,000 | ~4.4 million | 250–700 | **~$1,400–4,100** |
+  | 20,000 | ~300,000 | 20–50 | **~$160–250** |
+  | 100,000 | ~1.5 million | 80–250 | **~$500–1,150** |
+  | 300,000 | ~4.4 million | 250–700 | **~$1,550–3,300** |
 
-  The system **grows coverage by itself.** When capacity runs short, it checks the least active channels less often rather than dropping
-  any. It tells you when adding IPs or servers would bring freshness back.
-- **The 365-day backfill** is the biggest one-time job: about 14 million requests at 20,000 channels, about 70 million at 100,000. Newly
-  found channels become fully covered within days to weeks, depending on capacity. The biggest and most relevant channels go first.
-- **Unchanged from v2:**
+  The system grows coverage by itself. When capacity is short, it checks the least active channels less often instead of dropping any, and
+  tells you what to add.
+- **365-day backfill:** about 14 million requests at 20,000 channels and about 70 million at 100,000, so roughly a month with extra
+  temporary IPs. The biggest and most relevant channels go first.
+- **Unchanged from earlier versions:**
   - pinned/hearted comments, community posts and About links are collected;
-  - comment times are relative ("3 days ago"), made precise for new comments by checking often;
+  - comment times are relative ("3 days ago"); frequent checks make them precise for new comments;
   - large like counts are abbreviated;
-  - video/audio files are out of scope, and transcripts probably are too (they need anti-bot tokens).
-- **Legal risk:** YouTube's Terms forbid automated access and collecting usernames. Switching to a fresh IP after a block is something
-  YouTube would regard as evasion, so D7 **raises** that risk. I recommend a lawyer reviews this before production (§4).
+  - video/audio files are out of scope, and transcripts probably are too.
+- **Legal risk, which I recommend a lawyer reviews before production (§4):**
+  - YouTube's Terms forbid automated access and collecting usernames;
+  - switching IPs after a block (D7) reads as deliberate evasion;
+  - keeping everything forever with full identities, including deleted comments (D18), is the highest-risk privacy setup under GDPR for
+    commenters living in the EU.
 
 ---
 
-## 1. Remaining questions (all at once)
+## 1. Remaining questions
 
-New questions, raised by your latest answers:
+Answered on 1 November 2026: N1–N4, privacy, servers, alerts and consumers, budget (D14–D21). Three things remain, and none of them
+blocks Phase 0:
 
-- **N1. Core vs mention channels.** OK that channels which only *occasionally* mention Iraq get their Iraq-relevant items collected
-  in full, but not their whole catalogue? The alternative is full collection for every listed channel. That is roughly 2–5× the cost,
-  because international news channels upload thousands of unrelated videos.
-- **N2. Keyword suggestions.** New keywords the system finds (trending hashtags, place names, event names) could:
-  - **(a)** become active automatically, within a daily cap, with you able to remove them (my recommendation); or
-  - **(b)** wait for someone to approve them.
-- **N3. Seed keywords.** I'll prepare a starting list: Iraq and Iraqi, the 18 governorates and major cities, in Arabic, Kurdish (Sorani and
-  Kurmanji), English, Turkmen and common transliterations. Anything to add from day 1 (brands, people, topics)? You can also add them later
-  at any time.
-- **N4. What counts as "mentioning Iraq"?** I propose: a keyword match in the **title, description, tags, hashtags or community post
-  text** of something the channel itself posted. Comments by other people would **not** count. OK?
+1. **Legal sign-off** before production, now also covering D7 (IP failover) and D18 (keep everything). Recommended; your decision.
+2. **A subdomain for push notifications**, for example `yt-hooks.<your-domain>`, pointed at the production server. Phase 0 can run without
+   it.
+3. **Live chat** during live streams. Out of scope by default; it can be added later.
 
-Still open from v2 (defaults in brackets):
+Defaults I've set for D18. Any of them can be changed at any time:
 
-- **Freshness targets** [the defaults in §8.6].
-- **Privacy** [comments and commenter data kept **12 months from collection**; commenter identities **pseudonymized by default**]. Large
-  Iraqi diaspora communities live in the EU, so GDPR will apply to some commenters.
-- **Legal sign-off** before production [recommended].
-- **Servers:** what server(s), and in which country? A domain for one public HTTPS address (push notifications)?
-- **Alerts and consumers:** where do alerts go (Telegram, email, Slack)? Who reads the data: dashboard, API, analysis service?
-- **Budget:** you want maximum realistic coverage. Is there a monthly ceiling the system should stay under? It can cap proxies and servers
-  and degrade freshness instead.
-- **Live chat** during streams [out of scope by default].
+| Setting | Default |
+|---|---|
+| Commenter enrichment (reading commenters' own channel pages) | Every commenter, using spare capacity only; most active first. Refreshed every 6 months for active commenters, yearly for the rest |
+| Avatar images | Stored for channels and commenters, small size, each image stored once |
+| Comments deleted by their authors | Kept, marked deleted with the time |
+| Pseudonymized exports and webhook payloads (codes instead of names) | Available, switched off |
+| Time-based retention | Available, switched off |
 
 ### Assumptions used until Phase 0 measures them
 
@@ -118,8 +132,8 @@ Still open from v2 (defaults in brackets):
 | Core vs mention | 50% core, 50% mention |
 | Core channel size mix | 75% small (≈ 30 videos, ≈ 1 upload/month, ≈ 10 comments/video; about half of them dormant)<br>22% medium (≈ 300 videos, ≈ 15 uploads/month, ≈ 100 comments/video)<br>3% large (≈ 2,000 videos, ≈ 40 uploads/month, ≈ 500 comments/video) |
 | Mention channels | ≈ 1 Iraq-relevant item per month; uploads of other items are only noted, not collected |
-| Retention | Comments: 12 months from collection. Statistics: 36 months |
-| Media | Thumbnails, avatars, banners only |
+| Retention | **Everything kept indefinitely** (D18). Data older than 12 months moves to the compressed archive |
+| Media | Thumbnails, avatars (channels and commenters), banners |
 
 ---
 
@@ -176,13 +190,15 @@ Collection scope by channel type:
 
 | Field | Source | Accuracy / notes |
 |---|---|---|
-| Text, author channel ID, author handle/name, avatar | Web | Exact (stored pseudonymized by default, §8.9) |
+| Text, author channel ID, author handle/name, avatar | Web | Exact; stored in full (D18) |
+| Author badges: verified, channel member (and for how long), creator | Web | Exact |
+| Commenter's own public channel page: name, handle, description, country (if shown), join date, links, subscriber and video counts, avatar, banner | Web (enrichment, §8.7a) | Exact; read with spare capacity, most active commenters first |
 | Publish time | Web | **Relative** ("3 hours ago"). Precise for comments we first see soon after posting; coarse for backfilled ones ("8 months ago" ≈ ±2 weeks). Precision stored per comment |
 | Likes | Web | Exact below 1,000, abbreviated above ("1.2K"): lower bound + text stored [verify] |
 | Replies, reply count | Web | Exact |
 | Pinned, hearted by creator, reply from creator | Web | Exact |
 | Edited | Web ("(edited)" marker) | Exact; earlier versions we saw are kept |
-| Deleted | Missing on a re-scan | Fact and time only; the text is removed |
+| Deleted | Missing on a re-scan | Marked deleted with the time; **the text is kept** (D18). A setting can redact it instead |
 
 ### Community posts, playlists, new uploads
 
@@ -258,17 +274,23 @@ This is your business decision (D4, D7). **I recommend a lawyer reviews it befor
 - **The API key could be cut off** if YouTube links it to the scraping system. Discovery would then continue on scraped search and the
   channel graph (§5).
 
-### 4.3 Personal data (your rules + GDPR)
+### 4.3 Personal data (D18)
 
-- Commenters' names, IDs, avatars and text are personal data. So are channels run by individuals.
-- GDPR applies to EU-based people, and the Iraqi diaspora in the EU is large.
-- **We need:**
+- **"Public" does not take data out of data-protection law.** GDPR covers the personal data of people in the EU even when they posted it
+  publicly, and the Iraqi diaspora in the EU is large.
+- **D18 is the highest-risk combination:** no time limit, full identities, reading commenters' own channel pages, and keeping comments
+  their authors deleted. The parts most likely to be challenged are keeping deleted comments and building commenter profiles.
+- **What stays in place regardless:** erasure on request (by author, by channel, by item), with a suppression list so erased data never
+  comes back. This was in your original rules, and it's what the law requires when someone asks.
+- **What we still need:**
   - a legal basis: legitimate interest, with a written balancing test (a legitimate-interest assessment);
-  - a **data protection impact assessment** (DPIA), because this is large-scale monitoring;
-  - a public privacy notice (GDPR Article 14).
-- Comments can reveal religion, politics or health, so reports should be aggregates, not profiles of individuals.
-- Iraq: as far as I know there is no comprehensive data protection law in force yet; please confirm with your lawyer.
-- Privacy controls are in §8.9.
+  - a data protection impact assessment (DPIA);
+  - a public privacy notice (GDPR Article 14) saying what we collect and how to ask for erasure.
+- **Built in but switched off:** retention limits and pseudonymization stay in the system as settings. If your lawyer requires them, turning
+  them on is a configuration change, not a rebuild.
+- **Reporting:** comments can reveal religion, politics or health, so reports should show aggregates rather than profiles of individuals.
+- **Iraq:** as far as I know there is no comprehensive data protection law in force yet; please confirm with your lawyer.
+- Details are in §8.9.
 
 ---
 
@@ -326,7 +348,8 @@ From every listed channel we extract:
 - its **featured channels**;
 - **collaborators** on joint videos.
 
-Each of these becomes a candidate. **Commenters' channels are not used** (they are mostly private individuals).
+Each of these becomes a candidate. **Commenters' channels** also become candidates when enrichment (§8.7a) finds they have uploads of
+their own.
 
 ### 5.4 Candidate check → add to the list (D10: no size minimum)
 
@@ -403,18 +426,28 @@ Weighted, that is **≈ 25 requests/day per core channel** and **≈ 3.5 per men
 | Proxy IPs after backfill | ~10–30 | ~40–130 | ~120–400 |
 | Data transfer (≈ 40 KB compressed per request) | ~0.4 TB/month (+0.5 TB in the backfill month) | ~1.8 TB (+2.6 TB) | ~5.3 TB (+6 TB) |
 | Search | API ≈ 100 calls/day + scraped search ≈ 10–50k requests/day | same | same |
+| Commenter enrichment (spare capacity only) | ~+60–140k/day | ~+300–700k/day | ~+1–2 M/day |
 
 Channels are discovered gradually, so in practice backfill is spread over the first months rather than done in one block.
 
-### 6.5 Storage
+### 6.5 Storage (nothing is deleted, D18)
 
 | | 20,000 | 100,000 | 300,000 |
 |---|---|---|---|
-| Comments (12 months) | ~140 M rows → ~100 GB | ~700 M → ~500 GB | ~2.1 B → ~1.5 TB |
-| Videos and channels | ~20 GB | ~100 GB | ~300 GB |
-| Snapshots (36 months) | ~25 GB | ~130 GB | ~400 GB |
-| **Database total** | **~150 GB** | **~750 GB** | **~2.2 TB** |
-| S3 (thumbnails + debug samples) | ~50 GB | ~250 GB | ~700 GB |
+| Comments added per year | ~140 M rows (~100 GB) | ~700 M (~500 GB) | ~2.1 B (~1.5 TB) |
+| Commenter profiles | ~20 M (~20 GB) | ~80 M (~80 GB) | ~200 M (~200 GB) |
+| Videos, channels, posts | ~20 GB | ~100 GB | ~300 GB |
+| Snapshots per year | ~10 GB | ~45 GB | ~135 GB |
+| **Database after year 1** | **~150 GB** | **~750 GB** | **~2.2 TB** |
+| After 3 years, all in Postgres | ~450 GB | ~2.2 TB | ~6.5 TB |
+| After 3 years, with the archive (older than 12 months compressed ~5–8×) | ~170 GB + ~60 GB archive | ~800 GB + ~300 GB | ~2.3 TB + ~900 GB |
+| Object storage per year (thumbnails, avatars, debug samples) | ~150–200 GB | ~0.7–1 TB | ~2 TB |
+
+**How "keep everything" stays affordable:**
+
+- whole monthly partitions older than 12 months move from Postgres into **compressed columnar storage**: ClickHouse on the same server, or
+  Parquet files in object storage;
+- archived data stays searchable. Queries are slower, but fine for history and reports.
 
 ### 6.6 Coverage first, freshness flexes (D11)
 
@@ -441,30 +474,90 @@ You decide when to buy more; the system never stops covering.
 
 | # | Item | Needed for | Notes |
 |---|---|---|---|
-| 1 | **Google Cloud project** + **YouTube Data API v3** + **API key** (restricted to that API and your server IP) | API search, Phase 0 accuracy check | Free. Steps in §9.3 |
-| 2 | **Servers**, Linux with Docker | Everything | See 7.2 per scenario. Start with one; add as coverage grows |
-| 3 | **Static datacenter/ISP proxy IPs** from **2–3 providers** and many subnets, **outside the EU** | Scraping | Per-IP pricing with unlimited or large bandwidth matters at TB/month volumes. Outside the EU avoids YouTube's cookie-consent page |
-| 4 | Optional **small residential proxy allowance** | Only for endpoints Phase 0 shows fail on datacenter IPs | Consent-based sourcing only; capped in GB/month. Per-GB pricing makes it unaffordable as the main pool |
-| 5 | **Public HTTPS subdomain** (Let's Encrypt) | WebSub push | Phase 0 can run without it |
-| 6 | **S3-compatible object storage** | Thumbnails, debug samples | |
-| 7 | **Offsite backups** | Production | 30-day rolling |
-| 8 | **Alert destination** | Production | Telegram, email or Slack |
-| 9 | **Legal review**, privacy notice, legitimate-interest assessment, DPIA | Before production | Legal work |
-| 10 | **Scraper maintenance time** | Ongoing | A few fixes a month when YouTube changes its pages (§8.11) |
+| 1 | **Google Cloud project** + **YouTube Data API v3** + **API key** (restricted to that API and the server IP) | API search, Phase 0 accuracy check | Free. Steps in §9.3 |
+| 2 | **Phase 0 server:** one DigitalOcean droplet in your existing account | Phase 0 (2–3 weeks) | 4 vCPU / 8 GB / 160 GB, about $48–56/month; deleted after Phase 0 |
+| 3 | **Production servers:** Hetzner dedicated (§7.2) | Everything after Phase 0 | Start with one server; add more as coverage grows |
+| 4 | **Proxies:** static datacenter IPv4 (main pool) + a smaller set of ISP IPs, from 2–3 providers, many subnets, outside the EU | Scraping | Monthly plans, bought in batches as coverage grows (§7.3) |
+| 5 | Optional **residential allowance** | Only if Phase 0 shows an endpoint fails on both datacenter and ISP IPs | Off by default; consent-based sourcing only; capped |
+| 6 | **Subdomain** for push notifications | WebSub | Let's Encrypt certificate (free) |
+| 7 | **Object storage** | Thumbnails, avatars, archive files, debug samples | Hetzner Object Storage or DigitalOcean Spaces |
+| 8 | **Offsite backups** | Production | Hetzner Storage Box or Spaces, 30-day rolling |
+| 9 | **Webhook endpoint(s)** (later, D20) | Events and alerts | Your receiving URL + a shared secret, kept in a file |
+| 10 | **Legal review**, privacy notice, legitimate-interest assessment, DPIA | Before production | Legal work |
+| 11 | **Scraper maintenance time** | Ongoing | A few fixes a month (§8.11) |
 
-### 7.2 Estimated monthly cost (USD, during backfill; lower afterwards)
+### 7.2 Server recommendation (D19)
+
+| | Hetzner dedicated (recommended) | DigitalOcean (what fbs uses) |
+|---|---|---|
+| Price for this workload | **Lower:**<br>AX42 (8 cores, 64 GB RAM, 2 × 512 GB NVMe) ≈ €97/month<br>AX102 (16 cores, 128 GB, 2 × 1.92 TB NVMe) ≈ €257/month<br>One-time setup fee €49–129 [verify at order] | **Higher:**<br>8 dedicated vCPU / 32 GB ≈ $252/month<br>16 vCPU / 64 GB ≈ $504/month<br>Block storage $0.10/GB-month (2 TB = $200/month) |
+| Disk | Fast local NVMe included. This matters most, because the database grows every year | Mostly paid add-on block storage |
+| Traffic | Unmetered (1 Gbit/s) | Allowance per droplet, then paid |
+| Stability | Real hardware with mirrored (RAID1) disks; Hetzner replaces failed parts. We add a live replica from about 100,000 channels | Easy snapshots and resizing; managed services available |
+| Effort | We manage the operating system (Docker, automatic updates, monitoring) | Similar; slightly easier tooling; same account as fbs |
+| Price history | Raised prices twice in 2026 (April and June); still clearly cheaper for this job | Stable |
+
+**Why Hetzner:**
+
+- this job is **disk-heavy** (terabytes over time) and **always on**. That is where dedicated servers beat cloud servers by the widest
+  margin: about 55–65% cheaper here for the same capacity;
+- the scraping traffic goes through proxies, so the server provider's IP reputation doesn't matter;
+- Hetzner's dedicated servers are in Germany and Finland. That's fine, because distance to YouTube doesn't matter.
+
+**Staying on DigitalOcean** works too, at roughly twice the server cost. It's only the better choice if having one provider with fbs matters
+more than the saving. Webhooks (D20) connect the two systems either way.
+
+**Fallback:** OVHcloud dedicated servers (Advance range, from about €115/month) if Hetzner's stock or prices change.
+
+**Growth path:**
+
+| Stage | Servers | ≈ Monthly |
+|---|---|---|
+| Phase 0 | 1 DigitalOcean droplet (4 vCPU / 8 GB) | ~$50 |
+| Start, up to ~30,000 channels | 1 × AX42-class: everything on one machine | ~€97 (~$110) |
+| ~30,000–100,000 | 1 × AX102-class database + 1 × AX42-class for workers. At ~100,000, a second AX102 as a live replica | ~€355–610 (~$400–700) |
+| ~300,000 | Database primary + replica on 48-core / 256 GB machines, an archive server, 2–3 worker servers | ~€1,100–1,700 (~$1,250–1,950) [verify larger-server prices] |
+
+Moving up a stage is a planned migration: copy the database to the new machine, then switch over, with only minutes of downtime.
+
+### 7.3 Proxies
+
+- **Main pool:** static datacenter IPv4, roughly $0.50–1.50 per IP per month at volume, with unlimited or high bandwidth. We move terabytes
+  per month, so the fair-use limits matter.
+- **Second pool:** ISP proxies, roughly $1.25–2.50 per IP. These are IPs registered to consumer internet providers, which are harder to
+  block. We use them for endpoints that Phase 0 shows block datacenter IPs.
+- **Buying:** 2–3 providers, many subnets, outside the EU, monthly terms so bad IPs can be replaced.
+- **Phase 0 first:** we test about 10 IPs from 2 providers before buying in bulk.
+
+### 7.4 Monthly cost, cost-optimized configuration
+
+USD at about $1.15 per €. Figures are for the backfill period; costs drop after it.
 
 | Item | 20,000 channels | 100,000 channels | 300,000 channels |
 |---|---|---|---|
 | YouTube Data API | $0 | $0 | $0 |
-| Servers | $100–150 (1 server: 16 cores, 64 GB RAM, 2 × 2 TB NVMe) | $350–600 (database server: 32 cores, 128 GB, 4 × 4 TB NVMe, + 2 workers) | $1,000–1,600 (database primary + replica, 4 workers) |
-| Datacenter/ISP proxies (~$0.7–3 per IP) | $30–150 | $80–750 | $200–2,100 |
-| Object storage + backups | $30–60 | $80–150 | $200–400 |
+| Servers (Hetzner, §7.2) | ~$110 (AX42) | $400–700 | $1,250–1,950 |
+| Proxies (mostly datacenter, some ISP) | $30–85 | $60–375 | $200–1,100 |
+| Object storage + backups | $15–40 | $40–80 | $100–250 |
 | Domain/TLS, monitoring (self-hosted) | $0 | $0 | $0 |
-| **Total** | **~$160–360** | **~$510–1,500** | **~$1,400–4,100** |
-| Optional residential allowance | +$0–300 | +$0–500 | +$0–800 |
+| **Total** | **~$160–250** | **~$500–1,150** | **~$1,550–3,300** |
 
-After backfill, the proxy line drops by roughly 40–50%. The range within each column depends mostly on the per-IP pace measured in Phase 0.
+One-time costs: Hetzner setup fees (€49–129 per server), and Phase 0 (about $50 for the droplet + $20–30 for test proxies).
+
+### 7.5 What keeps it affordable
+
+| Lever | Saving |
+|---|---|
+| Core vs mention split (D14) | Skips thousands of unrelated videos from big international channels: 2–5× less work |
+| Push notifications + RSS for new uploads | Detection costs almost nothing per channel |
+| Newest-first comment scans that stop at known comments | Most scans cost 1 request |
+| Tiers + capacity planner | Quiet channels are checked rarely; you add capacity only when freshness debt says so |
+| Datacenter proxies first, ISP where needed, residential off | Residential per-GB pricing would cost 10–20× more at our volume |
+| Dedicated servers with local NVMe | ~55–65% less than cloud servers for this workload |
+| Compressed archive for data older than 12 months | Stops "nothing deleted" from multiplying disk cost |
+| No raw-response storage (failures and a 1% sample only) | Saves terabytes |
+| Commenter enrichment on spare capacity only | Never slows down fresh data |
+| Phase 0 before buying | IPs and servers are bought for measured numbers, not guesses |
 
 ---
 
@@ -509,25 +602,29 @@ coverage grows.
 | **discovery** | Candidates from search hits and the channel graph; candidate check (About + channel-scoped search); core/mention classification; re-checks |
 | **registry** | The list: channel IDs, type (core/mention), tier, status (candidate / listed / dormant / no-match / suppressed), backfill progress |
 | **capacity planner** | Hourly supply vs demand; stretches long-tail intervals when short; reports freshness debt and recommended IPs/servers |
-| **scheduler** | A "next check time" per channel, video, comment stream and post. Priority queues: P0 new uploads and new-video details, P1 new comments, P2 refreshes and sweeps, P3 backfill and candidate checks |
+| **scheduler** | A "next check time" per channel, video, comment stream and post. Priority queues: P0 new uploads and new-video details, P1 new comments, P2 refreshes and sweeps, P3 backfill and candidate checks, P4 commenter enrichment |
 | **proxy-manager** | IP pool, health per IP **and per endpoint type**, subnet grouping, per-IP budgets, cooldowns, failover, the 3-IP park rule, the pool brake (§3). Credentials loaded from a file and never logged |
 | **scraper-fetcher** | InnerTube client: logged-out web client (`hl=ar`, `gl=IQ`), continuations, image CDN, client version auto-detected daily. Raw responses kept only for parse failures and a 1% sample (3 days) |
 | **parser** | Versioned, type-based parsers; validates fields and reports **field fill rates** (§8.11) |
 | **writer** | Upserts, snapshots, change detection (edits, deletions, title/description changes), runs the **keyword matcher** on all new text, drops suppressed items **before writing** |
 | **websub-receiver** | Public HTTPS endpoint; hub verification, HMAC signature checks, lease renewals |
 | **rss-poller** | Tier-interval feed checks with conditional requests; exact stats for the latest 15 videos |
-| **privacy** | Retention, pseudonymization, erasure requests, suppression list, erasure audit log |
+| **privacy** | Erasure requests, suppression list, erasure audit log. Also optional retention rules and pseudonymized exports (switched off, D18) |
+| **enrichment** | Reads commenters' public channel pages using spare capacity (P4), most active commenters first; refreshes every 6–12 months |
+| **archiver** | Moves monthly partitions older than 12 months from Postgres into compressed archive storage (ClickHouse or Parquet), still searchable |
+| **webhooks** (later, D20) | Outgoing events and alerts, signed with HMAC, with retries and a dead-letter queue |
 | **media** | Thumbnails, avatars, banners |
 | **admin CLI** (later a small web page) | Keywords, channels, tiers, review of flagged keywords, erasure requests, health |
 
 **No Kafka.** Up to ~50 requests per second is comfortable with a Postgres job queue (`FOR UPDATE SKIP LOCKED`), with the queue tables split
-by priority. **Valkey** holds per-IP rate counters, cooldowns and health, shared by all fetcher processes. At the 300,000 scale, statistics
-and analytics may move to **ClickHouse**, with Postgres keeping the main records. That decision is for later.
+by priority. **Valkey** holds per-IP rate counters, cooldowns and health, shared by all fetcher processes. The archiver stores data
+older than 12 months in **ClickHouse** or **Parquet** files. Phase 0 and the first months of data decide which.
 
 ### 8.3 Storage (Postgres + S3)
 
 - **Main tables:** `channels` (type, tier, country, links), `videos` (kind; `relevant` flag + matched keywords), `comments`,
-  `comment_versions`, `authors`, `posts`, `post_comments`, `playlists`, `playlist_items`.
+  `comment_versions`, `authors`, `author_profiles` (enrichment), `author_badges`, `posts`, `post_comments`, `playlists`,
+  `playlist_items`.
 - **Time series:** `channel_snapshots`, `video_snapshots`, `post_snapshots`, partitioned by month.
 - **Discovery:** `keywords`, `keyword_variants`, `languages`, `keyword_suggestions`, `search_hits` (API hits deleted after 30 days),
   `candidates`, `channel_links_graph`.
@@ -538,7 +635,7 @@ and analytics may move to **ClickHouse**, with Postgres keeping the main records
   - `published_at_est` + `published_at_precision_s`;
   - `like_count_min` + `like_count_text`;
   - `source` on every row (`web`, `web_search`, `rss`, `websub`, `api_search`).
-- **Large tables** (comments, snapshots) are partitioned by month, so retention drops whole partitions cheaply.
+- **Large tables** (comments, snapshots, author profiles) are partitioned by month, so the archiver can move whole old partitions cheaply.
 
 ### 8.4 How each collection works
 
@@ -600,12 +697,29 @@ hub limits us, RSS intervals are tightened automatically.
 8. **Deletions:**
    - a full sweep that no longer finds a known comment marks it missing;
    - a second miss confirms it;
-   - then the text and author data are deleted, and only a tombstone (ID hash, video, time) is kept.
+   - then it is marked deleted with the time. Its text and author data are **kept** (D18); a setting can switch this to redacting
+     instead.
 9. **Completeness per video:** collected ÷ the displayed comment count. Below 90% → re-sweep and alert.
 10. **Limits we accept:**
     - the website has no channel-wide "all new comments" feed;
     - late comments on older videos are caught by monthly or quarterly first-page scans;
     - deletions on videos older than 30 days are caught only by those scans.
+
+### 8.7a Commenter details (enrichment, D18)
+
+- **Queue:** every new commenter (by channel ID) is queued.
+- **What we read:** using **spare capacity only** (priority P4), the enrichment worker reads their public channel page and About panel:
+  - name, handle, description;
+  - country (if shown), join date;
+  - links;
+  - subscriber and video counts;
+  - avatar and banner.
+- **Order:** the most active commenters first (most comments on Iraq-relevant content), then everyone else.
+- **Refresh:** every 6 months for active commenters, yearly for the rest.
+- **Discovery link:** if a commenter's channel has uploads of its own, it goes through the candidate check (§5.4). A commenter who also
+  posts Iraq-relevant videos becomes a listed channel (D10).
+- **Cost:** about 2–3 requests per commenter. At 20,000 channels that is roughly +60–140k requests/day while catching up, and the capacity
+  planner fits it into idle time.
 
 ### 8.8 Rate limiting, retries, stability
 
@@ -621,34 +735,39 @@ hub limits us, RSS intervals are tightened automatically.
   | Network errors, 5xx | Exponential backoff with jitter (2 s, 4 s, 8 s, 16 s, 32 s), at most 5 attempts |
   | Block signals (429/403, "confirm you're not a bot", the "sorry" page) | §3 failover rules |
   | Parse errors | Raw response kept 3 days, job moved to `parse_failures`, alert on a rising rate |
-  | Video/channel gone | Re-checked once; if still gone, content deleted and a tombstone kept |
+  | Video/channel gone | Re-checked once; if still gone, marked removed with the time; stored content kept (D18) |
 
 - **Circuit breakers** per endpoint and for RSS (if more than 20% of feeds fail at once, RSS pauses and tab checks take over).
 - **Kill switches** per endpoint and per feature (comments, posts, scraped search, discovery).
 - **Safe re-runs:** all writes are upserts keyed by YouTube IDs.
 
-### 8.9 Privacy: retention, pseudonymization, erasure
+### 8.9 Privacy: what is kept, erasure (D18)
 
-**Retention defaults** (settings; can be shortened):
+**Stored in full:**
+
+- commenters' channel ID, handle, display name, avatar (URL and image) and badges (verified, channel member and for how long, creator);
+- every comment version we saw;
+- comments their authors deleted, marked deleted;
+- everything public on commenters' own channel pages, through enrichment (§8.7a).
+
+**Retention defaults:**
 
 | Data | Kept for |
 |---|---|
-| Comments, replies, versions, author data | 12 months from collection |
-| Deleted comments | Text and author removed when detected; tombstone only |
-| Snapshots (stats over time) | 36 months |
-| API search hits | 30 days (API rule) |
-| Raw debug responses | 3 days |
-| Logs | 14 days; IDs and counts only, never comment text or names |
+| Comments, replies, versions, author data and profiles | **Indefinitely** (moved to the archive after 12 months) |
+| Deleted comments | Indefinitely, marked deleted with the time |
+| Snapshots (stats over time) | Indefinitely (archived after 12 months) |
+| API search hits | 30 days (a YouTube API rule; it doesn't affect scraped data) |
+| Raw debug responses | 3 days (operational only) |
+| Logs | 14 days. IDs and counts only, never comment text or names, which keeps personal data and credentials out of log tools |
 | Backups | 30 days rolling; erasures re-applied after any restore |
 
-**Pseudonymization modes:**
+**Settings available but switched off:**
 
-| Mode | What we store |
-|---|---|
-| `pseudonymous` (default) | `author_key = HMAC-SHA256(secret, author_channel_id)`; no name, handle or avatar. Unique-author counts and erasure-by-author still work. The secret lives in a file |
-| `full` | Name, handle, avatar, channel ID |
-| `text_only` | No author key at all |
-| `aggregates_only` | No comment text, only counts and metrics |
+- time-based retention per data type;
+- redacting deleted comments;
+- pseudonymized exports and webhook payloads. These carry `author_key = HMAC-SHA256(secret, author_channel_id)` instead of names, so
+  unique-author counts still work. Useful when sharing data with people who don't need identities.
 
 **Erasure requests:**
 
@@ -724,6 +843,8 @@ How an erasure is processed:
   - API quota used and its forecast to the reset;
   - comment completeness;
   - erasure request age; suppression violations (must be 0).
+  - enrichment backlog; archive size and the age of the oldest partition still in Postgres;
+  - disk use and its forecast (months until full).
 - **Alerts:**
   - pool brake engaged;
   - IP quarantines;
@@ -756,7 +877,7 @@ Everything stays within §3.
 - **10–20 example channels** you already know (news, entertainment, Shorts-heavy, live streaming, Arabic and Kurdish);
 - any **brand/person/topic keywords** for day 1, entered on the server, not in chat if they're sensitive;
 - the API key file (§9.3);
-- one server;
+- one small DigitalOcean droplet in your existing account: 4 vCPU / 8 GB, Ubuntu 24.04 LTS, Docker (about $50 for the month);
 - **about 10 test proxy IPs from 2 providers, spread over at least 3 subnets**, so we can measure failover and subnet effects;
 - optionally, a public HTTPS subdomain for push notifications.
 
@@ -882,9 +1003,12 @@ These are small draft pull requests, each with unit and integration tests. I rev
 12. Search-runner (API quota governor + scraped search) + discovery (candidate check, channel graph, core/mention classification).
 13. Capacity planner + freshness-debt reporting.
 14. Keyword suggestions (co-occurrence, trends) + precision tracking.
-15. Retention, erasure workflow, suppression audit.
+15. Erasure workflow, suppression audit, optional retention and pseudonymized exports.
 16. Media (thumbnails, avatars, banners).
 17. Monitoring: metrics, dashboards, alerts, canaries.
+18. Commenter enrichment.
+19. Archiver: compressed history older than 12 months, still searchable.
+20. Webhooks for events and alerts (D20), once you've defined the receiving side.
 
 ---
 
@@ -892,7 +1016,7 @@ These are small draft pull requests, each with unit and integration tests. I rev
 
 | # | Risk | Impact | Mitigation |
 |---|---|---|---|
-| 1 | **YouTube's Terms; failover after blocks (D7) reads as deliberate evasion** | Legal claims, cease-and-desist | Your decision; lawyer review; no CAPTCHA/token workarounds; data minimisation; pseudonymization; aggregate reporting |
+| 1 | **YouTube's Terms; failover after blocks (D7) reads as deliberate evasion** | Legal claims, cease-and-desist | Your decision; lawyer review; no CAPTCHA/token workarounds; erasure on request; aggregate reporting |
 | 2 | **Blocking escalates** (subnet or provider bans, more anti-bot tokens) | Lost IPs, endpoints or fields | Subnet spread, 2–3 providers, the park rule, pool brake, per-endpoint switches; accept losing a field over breaking your rules |
 | 3 | **List size explodes** (D10 + D11) | Cost growth, freshness debt | Core/mention split (N1), tiering, capacity planner, freshness debt reporting, optional budget ceiling |
 | 4 | **Backfill takes long** at large scale | New channels stay partial for weeks | Priority by size and relevance; extra temporary IPs during ramp-up |
@@ -902,14 +1026,15 @@ These are small draft pull requests, each with unit and integration tests. I rev
 | 8 | **Website changes break parsers** | Data gaps | Type-based parsing, fill-rate alerts, canaries, same-day fixes |
 | 9 | **Keyword noise** (ambiguous terms, bad suggestions) | Irrelevant channels listed | Precision tracking, ban list, suggestion threshold and daily cap |
 | 10 | **Relative comment times / abbreviated likes** | Lower precision than the official API | Frequent scans on new videos; precision stored |
-| 11 | **GDPR exposure** | Fines, complaints | DPIA, legitimate-interest assessment, notice, retention, erasure + suppression, pseudonymization |
+| 11 | **GDPR exposure, raised by D18** (no time limit, full identities, enrichment, deleted comments kept) | Fines, complaints, orders to delete | Erasure + suppression always on; DPIA; legitimate-interest assessment; privacy notice; retention, redaction and pseudonymization ready as settings if a lawyer requires them |
 | 12 | **WebSub hub limits** at 100,000+ subscriptions | Slower detection | RSS tightened automatically |
-| 13 | **Database growth** (TB scale at 300,000 channels) | Cost, slow queries | Monthly partitions, retention drops, ClickHouse for analytics if needed |
+| 13 | **Storage grows forever** (D18; TB scale at 100,000+ channels) | Cost, slow queries | Monthly partitions, the compressed archive for data older than 12 months, planned server upgrades (§7.2) |
 | 14 | **Credential leak** | Abuse, cost | Files only, IP-restricted key, redaction, gitleaks, rotation |
+| 15 | **Hetzner price changes** (two rises in 2026) | Higher server cost | Prices are locked for servers already rented; OVHcloud as a fallback; the stack is provider-neutral (Docker) |
 
 ## 12. Open questions and things to verify
 
-- **N1–N4** in §1, and the still-open v2 items (privacy defaults, legal sign-off, servers, alerts, budget ceiling, live chat).
+- The three items left in §1: legal sign-off (now including D7 and D18), a subdomain for push notifications, and live chat.
 - To verify in Phase 0:
   - safe pace and failover behaviour;
   - whether the player endpoint works without anti-bot tokens;
@@ -966,3 +1091,9 @@ Primary Google pages could not be fetched from my sandbox; secondary claims are 
 - Vendor prices: [Bright Data YouTube scrapers](https://brightdata.com/blog/web-data/best-youtube-scrapers),
   [Apify YouTube comment scrapers](https://apify.com/apidojo/youtube-comments-scraper),
   [ScrapeCreators comment scrapers](https://scrapecreators.com/blog/youtube-comment-scrapers)
+- Server prices: [Hetzner price adjustment](https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/),
+  [AgentDeals Hetzner pricing after the 2026 adjustments](https://agentdeals.dev/hetzner-pricing-2026),
+  [DigitalOcean General Purpose 8 vCPU / 32 GB](https://spendark.com/instances/g-8vcpu-32gb/),
+  [OVHcloud Advance prices](https://www.ovhcloud.com/en-ie/bare-metal/advance/prices/)
+- Proxy prices: [AIMultiple ISP proxies](https://aimultiple.com/isp-proxies), [Oxylabs ISP vs datacenter](https://oxylabs.io/blog/isp-vs-datacenter-proxies),
+  [Byteful datacenter proxies](https://byteful.com/blog/best-datacenter-proxies)

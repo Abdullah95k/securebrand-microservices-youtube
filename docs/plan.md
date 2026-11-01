@@ -1,6 +1,6 @@
 # SecureBrand YouTube collector: plan v4 (draft for approval)
 
-Status: **proposal, nothing built yet.** Nothing gets implemented until you approve this plan.
+Status: **approved on 1 November 2026.** Implementation follows §10, starting with the Phase 0 kit.
 Last updated: 1 November 2026. All times are **Iraq time (UTC+3)**.
 
 History:
@@ -43,6 +43,9 @@ and YouTube's internal website endpoints are undocumented. Phase 0 (§9) confirm
 | D19 | 1 Nov 2026 | Servers: my recommendation (fbs uses DigitalOcean) → §7.2 |
 | D20 | 1 Nov 2026 | Outgoing data and alerts: mostly webhooks, designed later |
 | D21 | 1 Nov 2026 | Budget: as affordable as possible without giving up data, accuracy, speed or stability → §7.4–7.5 |
+| D22 | 1 Nov 2026 | Legal review done: a lawyer has signed off on the approach |
+| D23 | 1 Nov 2026 | Push-notification subdomain: later. Until then, new uploads are detected by RSS and channel-tab checks |
+| D24 | 1 Nov 2026 | No live chat |
 
 Your non-negotiable rules still apply:
 
@@ -106,13 +109,8 @@ D7 changes how "back off when blocked" works: it now means **the blocked IP back
 
 ## 1. Remaining questions
 
-Answered on 1 November 2026: N1–N4, privacy, servers, alerts and consumers, budget (D14–D21). Three things remain, and none of them
-blocks Phase 0:
-
-1. **Legal sign-off** before production, now also covering D7 (IP failover) and D18 (keep everything). Recommended; your decision.
-2. **A subdomain for push notifications**, for example `yt-hooks.<your-domain>`, pointed at the production server. Phase 0 can run without
-   it.
-3. **Live chat** during live streams. Out of scope by default; it can be added later.
+All questions are answered (D14–D24). The only item left for later is the **subdomain for push notifications** (D23). Until it exists,
+new uploads are detected by RSS and channel-tab checks.
 
 Defaults I've set for D18. Any of them can be changed at any time:
 
@@ -1016,7 +1014,7 @@ These are small draft pull requests, each with unit and integration tests. I rev
 
 | # | Risk | Impact | Mitigation |
 |---|---|---|---|
-| 1 | **YouTube's Terms; failover after blocks (D7) reads as deliberate evasion** | Legal claims, cease-and-desist | Your decision; lawyer review; no CAPTCHA/token workarounds; erasure on request; aggregate reporting |
+| 1 | **YouTube's Terms; failover after blocks (D7) reads as deliberate evasion** | Legal claims, cease-and-desist | Your decision; lawyer sign-off (D22); no CAPTCHA/token workarounds; erasure on request; aggregate reporting |
 | 2 | **Blocking escalates** (subnet or provider bans, more anti-bot tokens) | Lost IPs, endpoints or fields | Subnet spread, 2–3 providers, the park rule, pool brake, per-endpoint switches; accept losing a field over breaking your rules |
 | 3 | **List size explodes** (D10 + D11) | Cost growth, freshness debt | Core/mention split (N1), tiering, capacity planner, freshness debt reporting, optional budget ceiling |
 | 4 | **Backfill takes long** at large scale | New channels stay partial for weeks | Priority by size and relevance; extra temporary IPs during ramp-up |
@@ -1034,7 +1032,7 @@ These are small draft pull requests, each with unit and integration tests. I rev
 
 ## 12. Open questions and things to verify
 
-- The three items left in §1: legal sign-off (now including D7 and D18), a subdomain for push notifications, and live chat.
+- Later: the subdomain for push notifications (D23).
 - To verify in Phase 0:
   - safe pace and failover behaviour;
   - whether the player endpoint works without anti-bot tokens;

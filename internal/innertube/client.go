@@ -17,6 +17,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -229,7 +230,7 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 			return proxypool.Transient, fmt.Errorf("innertube: HTTP %d", resp.StatusCode)
 		case SignalBadRequest:
 			if u, err := resp.Location(); err == nil {
-				return proxypool.Fatal, fmt.Errorf("innertube: HTTP %d redirect to %s%s", resp.StatusCode, u.Host, u.Path)
+				return proxypool.Fatal, &RedirectError{Status: resp.StatusCode, Location: u}
 			}
 			return proxypool.Fatal, fmt.Errorf("innertube: HTTP %d", resp.StatusCode)
 		case SignalNotFound:
@@ -263,6 +264,18 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 		return out, ErrNotFound
 	}
 	return out, nil
+}
+
+// RedirectError is a redirect the client did not follow (it never follows
+// redirects itself). Callers decide, for example a channel handle that now
+// points to the channel's older custom URL.
+type RedirectError struct {
+	Status   int
+	Location *url.URL
+}
+
+func (e *RedirectError) Error() string {
+	return fmt.Sprintf("innertube: HTTP %d redirect to %s%s", e.Status, e.Location.Host, e.Location.Path)
 }
 
 // networkOutcome tells proxy failures apart from YouTube-side timeouts.

@@ -14,8 +14,6 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ytprobe ./cmd/ytpr
 # mounted read-only from the host.
 FROM gcr.io/distroless/static-debian12:latest
 COPY --from=build /out/ytprobe /usr/local/bin/ytprobe
-ENV YT_PROXIES_FILE=/etc/securebrand-youtube/proxies.txt \
-    YT_API_KEY_FILE=/etc/securebrand-youtube/youtube_api_key \
-    YT_CHANNELS_FILE=/etc/securebrand-youtube/phase0-channels.txt \
-    YT_DATA_DIR=/var/lib/securebrand-youtube/phase0
+# File locations default to /etc/securebrand-youtube/… and
+# /var/lib/securebrand-youtube/phase0 inside the program (see cmd/ytprobe).
 ENTRYPOINT ["/usr/local/bin/ytprobe"]

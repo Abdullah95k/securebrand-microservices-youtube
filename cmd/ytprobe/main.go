@@ -1,13 +1,13 @@
 // Command ytprobe runs the Phase 0 measurements (docs/plan.md §9) on the
 // server. See docs/phase0-runbook.md for the exact steps.
 //
-// Configuration comes from environment variables; secrets are read from the
-// files they name (never from the command line):
+// Secrets are read from files, never from the command line. The locations
+// can be changed with environment variables:
 //
-//	YT_PROXIES_FILE   proxy list, one per line (chmod 600)
-//	YT_API_KEY_FILE   YouTube Data API key (chmod 600); search and accuracy only
-//	YT_CHANNELS_FILE  channels to measure: @handle, channel URL or channel ID per line
-//	YT_DATA_DIR       where results are kept (deleted after 14 days)
+//	YT_PROXIES_FILE   proxy list, one per line (chmod 600); default /etc/securebrand-youtube/proxies.txt
+//	YT_API_KEY_FILE   YouTube Data API key (chmod 600); default /etc/securebrand-youtube/youtube_api_key
+//	YT_CHANNELS_FILE  channels to measure; default /etc/securebrand-youtube/phase0-channels.txt
+//	YT_DATA_DIR       results, deleted after 14 days; default /var/lib/securebrand-youtube/phase0
 //
 // Commands: check, crawl, detect, resweep, accuracy, report, cleanup.
 package main
@@ -106,7 +106,7 @@ func main() {
 		env.SavePoolStats("accuracy")
 	case "report":
 		fs.Parse(args)
-		store, serr := phase0.OpenStore(os.Getenv(phase0.EnvDataDir))
+		store, serr := phase0.OpenStore(phase0.DataDir())
 		if serr != nil {
 			fmt.Fprintln(os.Stderr, serr)
 			os.Exit(2)
@@ -114,7 +114,7 @@ func main() {
 		err = phase0.Report(store, os.Stdout, time.Now())
 	case "cleanup":
 		fs.Parse(args)
-		store, serr := phase0.OpenStore(os.Getenv(phase0.EnvDataDir))
+		store, serr := phase0.OpenStore(phase0.DataDir())
 		if serr != nil {
 			fmt.Fprintln(os.Stderr, serr)
 			os.Exit(2)

@@ -24,6 +24,31 @@ const (
 	EnvBaseURL      = "YT_BASE_URL" // tests only; default https://www.youtube.com
 )
 
+// Default locations, used when the environment variable is not set (they
+// match docs/phase0-runbook.md and plan §9.3).
+const (
+	DefaultProxiesFile  = "/etc/securebrand-youtube/proxies.txt"
+	DefaultAPIKeyFile   = "/etc/securebrand-youtube/youtube_api_key"
+	DefaultChannelsFile = "/etc/securebrand-youtube/phase0-channels.txt"
+	DefaultDataDir      = "/var/lib/securebrand-youtube/phase0"
+)
+
+// PathFromEnv returns the path in envVar, or def when it is not set.
+func PathFromEnv(envVar, def string) string {
+	if p := strings.TrimSpace(os.Getenv(envVar)); p != "" {
+		return p
+	}
+	return def
+}
+
+// DataDir is the Phase 0 data folder.
+func DataDir() string { return PathFromEnv(EnvDataDir, DefaultDataDir) }
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 // Env is everything a command needs.
 type Env struct {
 	Store     *Store
@@ -39,11 +64,11 @@ type Env struct {
 
 // Setup reads configuration from the environment. poolCfg sets pacing.
 func Setup(poolCfg proxypool.Config) (*Env, error) {
-	store, err := OpenStore(os.Getenv(EnvDataDir))
+	store, err := OpenStore(DataDir())
 	if err != nil {
 		return nil, err
 	}
-	lines, err := secrets.LinesFromEnv(EnvProxiesFile)
+	lines, err := secrets.ReadLines(PathFromEnv(EnvProxiesFile, DefaultProxiesFile))
 	if err != nil {
 		return nil, fmt.Errorf("proxy list: %w", err)
 	}
@@ -57,8 +82,9 @@ func Setup(poolCfg proxypool.Config) (*Env, error) {
 	env.Collector = &Collector{Client: env.Client, Store: store, Now: time.Now}
 	env.Feeds = feeds.NewFetcher(env.Client)
 
-	if os.Getenv(EnvAPIKeyFile) != "" {
-		key, err := secrets.FromEnv(EnvAPIKeyFile)
+	// The API key is optional (search and the accuracy check need it).
+	if keyPath := PathFromEnv(EnvAPIKeyFile, DefaultAPIKeyFile); os.Getenv(EnvAPIKeyFile) != "" || fileExists(keyPath) {
+		key, err := secrets.ReadFile(keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("API key: %w", err)
 		}
@@ -73,7 +99,7 @@ func Setup(poolCfg proxypool.Config) (*Env, error) {
 		env.API = ytapi.New(key, apiBase, ledger)
 	}
 
-	if path := os.Getenv(EnvChannelsFile); path != "" {
+	if path := PathFromEnv(EnvChannelsFile, DefaultChannelsFile); os.Getenv(EnvChannelsFile) != "" || fileExists(path) {
 		env.Channels, err = readList(path)
 		if err != nil {
 			return nil, fmt.Errorf("channel list: %w", err)

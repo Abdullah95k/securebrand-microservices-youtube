@@ -9,7 +9,7 @@
 package phase0
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,25 +66,33 @@ func (s *Store) Append(kind string, rec any) error {
 
 // ReadAll decodes every record of <kind>.jsonl.
 func ReadAll[T any](s *Store, kind string) ([]T, error) {
-	f, err := os.Open(filepath.Join(s.dir, kind+".jsonl"))
+	data, err := os.ReadFile(filepath.Join(s.dir, kind+".jsonl"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	// Every complete record ends with a newline. Text after the last newline
+	// is a record another process (a running crawl) is writing right now, so
+	// it is skipped instead of failing the whole read.
+	if i := bytes.LastIndexByte(data, '\n'); i >= 0 {
+		data = data[:i+1]
+	} else {
+		data = nil
+	}
 	var out []T
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), 64<<20)
-	for sc.Scan() {
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
 		var v T
-		if err := json.Unmarshal(sc.Bytes(), &v); err != nil {
+		if err := json.Unmarshal(line, &v); err != nil {
 			return nil, fmt.Errorf("phase0: %s.jsonl: %w", kind, err)
 		}
 		out = append(out, v)
 	}
-	return out, sc.Err()
+	return out, nil
 }
 
 // WriteJSON writes a JSON file under the data folder (atomically).

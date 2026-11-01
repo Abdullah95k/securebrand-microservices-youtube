@@ -14,8 +14,10 @@ import (
 )
 
 // stickyRig is a fake YouTube that only honours a continuation token through
-// the proxy that received it (what the live site appeared to do on
-// 1 November 2026), behind two real local forward proxies.
+// the proxy that received it, behind two real local forward proxies. The
+// empty pages of the live crawl on 1 November 2026 turned out to be a wrong
+// token (see ytparse.lastContinuation), not this; keeping a chain on one
+// visitor, as a browser does, stays as a cheap precaution.
 func stickyRig(t *testing.T, chans []fakeyt.FakeChannel) (*fakeyt.Server, *Collector) {
 	t.Helper()
 	yt := fakeyt.New()

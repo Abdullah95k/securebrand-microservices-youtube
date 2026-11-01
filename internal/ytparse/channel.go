@@ -1,6 +1,7 @@
 package ytparse
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -323,20 +324,57 @@ func firstToken(v any) string {
 	return ""
 }
 
-// lastContinuation returns the token of the last "load more" item in a list
-// response, skipping tokens nested inside comment threads (reply tokens).
+// notTheList names subtrees whose "load more" items do not continue the list
+// being read: the channel header (its description opens the About panel
+// with one), engagement panels, the top bar and entity updates.
+var notTheList = map[string]bool{
+	"header": true, "engagementPanels": true, "showEngagementPanelEndpoint": true,
+	"topbar": true, "frameworkUpdates": true,
+}
+
+// lastContinuation returns the "load more" token of the list a channel tab,
+// search or continuation response holds. The token must sit in a list next
+// to at least one item, outside the subtrees in notTheList; when several
+// lists qualify, the one with the most items wins. Tokens that open a panel
+// or a comment's replies sit alone in their list and never win.
+//
+// The live crawl of 1 November 2026 shows why: every tab's first page also
+// carries the channel header, whose About-panel token came last in the
+// response, so the "next page" fetched was the About panel and held nothing.
 func lastContinuation(data any) string {
-	token := ""
-	for _, arr := range append(jsonx.FindAll(data, "continuationItems"), append(jsonx.FindAll(data, "contents"), jsonx.FindAll(data, "items")...)...) {
-		items, _ := arr.([]any)
-		for _, it := range items {
-			if cir := jsonx.Map(it, "continuationItemRenderer"); cir != nil {
-				if t := firstToken(cir); t != "" {
-					token = t
+	token, best := "", 0
+	var walk func(any)
+	walk = func(n any) {
+		switch t := n.(type) {
+		case map[string]any:
+			keys := make([]string, 0, len(t))
+			for k := range t {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				if !notTheList[k] {
+					walk(t[k])
 				}
+			}
+		case []any:
+			tok, items := "", 0
+			for _, e := range t {
+				if cir := jsonx.Map(e, "continuationItemRenderer"); cir != nil {
+					if x := firstToken(cir); x != "" {
+						tok = x
+					}
+					continue
+				}
+				items++
+				walk(e)
+			}
+			if tok != "" && items > best {
+				token, best = tok, items
 			}
 		}
 	}
+	walk(data)
 	return token
 }
 

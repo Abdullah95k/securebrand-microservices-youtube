@@ -1,0 +1,6 @@
+# Verified false positives only. Each line is one finding's fingerprint
+# (commit:file:rule:line). Never add real secrets here: rotate them instead.
+#
+# An invented test token in a skeleton test ("Eg0S…"), not a credential.
+# The test now builds the value at run time; this line covers the old commit.
+5987e353b5ea1dbf64ed14708e0900afc87f6195:internal/skeleton/skeleton_test.go:generic-api-key:13

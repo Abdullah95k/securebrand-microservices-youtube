@@ -83,6 +83,25 @@ func TestCommentSweepStaysOnOneProxy(t *testing.T) {
 	}
 }
 
+// TestSweepLimitZeroReadsAll: 0 means every comment and reply; a positive
+// limit stops there and marks the sweep capped.
+func TestSweepLimitZeroReadsAll(t *testing.T) {
+	_, col := stickyRig(t, fakeChannels())
+	var cost Cost
+	vr, err := col.Video(context.Background(), "fakeV1", false, &cost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := col.Sweep(context.Background(), "fakeV1", vr.Watch.ChannelID, vr.Watch.CommentsToken, vr.Proxy, 0, &cost)
+	if err != nil || all.TopLevel != 3 || all.Replies != 1 || all.Capped {
+		t.Fatalf("limit 0: %d comments, %d replies, capped %v, err %v; want 3, 1, not capped", all.TopLevel, all.Replies, all.Capped, err)
+	}
+	some, err := col.Sweep(context.Background(), "fakeV1", vr.Watch.ChannelID, vr.Watch.CommentsToken, vr.Proxy, 2, &cost)
+	if err != nil || some.TopLevel+some.Replies != 2 || !some.Capped {
+		t.Fatalf("limit 2: %d read, capped %v, err %v; want 2 and capped", some.TopLevel+some.Replies, some.Capped, err)
+	}
+}
+
 func TestResolveFallsBackToChannelPage(t *testing.T) {
 	yt, col := stickyRig(t, fakeChannels())
 	// resolve_url answers without a channel ID, as it did for some

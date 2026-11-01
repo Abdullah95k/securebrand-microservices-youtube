@@ -76,7 +76,7 @@ func main() {
 		o := phase0.DefaultCrawlOptions()
 		days := fs.Int("window-days", 365, "backfill window in days")
 		fs.IntVar(&o.VideosPerChan, "videos", o.VideosPerChan, "videos per channel checked in depth")
-		fs.IntVar(&o.CommentLimit, "comments", o.CommentLimit, "maximum comments read per video")
+		fs.IntVar(&o.CommentLimit, "comments", o.CommentLimit, "maximum comments read per video (0 = all)")
 		fs.IntVar(&o.Workers, "workers", o.Workers, "channels processed in parallel")
 		fs.IntVar(&o.Limit, "limit", 0, "crawl only the first N channels of the list (0 = all); for quick tests")
 		noPlayer := fs.Bool("no-player", false, "skip the player endpoint (tags, category)")
@@ -101,7 +101,7 @@ func main() {
 			err = nil
 		}
 	case "resweep":
-		limit := fs.Int("comments", 2000, "maximum comments read per video (use the crawl's value)")
+		limit := fs.Int("comments", 0, "maximum comments read per video, 0 = all (use the crawl's value)")
 		fs.Parse(args)
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
 		err = phase0.Resweep(ctx, env.Collector, *limit, log)

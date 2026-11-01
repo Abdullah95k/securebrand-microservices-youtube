@@ -1,439 +1,351 @@
-# SecureBrand YouTube collector: plan (draft for approval)
+# SecureBrand YouTube collector: plan v2 (draft for approval)
 
 Status: **proposal, nothing built yet.** Nothing gets implemented until you approve this plan.
 Last updated: 1 November 2026. All times are **Iraq time (UTC+3)**.
 
-How to read this:
+Version 2 rewrites the plan around your answers of 1 November 2026: scraping for watched channels, the official API for search only.
 
-- Section 1 has my questions for you, all in one place. Until you answer, I've used the assumptions listed under them.
-- Sections 2–4 cover what YouTube data we can realistically get, the ways to get it, and my recommendation.
-- Sections 5–8 cover the rules that shape the design, the quota maths, what you need to provide (with costs), and the architecture.
-- Section 9 is the small first experiment (Phase 0). Sections 10–12 cover the delivery order, risks and open questions.
-
-Legend: **[verify]** marks a fact I could not check against Google's own pages, because `developers.google.com` is blocked from my
-build sandbox. These facts come from secondary sources or my own knowledge. Phase 0 (or one manual read of the page) will confirm each one
-before we rely on it.
+Legend: **[verify]** marks a fact I could not check against a primary source. Google's developer site is blocked from my build sandbox,
+and YouTube's internal website endpoints are undocumented. Phase 0 (§9) confirms or rejects every [verify] item before we build on it.
 
 ---
 
-## 0. The short version
+## 0. Decisions so far, and the short version
 
-- **Use YouTube's official Data API as the backbone.** It is free in money terms. It covers channels, videos, Shorts, live streams,
-  comments, replies and playlists. Its limit is a daily "quota" of request units, not a bill.
-- **Detect new uploads in three layers.** YouTube's official push notifications (WebSub) usually arrive within minutes. RSS polling is the
-  backup. A periodic check of each channel's upload list catches anything both missed.
-- **Some things you asked for are not in the official API.** These are community posts, "pinned" and "hearted" comment flags,
-  transcripts of other people's videos, the links on a channel's About page, and stats from before we start watching a channel. The only
-  ways to get them are scraping YouTube's website (against YouTube's Terms) or buying them from a scraping vendor. I recommend we start
-  without them and decide field by field later.
-- **Two YouTube API rules shape the whole design.**
-  1. Data from the API must be **refreshed or deleted every 30 days**.
-  2. Keeping **statistics history longer than 30 days**, or computing our own scores such as sentiment, needs YouTube's approval. Approved
-     clients may keep this data for up to 36 months.
-  Both requests go through the same "quota extension" form, and the review takes weeks. We should apply in week 1.
-- **Cost estimate:** roughly **$75–340 per month** for about 1,000 channels on the recommended path, mostly for a server. No proxies are
-  needed. Doing the same through paid scraping vendors would cost tens of thousands of dollars a month at that comment volume.
-- **Phase 0 comes first:** a two-week measurement on 10–20 real channels to replace my estimates with real numbers.
+### 0.1 Your decisions (1 November 2026)
+
+| # | Decision |
+|---|---|
+| D1 | **Scope:** thousands of channels relevant to Iraq and the Iraqi audience |
+| D2 | **No client-owned channels:** no owner logins, no Analytics API |
+| D3 | **Discovery:** search all of YouTube for keywords. Channels whose videos match are added to the watch list |
+| D4 | **Scraping** (logged out) for the watched channels and their content. The **official Data API is used for search only** |
+| D5 | **Goal:** as optimized as possible while keeping the highest quality, stability, data volume, speed and accuracy |
+| D6 | **No reuse of the Facebook project ("fbs") for now:** a standalone stack, which can be connected later |
+
+Your non-negotiable rules still apply in full:
+
+- public data only, and no logins;
+- no getting around bot checks or CAPTCHAs, pacing and backing off;
+- privacy controls for comment data;
+- no credentials or real data in the repo.
+
+§3 turns them into concrete scraper behaviour.
+
+### 0.2 The short version
+
+- **Collection:** a scraper reads YouTube's website endpoints the way a logged-out browser does. It covers channels, videos, Shorts, live
+  streams, comments and replies (**including pinned and hearted flags**), community posts, playlists, and the links on each channel's About
+  page. That is more fields than the official API offers.
+- **What the scraper loses compared with the official API:**
+  - **Comment timestamps are relative** ("3 days ago"). We make them precise for new comments by checking often.
+  - **Large comment like counts are abbreviated** ("1.2K").
+  - **Website changes break the scraper** a few times a month and need quick fixes.
+- **What is not possible within your rules:**
+  - **video/audio files**;
+  - most likely **transcripts**.
+  Both now need anti-bot tokens from YouTube's BotGuard system, and generating those would mean getting past a bot check.
+- **Discovery:** the official search API. The free quota allows **about 100 searches per day**, each returning up to 50 videos. We combine
+  keywords per search (`بغداد|البصرة|الموصل`) to stretch that. More quota would need a YouTube audit, which an application that also scrapes
+  YouTube should not expect to pass. Optionally we can also scrape YouTube search for wider coverage (question Q2).
+- **New uploads:** YouTube's push notifications (WebSub) usually arrive within minutes. RSS feeds are the backup, and also give exact
+  view/like counts for each channel's latest 15 videos.
+- **Scale and cost:**
+  - 5,000 channels ≈ **400,000 requests/day** (about 5 per second), spread over **20–40 proxy IPs** at a polite pace per IP;
+  - estimated **$150–450 per month** on datacenter/ISP proxies, or up to about $750 if some traffic needs residential proxies.
+- **Legal risk you are accepting:** YouTube's Terms forbid automated access and collecting information that identifies people. That risks
+  IP blocks, legal claims, and losing the API key used for search. Please get a lawyer's sign-off (§4).
+- **Phase 0 comes first:** two weeks of careful measurement. It finds how fast we can go without triggering bot checks, which fields really
+  come back, and how much keyword search really finds.
 
 ---
 
-## 1. Questions for you (all at once)
+## 1. Remaining questions (all at once)
 
-Your brief still has the placeholder "[the brands, creators or competitors we watch, and roughly how many channels]", so the first question
-matters most.
-
-**Scope and volume**
-
-1. **Which channels, and how many?** Give a rough count per type: brands' own channels, creators, competitors. Also: how fast will the list
-   grow?
-2. **Third-party public channels only, or also our clients' own channels?** For clients' own channels, the owner can grant us access
-   (OAuth). That unlocks the Analytics API: daily history back to the channel's creation, watch time and demographics. That data is the
-   owner's private data, not public, so it would be an explicit exception to "public data only". Do you want that exception, for owner-
-   authorized data only?
-3. **Do we only watch listed channels, or also look for mentions of your brands on any channel?** YouTube search costs 100 quota units per
-   request, against 1 unit for most other requests, so searching for mentions is the single biggest quota cost. Example: 50 keywords
-   checked every 2 hours ≈ 60,000 units/day.
-4. **Languages** (Arabic, Kurdish, English, others)? This affects search keywords and transcript options.
-
-**Freshness and depth**
-
-5. **How fast must new uploads be detected?** Minutes, under an hour, or same day?
-6. **How fresh must view/like/comment counts be?** For example, hourly for the first 2 days after upload, then less often.
-7. **How far back for each new channel?** Video list and current metadata are cheap for the full history. **Comments are the expensive
-   part.** All comments ever, or only on videos from the last N months?
-8. **How fast must new comments appear?** For example, within 1 hour on new videos and within a day on old ones.
-
-**Content**
-
-9. **Do you need video/audio files**, or only metadata and thumbnails? Downloading videos is explicitly against YouTube's Terms and raises
-   copyright questions. I recommend metadata and thumbnails only.
-10. **Transcripts:** how important are they, and for which analysis? For other people's videos the official API does not provide them (see
-    §2).
-11. **Community posts and pinned/hearted comment flags:** must-have or nice-to-have? Neither is in the official API.
-12. **Live streams:** is the viewer count during the stream enough, or do you also need the **live chat**? Live chat is out of scope unless
-    you ask for it.
-13. **Deleted comments:** is it enough to record *that* a comment was deleted, and when? Keeping the deleted *text* conflicts with both the
-    API rules and the privacy rules, so I recommend recording only the fact.
-
-**Compliance and legal**
-
-14. **Gaps policy:** for data the official API can't give, may we buy it from a vendor such as ScrapeCreators, Apify or Bright Data, after
-    a legal check? Or do we stay official-API-only? (I recommend: official API only to start, then decide per field.)
-15. **Statistics history:** OK to apply to YouTube for permission to store statistics for more than 30 days, and to compute derived metrics
-    such as sentiment and scores? If they refuse, is a 30-day trend window acceptable?
-16. **Privacy defaults:**
-    - Comment retention: I propose 12 months.
-    - Author pseudonymization: on by default, or opt-in per client?
-    - Where do erasure requests come from, and who handles them?
-    - Are any commenters in the EU or UK? If so, GDPR applies.
-17. **Legal entity and public privacy policy URL.** YouTube's audit requires a public privacy policy. Do we have one that covers YouTube
-    data?
-
-**Infrastructure and budget**
-
-18. **Budget per month?**
-19. **Reuse the Facebook project's ("fbs") infrastructure?** That means the same Postgres, Redpanda, Valkey, S3 and analysis service. If
-    yes, **please attach `Abdullah95k/securebrand-microservices` to this session** so I can check what fits instead of guessing. See §8.13
-    for what I'd check.
-20. **Servers:** what server(s) do you have, and in which country? Do you have a domain where we can expose one public HTTPS address? The
-    push notifications need it.
-21. **Google account:** do you already have a Google Cloud project or organization for SecureBrand? Creating the project and API key uses a
-    Google account. That is not "logging in to scrape": the account only owns the project and key.
-22. **Alerts:** where should alerts go (Telegram, email, Slack)?
-23. **Consumers:** who reads the collected data? A dashboard, an internal API, or only the analysis service?
+1. **Your rules applied to scraping:** please confirm my reading in §3:
+   - **(a)** we may use a **pool of proxy IPs**, each at a slow, polite pace;
+   - **(b)** when YouTube shows a bot check, that IP stops and **everything slows down**. We never solve, bypass, or immediately retry the
+     check from another IP;
+   - **(c)** anything that needs YouTube's anti-bot tokens is **out of scope**: video/audio files, and probably transcripts.
+2. **Search breadth:** official API only (about 100 searches/day, as you said), or **also scrape YouTube search**? Scraped search has no
+   quota and would find far more channels. It is the same legal category as the rest of what we scrape. I recommend both, with the API for
+   scheduled sweeps and scraped search for breadth.
+3. **Keywords:**
+   - the keyword list or categories (brands, people, places, topics);
+   - the languages: Arabic, Kurdish (Sorani/Kurmanji), English, Turkmen?
+4. **"Relevant to Iraq": what makes a found channel join the watch list automatically?** My proposal:
+   - the channel lists Iraq as its country, or its content is mostly Arabic/Kurdish with Iraqi place names;
+   - and it has ≥ 1,000 subscribers;
+   - and it uploaded in the last 90 days;
+   - borderline channels go to a review list;
+   - at most N new channels per day (for example 100).
+5. **Watch-list size:** what target for the first year (2,000, 5,000, 10,000)? It drives the proxy count and cost.
+6. **Tiers:** OK to sort channels automatically into tiers A (top ~10%), B and C by size, activity and keyword relevance, with manual
+   overrides? See §6.2.
+7. **Backfill for each new channel:** I propose metadata for **all** its videos, but comments only from the **last 90 days** (deeper for
+   tier A). Comments are about 80% of backfill cost, so this decides how fast new channels become useful.
+8. **Freshness targets:** OK with the defaults in §8.6? For example, tier A: new upload within minutes, new comments within 1 hour.
+9. **Privacy defaults:**
+   - comments and commenter data kept **12 months**;
+   - commenter identities **pseudonymized by default**.
+   Large Iraqi diaspora communities live in Germany, Sweden and other EU countries, so GDPR will apply to some commenters.
+10. **Legal sign-off:** will a lawyer review the scraping and personal-data risk (§4) before production?
+11. **Servers:** what server(s) do you have, and in which country? Do you have a domain for one public HTTPS address (needed for push
+    notifications)?
+12. **Alerts and consumers:** where should alerts go (Telegram, email, Slack)? Who reads the data: a dashboard, an internal API, an
+    analysis service?
+13. **Phase 0 accuracy check:** may Phase 0 make a **one-time** call to the official API for about 200 videos (≈ 10 quota units)? It would
+    measure how accurate the scraped numbers are. This is outside "API for search only", so I'm asking.
+14. **Budget ceiling:** "as optimized as possible" is noted. Is the recommended configuration in §7 (≈ $150–450/month at 5,000 channels)
+    acceptable, or is there a hard limit?
+15. **Live chat** during live streams: wanted? It can be scraped logged out, but it is high volume. Out of scope by default.
 
 ### Assumptions used until you answer
 
 | Topic | Assumption |
 |---|---|
-| Channels | Three sizes modelled: **S = 100**, **M = 1,000** (main case), **L = 5,000** |
-| Average channel | 600 videos in total (Shorts included), 15 new uploads/month, 300 comments per video (top-level + replies) |
-| Comment window | Comments kept and refreshed for videos from the **last 12 months** |
-| Freshness | New uploads: under 15 minutes. New-video stats: hourly for 48 hours. New comments on new videos: within 1 hour |
-| Media | Metadata + thumbnails only; no video/audio files |
-| Gap fields | Not collected in v1 |
-| Owned channels | Not in v1; designed so they can be added later |
-
-Real channels have a heavy tail: a few viral videos can have 100,000+ comments. Phase 0 measures the real spread.
+| Watch list | Three sizes modelled: **2,000 / 5,000 (main case) / 10,000** channels |
+| Average channel | 500 videos (many Shorts), 20 uploads/month, 200 comments per video (top-level + replies); heavy tail |
+| Tier mix | A 10%, B 40%, C 50% |
+| Comment retention | 12 months |
+| Backfill | All video metadata; comments for the last 90 days |
+| Search | API only, ~100 searches/day |
+| Media | Thumbnails, avatars and banners only |
 
 ---
 
-## 2. What's realistic: field by field
+## 2. What we'll collect, from where, and how accurate it is
 
-✅ = official Data API, using only an API key (no login). 🔑 = only with the channel owner's authorization. ❌ = not in any official API.
+Sources:
+
+- **Web** = YouTube's internal website endpoints, logged out. These are `youtubei/v1/browse`, `/next`, `/player` and the watch page.
+  Together they are called "InnerTube".
+- **RSS / WebSub** = public channel feeds and push notifications.
+- **API** = the official Data API, used for search only.
 
 ### Channel
 
-| Field | Official API | Notes |
+| Field | Source | Accuracy / notes |
 |---|---|---|
-| Name, description, country, creation date | ✅ `channels.list` (snippet) | 1 unit per call; up to 50 channels per call |
-| Handle (@name) | ✅ `snippet.customUrl`; `forHandle` lookup turns a handle into a channel ID | |
-| Subscriber, view, video counts | ✅ (statistics) | **Subscriber count is rounded to 3 significant figures** (1,234,567 → 1,230,000), and creators can hide it. So changes on big channels show up as steps, not smooth curves |
-| Avatar, banner, keywords, trailer | ✅ (snippet thumbnails, brandingSettings) | |
-| Links on the About page | ❌ | Only on the website. Links written in the description can be parsed out |
-| Changes over time | ✅ we take snapshots from day 1 | **No past history** before we start watching. **Storing history beyond 30 days needs YouTube approval** (§5). Past history: Social Blade (paid) or the owner's Analytics 🔑 |
+| Name, handle, description, country, join date | Web (channel page + About panel) | Exact |
+| **Links on the About page** | Web (About panel) | Exact |
+| Subscriber count | Web | **Abbreviated** ("1.23M"), like the website shows. The official API is rounded to 3 digits too, so no real loss |
+| Total views, video count | Web (About panel) | Exact [verify] |
+| Avatar, banner | Web → image CDN | Exact; images fetched from YouTube's image servers (no bot checks there) |
+| Featured / linked channels | Web (Channels tab, About) | Exact; also feeds discovery (§5) |
+| Change history | Our own snapshots from day 1 | No history before day 1 |
 
 ### Videos, Shorts, live streams
 
-| Field | Official API | Notes |
+| Field | Source | Accuracy / notes |
 |---|---|---|
-| Title, description, publish time, duration, tags, category, language, thumbnails, made-for-kids, region restrictions, topics, "has captions" flag | ✅ `videos.list` | 1 unit per call; up to 50 videos per call |
-| View, like, comment counts | ✅ | Dislikes have been hidden since 2021. We build "over time" ourselves from snapshots (30-day limit unless approved) |
-| Is it a Short? | ❌ no official flag | Each channel has hidden playlists: `UUSH…` (Shorts), `UULF…` (long videos), `UULV…` (live streams). They are read through the official API but **undocumented** [verify in Phase 0]. Fallback: duration ≤ 3 minutes as a hint only |
-| Live / upcoming / premiere | ✅ `liveBroadcastContent`, `liveStreamingDetails` | Scheduled/actual start and end times, concurrent viewers while live |
-| Chapters | Partly | Chapters the creator wrote in the description: ✅ we parse them. YouTube's automatic chapters: ❌ |
-| Paid-promotion flag | 🔑 | Only the video owner can read it |
-| Unlisted / private videos | ❌ by our rules | Public data only |
-| Full upload history | ✅ the channel's uploads playlist, 50 per call | Very large channels: check that the full list comes back [verify in Phase 0] |
-
-### Captions and transcripts
-
-| What | Official API | Notes |
-|---|---|---|
-| Whether captions exist | ✅ `contentDetails.caption` | |
-| Caption text of **other people's** videos | ❌ | `captions.download` needs the video owner's authorization (about 200 units) [verify]. The website's transcript endpoint now needs "proof-of-origin" tokens produced by YouTube's anti-bot system (BotGuard), and blocks datacenter IPs. Getting past that would break our "no bot-check workarounds" rule. Remaining options: a vendor, or accept the gap |
-| Caption text of **clients' own** videos | 🔑 `captions.download` | With the owner's OAuth grant |
+| Title, description, channel | Web (`/next` or watch page); RSS for new uploads | Exact |
+| Publish time | RSS/WebSub (exact, new uploads); Web player data (date or date-time [verify]) | Exact for new videos; possibly date-only for old ones |
+| Duration | Web (player data; tab listings show "12:34") | Exact |
+| Tags, category | Web (**player data only**) | Only if the player endpoint answers without a bot check from our IPs [verify, critical]. Otherwise we drop these fields rather than push |
+| Views | Web (exact "12,345 views"); RSS (exact, latest 15 videos) | Exact |
+| Likes | Web (like button label); RSS (latest 15) | Exact [verify]; dislikes are not public |
+| Comment count | Web (comments header) | Exact or abbreviated [verify] |
+| Shorts vs long video vs live | Web (separate Videos / Shorts / Live tabs) | Exact, from the tab the video appears in |
+| Live status, schedule, live viewers | Web (live badge, `updated_metadata`) | Viewer count every 5 min while live |
+| **Chapters** (creator-written **and automatic**) | Web (`/next`) | Exact |
+| Thumbnails | Image CDN | Exact |
+| Transcripts | Web | **Probably not available within your rules.** In 2026 the transcript endpoints need BotGuard "proof-of-origin" tokens. Phase 0 checks honestly; if blocked, we stop |
+| Video/audio files | — | **Out of scope:** streams need anti-bot tokens, and downloading media is also a copyright issue |
 
 ### Comments and replies
 
-| Field | Official API | Notes |
+| Field | Source | Accuracy / notes |
 |---|---|---|
-| Text, author name, author channel ID, author avatar, publish time, likes, reply count | ✅ `commentThreads.list`, `comments.list` | 1 unit per page of up to 100 |
-| Replies | ✅ | A thread includes at most 5 replies; the full set comes from `comments.list?parentId=…` |
-| Edits | ✅ derived | `updatedAt` later than `publishedAt` means edited. We compare on each refresh |
-| Deletions | ✅ derived | A comment missing from a full re-scan is deleted or hidden. We record **that** it happened, not its text (Q13) |
-| Creator replies | ✅ derived | Reply author = channel owner |
-| Pinned / hearted by creator | ❌ | Website only (yt-dlp exposes `is_pinned` / `is_favorited`). Vendor or gap |
-| Held for review / spam | ❌ | Not public; excluded even for owned channels |
-| Comments turned off | ✅ | The API answers `commentsDisabled` |
-| Comments on all of a channel's videos, newest first | ✅ `allThreadsRelatedToChannelId` | A cheap way to catch new comments on old videos [verify the ordering and coverage in Phase 0] |
+| Text, author channel ID, author handle/name, avatar | Web (`/next` comment pages) | Exact |
+| **Publish time** | Web | **Relative** ("3 hours ago", "2 years ago"). For comments we first see soon after posting, we store a precise estimate (error ≤ our scan interval). Backfilled old comments only get coarse values ("2 years ago" ≈ ±6 months). Each comment stores its precision |
+| Likes | Web | Exact below 1,000; **abbreviated above** ("1.2K"). We store the lower bound plus the text [verify] |
+| Reply count, replies | Web (reply pages) | Exact |
+| **Pinned, hearted by creator, reply from creator** | Web | Exact |
+| Edited | Web ("(edited)" marker) | Exact, and we keep earlier versions we saw |
+| Deleted | Derived: missing on a re-scan | Detected during sweeps (§8.7); we keep only the fact, not the text |
+| Order | Web "Newest first" sort | Lets us stop scanning as soon as we reach known comments |
 
-### Community posts, playlists, new uploads, backfill
+### Community posts, playlists, new uploads
 
-| What | Official API | Notes |
+| What | Source | Notes |
 |---|---|---|
-| Community posts | ❌ | Not in any official API. Website or vendor only |
-| Playlists and their items | ✅ `playlists.list`, `playlistItems.list` | |
-| New uploads, quickly | ✅ WebSub push (documented in the Data API guides) + RSS + uploads playlist | See §8.5 |
-| Backfill per new channel | ✅ all videos and current metadata; all **currently visible** comments | ❌ past statistics, ❌ comments deleted before we arrived |
+| **Community posts** (text, images, polls, likes, comment count, post comments) | Web (Posts tab) | Likes abbreviated; publish time relative |
+| Playlists and items | Web (Playlists tab, playlist pages) | Exact |
+| New uploads | WebSub push + RSS + channel tabs | §8.5 |
+| Keyword search | **API** `search.list` (+ optional scraped search) | §5 |
 
 ---
 
-## 3. The ways to get the data, compared
+## 3. How the scraper follows your rules
 
-The costs below are for the **M scenario (1,000 channels)** unless stated otherwise.
-
-### 3.1 YouTube Data API v3 (official)
-
-- **Gets:** everything ✅ in §2.
-- **Can't get:** community posts, pinned/hearted flags, other people's caption text, About-page links, automatic chapters, an official
-  Shorts flag, past statistics, dislikes.
-- **Quota:**
-  - 10,000 units per day per Google Cloud project by default.
-  - Most reads cost 1 unit for up to 50 items (100 for comments).
-  - `search.list` costs 100 units. `captions.list` costs 50.
-  - Failed requests cost units too.
-  - Quota resets at **midnight US Pacific time**: **11:00 Iraq time** until 13 March 2027, and **10:00 Iraq time** during US daylight saving
-    (14 March – 6 November 2027).
-- **Raising quota:**
-  - Submit the *YouTube API Services – Audit and Quota Extension Form*. YouTube runs a compliance audit, with no fee. Reported waiting
-    times range from weeks to months, and approval isn't guaranteed.
-  - Spreading the load over several Google Cloud projects to multiply the quota is not allowed. Google has warned developers about "multiple
-    projects acting as one" and threatened to restrict them.
-  - Since **1 June 2026** the same form is where you apply for derived metrics and longer statistics storage (§5).
-- **Money cost:** $0.
-- **Reliability:** high. The API is documented and versioned; expect occasional 5xx errors that retries handle.
-- **Blocking risk:** none in the usual sense. The limit is quota, not IP blocks. Misusing the key can get it suspended.
-- **Terms and legal:** permitted use, with obligations:
-  - refresh or delete data every 30 days;
-  - limits on storing statistics history;
-  - a public privacy policy;
-  - periodic audits.
-  The API terms also prohibit scraping, so mixing scraped data into the same system is an audit risk [verify exact wording]. Comment data
-  is still personal data under GDPR.
-- **Maintenance:** low.
-
-### 3.2 YouTube Analytics API + Reporting API (owned channels only)
-
-- **Gets, with the owner's OAuth grant:**
-  - daily history back to channel creation: views, watch time, average view duration, subscribers gained and lost, likes, shares,
-    comments, traffic sources, geography, aggregated demographics;
-  - bulk daily reports from the Reporting API [verify which reports include impressions and click-through rate];
-  - owner-only Data API features: caption download and the paid-promotion flag.
-- **Can't get:** anything about channels whose owner hasn't granted access.
-- **Quota:** separate from the Data API, and generous. **Cost:** $0.
-- **Reliability:** high. Owners can revoke the grant at any time; we must notice and delete their data.
-- **Terms and legal:** the cleanest option. It is "Authorized Data": we can keep it while the grant is valid, re-checking at least every 30
-  days. But it is **not public data**, so it needs your explicit exception (Q2).
-- **Extra step:** Google must verify our OAuth consent screen for the YouTube read-only scopes [verify current scope classification]. That
-  takes time. Until then we can run in "testing" mode with up to 100 users.
-- **Maintenance:** low to moderate: the consent flow and encrypted token storage.
-
-### 3.3 YouTube's website endpoints, logged out ("InnerTube", the `youtubei/v1/...` calls the website makes)
-
-- **Gets:** almost everything the website shows: community posts, pinned/hearted flags, About links, automatic chapters, Shorts tabs, and
-  newest-first comments.
-- **Can't get within our rules:** transcripts and video streams. These now need anti-bot "proof-of-origin" tokens, and datacenter IPs get
-  "Sign in to confirm you're not a bot". The workarounds are generating BotGuard tokens (getting past a bot check) or using logged-in
-  cookies (logging in). **Both are forbidden by your rules.**
-- **Cost:** no fee. But at M volume from one server we would be throttled and blocked. Residential proxies would cost about **$1,000–5,000
-  per month** (300–600 GB at roughly $3–8/GB), plus engineering time.
-- **Quota:** none published. Limits are adaptive and undocumented.
-- **Reliability:** low to medium. The internal JSON changes often and without notice, and YouTube runs A/B experiments on it.
-- **Blocking risk:** high from datacenter IPs, escalating to bot checks.
-- **Terms and legal:** **YouTube's Terms of Service forbid automated access** (except search engines, or with written permission). They
-  also forbid collecting information that identifies people, such as usernames, and that is exactly what comment collection does. Risks:
-  breach-of-contract claims, IP bans, and **putting our official API access at risk** if the audit finds scraping. GDPR still applies.
-- **Maintenance:** high.
-
-### 3.4 RSS feeds and WebSub push (new uploads)
-
-- **RSS** (`https://www.youtube.com/feeds/videos.xml?channel_id=UC…`):
-  - Gets the latest ~15 uploads per channel (Shorts and scheduled streams included [verify]): title, description, publish and update times,
-    thumbnail, views and likes.
-  - Free, no quota. Low blocking risk at about one fetch every 15 minutes per channel.
-  - **Reliability is medium:** feed readers report bursts of 404 errors lasting hours, so it can't be our only signal.
-  - Terms risk is low: it is a public feed meant for feed readers, though technically still automated access.
-- **WebSub push:** documented in the Data API guides. Hub: `https://pubsubhubbub.appspot.com/`. Topic:
-  `https://www.youtube.com/xml/feeds/videos.xml?channel_id=UC…`.
-  - YouTube POSTs to us when a channel uploads a video, or changes a title or description. Deletions arrive as a separate
-    `at:deleted-entry` element [verify].
-  - Needs a public HTTPS address and lease renewal every few days. The lease length is not officially documented; projects use 5 days, and
-    up to ~9.5 days is reported [verify].
-  - Free. The most official and fastest signal.
-- **Can't get:** older uploads, comments, channel stats.
-- **Maintenance:** low.
-
-### 3.5 yt-dlp and similar tools
-
-- **Gets:** full metadata, chapters, subtitles (automatic ones too), comments with pinned/hearted/uploader flags, media files.
-- **Can't get within our rules:** reliable operation from a server in 2026. "Sign in to confirm you're not a bot" errors are widespread. The
-  documented fixes are browser cookies (logging in) or proof-of-origin token plugins (getting past a bot check). Both are excluded.
-- **Cost:** free software. Proxies cost extra if used.
-- **Reliability:** breaks often and needs updates almost weekly.
-- **Terms and legal:** the same Terms problem as 3.3. Downloading media is also explicitly prohibited, and raises copyright issues.
-- **Maintenance:** high.
-- **Verdict:** not for production. This also covers using it to fill gaps.
-
-### 3.6 Paid third-party data APIs
-
-- **Examples:**
-  - ScrapeCreators, which is already connected to your Claude workspace;
-  - Apify "actors" (ready-made scrapers sold on Apify's marketplace);
-  - Bright Data;
-  - SerpApi, for search;
-  - Social Blade Business API, for **past** channel statistics.
-- **Gets:** the gaps: community posts, transcripts, pinned/hearted flags, About links, Shorts lists. Social Blade adds subscriber and view
-  history from before we started.
-- **Prices seen (Nov 2026, check at signup):**
-  - Comments: Apify actors about **$0.40–2.50 per 1,000 comments**.
-  - Bright Data: about **$1–1.50 per 1,000 records**.
-  - ScrapeCreators: about 1 credit per request, around $1–2 per 1,000 requests depending on plan.
-  - Social Blade: credits at **$0.06–0.50 each**.
-- **Cost at our volume:**
-  - As the backbone, comments alone (≈ 54 M comments, re-fetched monthly) would cost about **$27,000–80,000 per month**. Not viable.
-  - For small gap volumes (community posts, transcripts for new videos only): about **$20–200 per month**.
-- **Reliability:** medium. These vendors scrape YouTube too, so they have outages when YouTube changes things. Watch for vendor churn.
-- **Blocking risk:** carried by the vendor.
-- **Terms and legal:** the data still comes from scraping YouTube. We remain the **controller** for any personal data under GDPR (the party
-  responsible for it). We still need a data processing agreement and a legal review. **Prefer them for non-personal fields** (community
-  posts, transcripts) over commenter identities. It may also matter for the YouTube audit (§11).
-- **Maintenance:** low to medium.
-
-### 3.7 Scorecard
-
-| Approach | Coverage | Cost at M | Reliability | Blocking risk | Terms/legal risk | Maintenance |
-|---|---|---|---|---|---|---|
-| Data API v3 | High (with gaps) | $0 | High | None (quota) | **Low** | Low |
-| Analytics API (owned) | Owned channels only, deep | $0 | High | None | **Low** (needs consent) | Low–Med |
-| InnerTube (logged out) | Very high in theory | $1k–5k/mo proxies | Low–Med | **High** | **High** | **High** |
-| RSS + WebSub | New uploads only | $0 | Medium + High | Low | Low | Low |
-| yt-dlp | Very high in theory | Proxies + time | Low | **High** | **High** | **High** |
-| Paid vendors | Gaps (and more) | $20–200/mo for gaps; $27k+/mo as backbone | Medium | Vendor's | Medium | Low–Med |
-
----
-
-## 4. Recommendation: official first, gaps decided per field
-
-1. **The Data API v3 is the backbone** for channels, videos (Shorts and lives included), comments, replies and playlists. Use **one Google
-   Cloud project**, and apply for a quota extension plus derived-metrics/statistics storage **in week 1**. This is on the critical path.
-2. **New uploads use three layers:** WebSub push (fastest), then RSS polling (backup), then an uploads-playlist check through the API (catches
-   anything missed, and anything that later became public).
-3. **Clients' own channels:** the Analytics API, Reporting API and owner-authorized Data API calls, opt-in per client. This comes in a later
-   phase and only if you approve the exception (Q2).
-4. **Gaps are "not available" by default.** Optionally we add a **vendor adapter per field** behind an on/off switch, after legal sign-off.
-   It would start with non-personal fields (community posts, transcripts) and keep vendor data labelled by source. **No InnerTube scraping
-   and no yt-dlp in production.**
-5. **No proxies.** The official path doesn't need them.
-
-**Why:** this is the lowest legal risk, it costs nothing for data, and it is reliable and cheap to maintain. It also satisfies your rules by
-design: there are no bot checks to work around and no logins. The scarce resource is **quota**, which we manage with smart scheduling (§8.6)
-and the audit.
-
-**What we give up:**
-
-- community posts;
-- pinned/hearted flags;
-- transcripts of other people's videos;
-- About-page links;
-- statistics from before day 1.
-
-Each can be added later through a vendor if you decide it's worth the cost and risk.
-
----
-
-## 5. Rules that shape the design
-
-### 5.1 YouTube API policies
-
-1. **The 30-day rule.** Data we got from the API without the owner's authorization ("Non-Authorized Data") must be **refreshed or deleted
-   at least every 30 days**. Google has flagged developers for keeping statistics longer [verify exact wording].
-   - **Effect on design:** every stored comment, video and channel record is re-fetched on a rolling schedule of at most 28 days, or
-     deleted.
-   - Nice side effect: the re-fetch is also how we detect deletions and edits, and it makes our data respect people's own deletions
-     automatically.
-2. **Statistics history and derived metrics (policy added 4 May 2026, applications open since 1 June 2026):**
-   - By default, statistics (views, likes, subscriber counts, comment counts) **must not be stored for more than 30 days**.
-   - Our own metrics built from API data, such as scores, ratios and **sentiment analysis**, need permission.
-   - Audited developers with an accepted analytics use case may store such statistics **and** derived metrics **for up to 36 months**.
-     Derived metrics must be clearly labelled as ours, not YouTube's.
-   - **Effect on design:**
-     - the snapshot retention period is a setting: 30 days by default, 36 months once approved;
-     - derived values are stored separately from YouTube values, with a "SecureBrand-calculated" label;
-     - our analysis service's sentiment output on comments counts as a derived metric, so we must include it in the application.
-3. **One project, no quota splitting.** Google has warned developers who split work across several projects.
-4. **Privacy policy and audits.** We need a public privacy policy and must pass the audit before we can go above 10,000 units/day.
-5. **Deleted or private videos.** When a video or comment is no longer public, we delete its stored content and keep only a tombstone with
-   no personal data.
-
-### 5.2 YouTube Terms of Service (website)
-
-These forbid automated access (except search engines, or with written permission) and forbid **collecting information that identifies
-people** without their permission. This is why the recommendation keeps scraping out.
-
-### 5.3 Personal data (your rules plus GDPR)
-
-- Commenter names, IDs, avatars and comment text are personal data. So is a channel run by an individual creator.
-- **Legal basis:**
-  - most likely legitimate interest, which requires a written balancing test (a legitimate-interest assessment);
-  - a **data protection impact assessment** (DPIA), recommended because this is large-scale monitoring;
-  - a public notice explaining the collection (GDPR Article 14).
-- Comments can reveal sensitive things (health, religion, politics). We do no special-category profiling of individuals, and the analysis
-  should report **aggregates**.
-- Iraq: as far as I know there is no comprehensive data protection law in force yet. Please confirm with your lawyer.
-- If commenters include people in the EU or UK and the server is outside the EU, we need a lawful transfer mechanism. Server location is in
-  Q20.
-
----
-
-## 6. Quota and volume model (estimates, to be replaced by Phase 0)
-
-### 6.1 Cost per average channel
-
-The average channel has 600 videos, 15 uploads per month and 300 comments per video. Comments are kept for 12 months' worth of videos, which
-is about 180 videos per channel.
-
-**One-time backfill when a channel is added: ≈ 750 units**
-
-| Task | How | Units |
-|---|---|---|
-| Video list + metadata | 12 calls to the uploads playlist + 12 `videos.list` calls | ~24 |
-| Comments for 180 videos | ~4 units per video for a full sweep (threads + extra replies) | ~720 |
-| Comments for all 600 videos (if you want everything) | | ~2,400 |
-
-**Ongoing, per day: ≈ 90–100 units**
-
-| Task | Schedule | Units/day |
-|---|---|---|
-| Channel snapshot | Daily (hourly for priority channels); 50 channels per call | < 1 |
-| Uploads-playlist check | Every 6 h | 4 |
-| Video stats | Tiered by age (§8.6); 50 videos per call, mixed across channels | ~6 |
-| New-comment scans | Channel-wide every 2 h + new videos hourly for 48 h + slower afterwards | ~50 |
-| Full comment sweeps | Every video in the window at most every 28 days (30-day rule), plus sweeps at 48 h and 7 days | ~30 |
-| Playlists | Weekly | < 1 |
-
-### 6.2 Scenarios
-
-| | S (100 channels) | M (1,000) | L (5,000) |
-|---|---|---|---|
-| Ongoing units/day | ~10,000 | ~100,000 | ~500,000 |
-| One-time backfill (12-month comment window) | ~75,000 | ~750,000 | ~3,750,000 |
-| Fits the default 10,000/day? | Barely, with lighter schedules, no backfill headroom | **No**: needs extension | **No**: needs extension |
-| Quota to request (with ~50% headroom) | 20,000–30,000 | ~150,000 | ~750,000 |
-| Brand-mention search (optional, Q3) | +100 units per search call: 50 keywords every 2 h ≈ +60,000/day | same | same |
-
-**Heavy-tail warning:** one video with 100,000 comments costs about 1,200 units per full sweep. Section 8.7 covers per-video caps, and Phase 0
-measures the real spread.
-
-### 6.3 Storage (M scenario)
-
-| Data | Size estimate |
+| Your rule | What the scraper does |
 |---|---|
-| Comments (≈ 54 M rows, 12-month window) | ~30–40 GB in Postgres, indexes included |
-| Videos (600 k) and channels | ~2–3 GB |
-| Video/channel snapshots | ~25 MB/day → ~1 GB at 30 days, ~27 GB at 36 months |
-| Raw API responses (compressed, kept 7 days, for debugging) | ~10 GB in S3 |
-| Thumbnails for new videos only (for analysis) | ~1.5 GB/month |
+| Public data only, never log in | Only logged-out requests. **No Google/YouTube accounts and no account cookies, ever.** The only cookie is the anonymous visitor ID every logged-out browser receives. Nothing private, unlisted-by-link, members-only or age-gated-behind-login is collected |
+| Don't get around bot checks or CAPTCHAs | **Never** solve CAPTCHAs or use CAPTCHA-solving services. **Never** generate or obtain BotGuard / "proof-of-origin" tokens. **Never** drive headless browsers to pass challenges, or pretend to be Googlebot. Endpoints that require these (media streams, likely transcripts) are switched off |
+| Pace requests | Every proxy IP has its own slow budget, for example one request every 3–5 s; Phase 0 sets the real number. A global limit sits on top. Requests are spread evenly, never in bursts |
+| Back off when blocked | Signals: HTTP 429/403, "Sign in to confirm you're not a bot", redirects to Google's "sorry" page. See the list below |
+| Credentials never committed or logged | Proxy passwords and the API key are read from files named in environment variables (`*_FILE`). They are never logged; the logger redacts proxy URLs and auth headers |
+| Public repo, no real data | Fixtures are generated. Real response *shapes* are captured only as **skeletons**: every value is replaced with a type placeholder by a scrubber, and a human reviews each one before commit (§8.10) |
+
+What happens on a block signal:
+
+1. **That IP stops** and cools down: 30 min, then 2 h, then 12 h, then 24 h on repeat. It resets after a clean day.
+2. **The global speed drops** by 30%, and recovers by 5% every 10 clean minutes.
+3. **The request waits at least 15 minutes.** It is **not** immediately re-sent from another IP.
+4. If more than 20% of IPs are challenged within an hour, **everything pauses for an hour** and you get an alert.
+5. If one endpoint (for example the player endpoint) keeps getting challenged, **we switch that endpoint off.** We lose its fields rather
+   than push.
+
+Point (1) is the interpretation you need to confirm (Q1). A pool of IPs, each going slowly, spreads normal load. Using a fresh IP to
+re-send a request that was just challenged would be evasion, and we won't do that.
+
+---
+
+## 4. Legal and policy position
+
+### 4.1 YouTube's Terms of Service (the scraping part)
+
+YouTube's Terms forbid:
+
+- accessing the service by **automated means** (except public search engines, or with YouTube's written permission);
+- **collecting information that might identify a person**, such as usernames, without their permission.
+
+Collecting comments with author names does exactly that. Possible consequences:
+
+- IP blocks;
+- a breach-of-contract claim or cease-and-desist letter;
+- loss of our Google Cloud project's API access if YouTube links it to the scraping.
+
+Courts in some countries have held that scraping logged-out public pages is not computer crime, but contract and data-protection law
+still apply. **This is your business decision (D4). I recommend a lawyer reviews it before production (Q10).**
+
+### 4.2 The official API (the search part)
+
+- **Quota:** 10,000 units/day by default. One `search.list` call costs 100 units, so **≈ 100 searches per day**, each returning up to 50
+  results. Every extra page of results costs another 100. Quota resets at midnight US Pacific time: **11:00 Iraq time** until 13 March
+  2027, and **10:00 Iraq time** during US daylight saving (14 March – 6 November 2027).
+- **More quota needs a compliance audit** of the whole application, and the API terms prohibit scraping YouTube [verify exact wording].
+  So we should **plan for 10,000 units/day as a hard ceiling** and not apply for more.
+- Using several Google Cloud projects to multiply quota is forbidden, and Google enforces it. We won't.
+- **API data rules:** search results are "API Data". They must be refreshed or deleted within 30 days. So we keep search hits (keyword →
+  video and channel IDs) for at most 30 days. Channels promoted to the watch list are then collected by the scraper.
+
+### 4.3 Personal data (your rules + GDPR)
+
+- Commenters' names, IDs, avatars and text are personal data. So are channels run by individual creators.
+- GDPR applies to EU-based commenters, and the Iraqi diaspora in the EU is large.
+- **We need:**
+  - a legal basis: legitimate interest, with a written balancing test (a legitimate-interest assessment);
+  - a **data protection impact assessment** (DPIA), because this is large-scale monitoring;
+  - a public privacy notice (GDPR Article 14).
+- Comments can reveal religion, politics or health, so reports should be **aggregates**, not profiles of individuals.
+- Iraq: as far as I know there is no comprehensive data protection law in force yet; please confirm with your lawyer.
+- Privacy controls (pseudonymization, retention, erasure, suppression) are in §8.9.
+
+---
+
+## 5. Discovery: keywords → candidate channels → watch list
+
+### 5.1 Keyword search through the API (≈ 100 calls/day)
+
+- **Keyword groups:** we combine related keywords with the API's OR operator (`|`) and exclusions (`-`). Example group:
+  `بغداد|البصرة|الموصل|أربيل|النجف` (Baghdad, Basra, Mosul, Erbil, Najaf). One call then covers 5–10 keywords.
+- **Each call uses:**
+  - `type=video`;
+  - `order=date`;
+  - `publishedAfter` = the group's last successful run, so we only get new videos;
+  - `regionCode=IQ`;
+  - `relevanceLanguage` = `ar`, `ku` or `en`, depending on the group;
+  - `maxResults=50`.
+- **Paging:** we fetch a second page only when the first one is full, which means more results are probably waiting.
+- **Default budget:**
+
+  | Use | Calls/day |
+  |---|---|
+  | Priority groups, every 3 h | ~20 groups × 4 = 80 |
+  | Extra pages and ad-hoc searches | ~20 |
+
+  The quota governor never lets a search run past the daily ceiling.
+- **Known limitation:** API search is not exhaustive. It returns a relevance-filtered subset, and results differ from the website. Phase 0
+  measures the real yield.
+
+### 5.2 Free discovery from data we already scrape (no API quota)
+
+- Channels **@mentioned or linked** in watched channels' descriptions, community posts and About links.
+- **Featured channels** on watched channels' Channels tab.
+- **Collaborators** on collaboration videos.
+- Optional (Q2): **scraped YouTube search**, using the same keyword groups with "upload date" sorting. No quota, much wider reach.
+- We do **not** use commenters' channels for discovery. Commenters are mostly private individuals.
+
+### 5.3 Scoring and promotion
+
+1. **Every found channel becomes a candidate.** We fetch its About panel and first page of videos: 2–3 requests.
+2. **Relevance score**, from:
+   - country = Iraq;
+   - language mix of recent titles (Arabic/Kurdish), using a language-detection library;
+   - Iraqi place and keyword hits;
+   - number of keyword-matching videos;
+   - subscribers;
+   - recent activity.
+3. **Auto-promote** above a threshold. Borderline channels go to a **review list**; below the threshold they are rejected, and the
+   rejection is remembered so we don't re-check them for 90 days.
+4. **Daily cap** on promotions, for example 100/day. A capacity check refuses promotions when the proxy pool can't keep up with the tier
+   freshness targets.
+5. Promoted channels get a tier (§6.2) and a backfill job.
+
+---
+
+## 6. Volume and capacity model (estimates, to be replaced by Phase 0)
+
+### 6.1 Requests per channel per day
+
+| Task | Tier A | Tier B | Tier C |
+|---|---|---|---|
+| RSS check (detection backup + exact stats for the latest 15 videos) | every 30 min = 48 | every 2 h = 12 | every 6 h = 4 |
+| New-video details (watch page / `/next` + player) | ~1.5 | ~1.5 | ~1.5 |
+| Older-video stats (channel tab listings + per-video refresh) | ~10 | ~10 | ~5 |
+| Channel snapshot (About panel) | every 6 h = 8 | daily = 2 | every 3 days ≈ 1 |
+| New-comment scans on recent videos (newest-first, stop at known) | ~70 | ~37 | ~23 |
+| Late comments on older videos (first page, monthly) | ~6 | ~6 | ~3 |
+| Full comment sweeps at 7 and 30 days (edits/deletions) | ~20 | ~20 | ~10 |
+| Community posts and their comments | ~2 | ~1 | ~0.5 |
+| Playlists | ~0.5 | ~0.5 | ~0.3 |
+| **Total per channel per day** | **~166** | **~90** | **~48** |
+
+With the tier mix A 10%, B 40%, C 50%, the average is **≈ 80 requests per channel per day**. About a quarter of those are cheap RSS
+fetches.
+
+### 6.2 Tiers
+
+| Tier | Share | Who | Promotion / demotion |
+|---|---|---|---|
+| A | Top ~10% | Largest, most active and most keyword-relevant channels | Recomputed weekly; manual override |
+| B | ~40% | Normal channels | Recomputed weekly |
+| C | ~50% | Long tail, low activity | Recomputed weekly; channels with no upload in 180 days go to "dormant" (weekly check only) |
+
+### 6.3 Scenarios
+
+| | 2,000 channels | **5,000 channels** | 10,000 channels |
+|---|---|---|---|
+| Steady requests/day | ~160,000 (≈ 2/s) | **~400,000 (≈ 5/s)** | ~800,000 (≈ 9/s) |
+| Backfill per new channel (all metadata + 90 days of comments) | ~1,500 requests | ~1,500 | ~1,500 |
+| Backfill at 100 new channels/day | +150,000/day | +150,000/day | +150,000/day |
+| Proxy IPs needed (at ~1 request per 3 s per IP, +50% headroom) | ~10–15 | **~20–40** | ~40–80 |
+| Data transfer (≈ 40 KB compressed per request) | ~200 GB/month | **~500–650 GB/month** | ~1–1.3 TB/month |
+| API search | ~100 calls/day | ~100 calls/day | ~100 calls/day |
+
+The per-IP pace and bytes per request are the two most uncertain numbers. Phase 0 measures both.
+
+### 6.4 Storage (5,000 channels)
+
+| Data | Estimate |
+|---|---|
+| Comments (12-month window): 5,000 × ~240 videos × 200 comments ≈ 240 M rows | ~150–200 GB in Postgres with indexes |
+| Videos (~2.5 M) and channels | ~10 GB |
+| Snapshots (views/likes/comments/subscribers over time) | ~25 MB/day → ~9 GB/year |
+| Raw responses (only parse failures + a 1% sample, kept 3 days) | ~5–20 GB in S3 |
+| Thumbnails for new videos | ~3 GB/month |
 
 ---
 
@@ -443,388 +355,375 @@ measures the real spread.
 
 | # | Item | Needed for | Notes |
 |---|---|---|---|
-| 1 | **Google Cloud project** with **YouTube Data API v3** enabled | Phase 0 onward | Free; no billing account needed for the Data API |
-| 2 | **API key**, restricted to YouTube Data API v3 and your server's IP | Phase 0 onward | Stored in a file on the server (§7.3); never in chat or the repo |
-| 3 | **Quota extension + derived-metrics/storage application** | Before scaling beyond ~100 channels | Needs the items in §7.4. Start in week 1 |
-| 4 | **Server** (Linux, Docker) | Phase 0: any small VPS. Production: see 7.2 | Or reuse the fbs servers (Q19) |
-| 5 | **Public HTTPS address** (a subdomain such as `yt-hooks.example.com`, with Let's Encrypt) | WebSub push | Phase 0 can run without it (RSS only) |
-| 6 | **S3-compatible object storage** | Raw responses (7 days), thumbnails | Or the existing fbs bucket |
-| 7 | **Postgres 16+** | Main database | Self-hosted or the fbs instance |
-| 8 | Offsite **backups** | Production | 30-day rolling |
-| 9 | **Alert destination** | Production | Telegram, email or Slack |
-| 10 | **Privacy policy page** + legitimate-interest assessment + DPIA | YouTube audit, GDPR | Legal/ops work, not engineering |
-| 11 | Optional: **OAuth consent screen** + Analytics API | Owned channels (later) | Needs Google verification |
-| 12 | Optional: **vendor account** | Gap fields (later) | Only if approved |
-| — | **Proxies** | **Not needed** | The recommended path uses only official endpoints |
+| 1 | **Google Cloud project** + **YouTube Data API v3** enabled + **API key** (restricted to that API and your server IP) | Search | Free; no billing account needed. Steps in §9.3 |
+| 2 | **Server(s)**, Linux with Docker | Everything | 5,000 channels: 1 dedicated server, 16 cores, 64 GB RAM, 2 × 2 TB NVMe. 10,000: two of those |
+| 3 | **Proxy IPs**: static datacenter or ISP IPs from **2–3 providers** and different networks, **outside the EU** | Scraping | 20–40 IPs for 5,000 channels. Outside the EU avoids YouTube's EU cookie-consent page. Credentials in a file on the server |
+| 4 | Optional **small residential proxy allowance** | Only for endpoints Phase 0 shows fail on datacenter IPs | Only from a provider with documented, consent-based IP sourcing; capped in GB per month |
+| 5 | **Public HTTPS subdomain** (for example `yt-hooks.example.com`, with Let's Encrypt) | WebSub push | Phase 0 can run without it |
+| 6 | **S3-compatible object storage** | Thumbnails, debug samples | |
+| 7 | Offsite **backups** | Production | 30-day rolling |
+| 8 | **Alert destination** | Production | Telegram, email or Slack |
+| 9 | **Legal review**, privacy notice, legitimate-interest assessment, DPIA | Before production | Legal work, not engineering |
+| 10 | Engineering time for **scraper maintenance** | Ongoing | Expect a few fixes a month when YouTube changes its pages (§8.11) |
 
 ### 7.2 Estimated monthly cost (USD, check prices at purchase)
 
-| Item | S (100) | M (1,000) | L (5,000) |
+| Item | 2,000 channels | **5,000 channels** | 10,000 channels |
 |---|---|---|---|
-| YouTube Data API | $0 | $0 | $0 |
-| Server(s) | $25–50 (4 vCPU, 16 GB, 200 GB NVMe) | $60–120 (8 vCPU, 32 GB, 500 GB NVMe) | $200–400 (2–3 servers, or bigger + managed DB) |
-| Object storage | ~$5 | ~$5–10 | ~$20–40 |
-| Offsite backups | ~$5 | ~$10 | ~$30 |
-| Domain/TLS | $0 (existing domain + Let's Encrypt) | $0 | $0 |
-| Monitoring (self-hosted Prometheus + Grafana) | $0 | $0 | $0 |
-| Optional gap vendor | $0–50 | $50–200 | $200–800 |
-| **Total** | **~$35–110** | **~$75–340** | **~$250–1,300** |
+| YouTube Data API (search) | $0 | $0 | $0 |
+| Server(s) | $50–100 | **$90–150** | $200–300 |
+| Datacenter/ISP proxies (~$1.5–4 per IP) | $15–60 | **$30–160** | $60–320 |
+| Optional residential allowance (capped, ~$2–6/GB) | $0–150 | $0–300 | $0–500 |
+| Object storage | ~$5 | ~$10–20 | ~$20–40 |
+| Offsite backups | ~$10 | ~$20–40 | ~$40–80 |
+| Domain/TLS, monitoring (self-hosted) | $0 | $0 | $0 |
+| **Total** | **~$80–325** | **~$150–450** (≤ ~$750 with residential) | **~$320–1,240** |
 
-If we reuse the fbs servers and storage, the server line may shrink to nearly zero.
+Things that would push cost up:
 
-For comparison, at M scale:
-
-- InnerTube scraping with proxies would add about $1,000–5,000 per month;
-- a vendor-only approach would cost about $27,000–80,000 per month.
-
-### 7.3 How credentials are handled (applies from Phase 0)
-
-- The API key lives in a file such as `/etc/securebrand-youtube/youtube_api_key`, readable only by the service user (mode `600`). The
-  service reads the file's path from an environment variable (`YT_API_KEY_FILE`).
-- It is sent in the `X-Goog-Api-Key` **header**, not in the URL, so it can't leak through logged URLs. The logger redacts that header.
-- The key is restricted in Google Cloud to the Data API and your server IP. It can be rotated at any time.
-- CI runs a secret scanner on every pull request (gitleaks). `.gitignore` blocks `*.key`, `.env*`, and the data and response folders.
-
-### 7.4 Preparing the quota extension application (week 1)
-
-Have ready:
-
-- the Google Cloud project number;
-- a short description of SecureBrand's use case (brand monitoring, aggregated reporting);
-- the expected volume (from Phase 0);
-- the public privacy policy URL and terms URL;
-- a description of retention and deletion (§8.9);
-- screenshots or a screencast of how the data is shown;
-- an explicit **request for derived metrics (sentiment, scores) and statistics storage up to 36 months**.
-
-Form: <https://support.google.com/youtube/contact/yt_api_form>
+- running everything through residential proxies (≈ $1,000–4,000/month at 5,000 channels, because it is priced per GB);
+- deeper comment backfill;
+- faster freshness targets.
 
 ---
 
-## 8. Architecture proposal
+## 8. Architecture
 
 ### 8.1 Overview
 
 ```
-                 ┌──────────────┐  WebSub POST   ┌──────────────────┐
-  YouTube hub ──►│ websub-recv  │───────────────►│                  │
-                 └──────────────┘                │                  │
-                 ┌──────────────┐  new video IDs │   scheduler      │  due jobs   ┌───────────────┐
-  RSS feeds ────►│ rss-poller   │───────────────►│ (per-entity next │────────────►│ api-fetcher   │──► YouTube Data API
-                 └──────────────┘                │  check times,    │  (priority  │ (quota-aware, │    (one project,
-                 ┌──────────────┐  add/remove    │  priorities)     │   queues)   │  batching,    │     header key)
-  Admin CLI/API ►│ registry     │───────────────►│                  │             │  retries)     │
-                 └──────────────┘                └────────▲─────────┘             └──────┬────────┘
-                                                          │ quota budget                 │ raw (7 days)   ┌────┐
-                                                 ┌────────┴─────────┐                    ├───────────────►│ S3 │
-                                                 │ quota-governor   │◄── units spent ────┤                └────┘
-                                                 └──────────────────┘                    │ normalized records
-                                                                                         ▼
-  ┌──────────────┐  erase / retain   ┌───────────────────────────────────────────────────────────┐
-  │ privacy      │──────────────────►│ writer: upsert, snapshots, diff (edits, deletions),       │
-  │ (retention,  │◄── suppression ───│ suppression filter BEFORE write                           │──► Postgres
-  │  erasure)    │                   └───────────────────────────────┬───────────────────────────┘
-  └──────────────┘                                                   │ events (new video, new comments, erasure)
-                                                                     ▼
-                                                         analysis service (fbs) / dashboards
+ YouTube WebSub hub ──POST──► websub-receiver ─┐
+ YouTube RSS feeds ◄──────── rss-poller ───────┤  "check this now"
+                                               ▼
+ search-runner ──► YouTube Data API     ┌─────────────┐   due jobs    ┌──────────────────┐  via proxy pool  ┌───────────┐
+ (quota-governed,   (search.list only)  │  scheduler  │──────────────►│ scraper-fetcher  │─────────────────►│ YouTube   │
+  ≤100 calls/day)                       │ (per-entity │  (priority    │ (InnerTube client│                  │ website   │
+        │ hits (kept ≤30 days)          │  next-check │   queues)     │  + image CDN)    │◄── responses ────│ endpoints │
+        ▼                               │  times)     │               └───────┬──────────┘                  └───────────┘
+ discovery (candidates, scoring, ───────►─────────────┘                       │       ▲ per-IP budgets, cooldowns,
+            review list, promotion)          ▲                                │       │ global AIMD speed
+        ▲                                    │                                ▼       │
+        └──── mentions / featured channels ──┤                         parser (versioned, ┌──────────────┐
+                                             │                          drift detection)──│ proxy-manager│
+                                   registry (watch list, tiers)               │           └──────────────┘
+                                                                              ▼
+           privacy (retention, erasure,  ◄── suppression check ──►  writer (upsert, snapshots, diffs) ──► Postgres
+                    suppression list)                                         │                          S3 (thumbnails,
+                                                                              ▼                              debug samples)
+                                                                   events → dashboards / analysis (later)
 ```
 
 ### 8.2 Services
 
-All services are written in Go, to match fbs; I'll confirm once that repo is attached.
+All services are written in Go. One repo, several binaries, deployed with Docker Compose.
 
 | Service | Job |
 |---|---|
-| **registry** | Add or remove watched channels by URL, handle or ID, resolving a handle to its `UC…` ID for 1 unit. Holds per-channel settings: tier (priority/standard), client, owned or not, privacy mode, comment window |
-| **scheduler** | Keeps a "next check time" for every channel, video and comment stream (§8.6). Emits due jobs by priority. New-video signals jump the queue |
-| **quota-governor** | Tracks units spent per US-Pacific day (resetting at 11:00 Iraq time in winter, 10:00 in summer). Reserves budget per priority. Pauses everything on `quotaExceeded` until the reset |
-| **api-fetcher** | Runs Data API calls: batches 50 IDs per call, follows page tokens, retries, uses circuit breakers. Writes compressed raw responses to S3 (deleted after 7 days) and normalized records to the writer |
-| **websub-receiver** | Public HTTPS endpoint. Answers the hub's verification challenge, checks the HMAC signature (`hub.secret`), turns notifications into "check this video now" jobs, and renews leases before they expire |
-| **rss-poller** | Backup detector. Fetches each feed every 15 min (priority) or 60 min (standard), using conditional requests (ETag/If-Modified-Since). Backs off on errors |
-| **writer** | Upserts into Postgres, appends snapshots, compares old and new versions (title or description changes, comment edits and deletions), **drops anything on the suppression list before writing**, and publishes events |
-| **privacy** | Retention jobs, pseudonymization, erasure requests, suppression list, and an audit log of every erasure |
-| **media-handoff** | Fetches thumbnails (and avatars/banners when they change) for analysis, under the same retention as metadata. No video or audio files |
-| **owned-channels** (later) | OAuth consent flow, encrypted token storage, Analytics and Reporting API jobs, and deletion when a grant is revoked |
-| **gap adapters** (optional, later) | One adapter per vendor and field, each behind an on/off switch, labelling data with its source |
+| **registry** | The watch list: channel IDs, tiers, status (candidate / watched / dormant / rejected / suppressed), backfill state |
+| **search-runner** | Runs keyword-group searches on schedule through the official API, under the **quota governor**. The governor charges 100 units per call before sending, stops at the daily ceiling, and knows the reset time (11:00 Iraq time in winter, 10:00 in summer). Writes search hits for discovery |
+| **discovery** | Turns search hits and mentions into candidates, scores them (§5.3), manages the review list and promotions, and respects the daily cap and capacity check |
+| **scheduler** | Keeps a "next check time" for every channel, video, comment stream and post. Emits due jobs into priority queues (§8.6). Push and RSS signals jump the queue |
+| **proxy-manager** | Holds the IP pool and health scores, enforces per-IP budgets, cooldowns and the global speed (§3). Detects block signals. Has a per-endpoint on/off switch |
+| **scraper-fetcher** | The InnerTube client: builds logged-out web-client requests (`hl=ar`, `gl=IQ`), follows continuations, fetches images from the CDN. It auto-detects the current client version from YouTube's homepage. Raw responses are kept only for parse failures and a 1% sample (3 days) |
+| **parser** | Versioned parsers. Finds data by object type rather than fixed paths, which survives layout changes. Validates required fields and reports how often each field is filled (drift detection, §8.11) |
+| **writer** | Upserts into Postgres, appends snapshots, detects changes (titles, descriptions, comment edits and deletions). **Drops anything on the suppression list before writing** |
+| **websub-receiver** | Public HTTPS endpoint. Answers the hub's verification, checks HMAC signatures, renews subscriptions before their lease ends (5 days) |
+| **rss-poller** | Fetches feeds at tier intervals with conditional requests. Exact views/likes for the latest 15 videos go into snapshots |
+| **privacy** | Retention jobs, pseudonymization, erasure requests, suppression list, erasure audit log |
+| **media** | Thumbnails, avatars and banners from YouTube's image servers, under the same retention |
+| **admin CLI** (later a small web page) | Add/remove channels, review candidates, override tiers, run erasure requests, inspect health |
 
-Kafka/Redpanda is **not required** at this volume: about 1–2 API calls per second, even at M. The job queue can live in Postgres (`SELECT … FOR
-UPDATE SKIP LOCKED`). If the fbs analysis service already consumes from Redpanda, we publish events there for consistency (Q19).
+**No Kafka.** At about 5–10 requests per second, a Postgres job queue (`FOR UPDATE SKIP LOCKED`) is simpler and enough. **Valkey** holds the
+per-IP rate counters and cooldowns, so several fetcher processes can share them. Event publishing to other systems can be added later.
 
-### 8.3 Storage
+### 8.3 Storage (Postgres + S3)
 
-- **Postgres:**
-  - main tables: `channels`, `videos`, `comments`, `authors`, `playlists`, `playlist_items`;
-  - `channel_snapshots` and `video_snapshots`, partitioned by month so old data can be dropped cheaply;
-  - change logs: `video_changes`, `comment_versions`, `channel_changes`;
-  - privacy: `suppression_list`, `erasure_requests`, `erasure_audit`;
-  - operations: `entity_schedule`, `quota_ledger`, `dead_letters`.
-- **Notable columns:**
-  - `comments.author_key` holds the author's channel ID, or its keyed hash in pseudonymized mode;
-  - `comments.pinned` and `comments.hearted` are nullable, where NULL means "unknown, not available from the official API";
-  - every row has `source` (`yt_data_api`, `yt_analytics`, `vendor:<name>`) and `last_refreshed_at`, which the 30-day rule depends on;
-  - derived metrics live in separate tables marked `secure_brand_calculated`.
-- **S3:** raw responses (gzip, encrypted, 7-day expiry) and thumbnails (with retention). Nothing from S3 is ever committed.
-- **Valkey** (optional): fast copies of the quota counters and the suppression set. Postgres stays the source of truth.
+- **Main tables:**
+  - `channels`, `channel_links`, `videos` (kind: video/short/live/premiere), `comments`, `comment_versions`, `authors`;
+  - `posts`, `post_comments`, `playlists`, `playlist_items`.
+- **Time series:** `channel_snapshots`, `video_snapshots`, `post_snapshots`, partitioned by month.
+- **Discovery:** `search_hits` (deleted after 30 days, API rule), `candidates`, `rejections`, `keyword_groups`.
+- **Privacy:** `suppression_list`, `erasure_requests`, `erasure_audit`.
+- **Operations:** `jobs`, `entity_schedule`, `quota_ledger`, `proxy_health` (no credentials stored), `parse_failures`, `field_fill_rates`.
+- **Precision columns** keep accuracy visible:
+  - `published_at_est` + `published_at_precision_s` for comments and posts;
+  - `like_count_min` + `like_count_text` where counts are abbreviated;
+  - `source` (`web`, `rss`, `websub`, `api_search`) on every row.
 
 ### 8.4 How each collection works
 
-- **Channel:** `channels.list` with `part=snippet,statistics,brandingSettings,contentDetails,topicDetails`, 50 channels per call. Store the
-  current values, append a snapshot, and log any changes.
-- **Video list:** page through the uploads playlist; classify each video with the `UUSH`/`UULF`/`UULV` playlists (if Phase 0 confirms they
-  work) and `liveStreamingDetails`.
-- **Video details and stats:** `videos.list` with
-  `part=snippet,contentDetails,statistics,liveStreamingDetails,topicDetails,status`, 50 videos per call. Chapters are parsed from the
-  description.
-- **Comments:** see §8.7.
-- **Playlists:** `playlists.list?channelId=…` weekly, plus their items.
+- **Channel:** channel page + About panel (country, links, join date, totals) and the Channels tab, every 6 h / 1 day / 3 days by tier.
+- **Video list:** Videos, Shorts and Live tabs. Each page returns about 30 items (more for Shorts [verify]); we follow continuations.
+  Listings also give abbreviated view counts, which are good enough for slow refreshes of old videos.
+- **Video details:**
+  - one **watch page** request carries both the page data and the player data, compared with two separate JSON requests. Phase 0 picks
+    whichever is cheaper and less blocked;
+  - if the player data is refused, we keep the `/next` fields and mark tags and category "unavailable".
+- **Comments:** §8.7.
+- **Community posts:** Posts tab pages, then each new post's comments.
+- **Live:** the Live tab and WebSub catch scheduled streams; while a stream is live, we read the viewer count every 5 min (tier A/B) or
+  15 min (tier C).
 
-### 8.5 New-upload detection (three layers)
+### 8.5 New-upload detection
 
-1. **WebSub push.** When it arrives, we call `videos.list` straight away. The target is detection within minutes.
-2. **RSS poll** every 15 or 60 minutes per channel. Any video ID we haven't seen triggers a fetch.
-3. **Uploads-playlist check** every 6 hours. It catches anything both layers missed, scheduled premieres, and videos that went from private
-   to public.
+1. **WebSub push.** The video is fetched immediately; target: within minutes.
+2. **RSS** at tier intervals (30 min / 2 h / 6 h). Any video ID we haven't seen triggers a fetch. RSS also feeds exact stats for recent
+   videos.
+3. **Channel tab check** daily (tier A: every 6 h). It catches anything missed, premieres, and videos made public later.
 
-We measure **detection delay** = our first-seen time − the video's `publishedAt`, for each layer.
+We measure **detection delay** = first seen − published, for each layer.
 
 ### 8.6 How often things are re-checked (defaults, tuned after Phase 0)
 
-| What | Age or state | Check every |
-|---|---|---|
-| Channel stats + metadata | Priority tier | 1 h |
-| | Standard tier | 24 h |
-| Video stats | 0–48 h after publish | 1 h |
-| | 2–30 days | 6 h |
-| | 30 days – 1 year | 24 h |
-| | Older than 1 year | 7 days (and ≤ 28 days to satisfy the 30-day rule) |
-| Live stream | Upcoming | Every 30 min until the scheduled start |
-| | Live now | 5 min (viewer count) |
-| New comments, per video | 0–48 h | 1 h (newest-first scan, stops at known comments) |
-| | 2–7 days | 6 h |
-| | 7–30 days | 24 h |
-| New comments, whole channel | All videos | Every 2 h via `allThreadsRelatedToChannelId` |
-| Full comment sweep | At 48 h and 7 days after publish, then rolling | ≤ 28 days for every video in the window |
-| Playlists | | 7 days |
-| Every stored record | | Refreshed within 28 days, or deleted (30-day rule) |
+| What | Tier A | Tier B | Tier C |
+|---|---|---|---|
+| New upload detected | minutes (push), ≤ 30 min (RSS) | minutes, ≤ 2 h | minutes, ≤ 6 h |
+| New-video stats, first 48 h | 30 min (RSS) | 2 h | 6 h |
+| Video stats, 2–30 days | 30 min–6 h (RSS while in the latest 15, then per video) | 12 h | 24 h |
+| Video stats, 30 days – 1 year | weekly | weekly | monthly |
+| Video stats, older | monthly | monthly | quarterly |
+| New comments, video 0–48 h | 1 h | 3 h | 6 h |
+| New comments, 2–7 days | 6 h | 12 h | 24 h |
+| New comments, 7–30 days | 24 h | 48 h | weekly |
+| Late comments, 30 days – 12 months | monthly (first page) | monthly | quarterly |
+| Full comment sweep | at 7 and 30 days | at 7 and 30 days | at 30 days |
+| Channel snapshot | 6 h | 24 h | 3 days |
+| Community posts | 24 h | 3 days | weekly |
+| Playlists | weekly | weekly | monthly |
 
-When quota runs short, things are dropped in this order: backfill first, then sweeps that aren't yet due, then older-video stats. New-upload
-detection and new-video stats are never dropped.
+**Priority order when capacity is short:**
 
-**Budget split:**
-
-| Priority | Work | Share of daily budget |
-|---|---|---|
-| P0 | New-upload detection, new-video stats | 20% reserved |
-| P1 | New-comment scans | 30% |
-| P2 | Required refresh sweeps | 30% |
-| P3 | Backfill | Whatever is left |
+| Priority | Work |
+|---|---|
+| P0 | New-upload detection and new-video details. Never dropped |
+| P1 | New-comment scans on recent videos |
+| P2 | Stats refreshes, sweeps, posts |
+| P3 | Discovery candidate checks, backfill |
 
 ### 8.7 Keeping comments complete and up to date
 
-1. **Backfill (full sweep):**
-   - call `commentThreads.list?videoId=…&order=time&maxResults=100&textFormat=plainText` and follow every page;
-   - for each thread whose `totalReplyCount` is higher than the replies included, call `comments.list?parentId=…&maxResults=100` through
-     all pages.
-2. **New-comment scans:**
-   - scan newest-first and stop once a page contains only threads we already know (with a small overlap for safety);
-   - the channel-wide scan (`allThreadsRelatedToChannelId`) catches new comments on old videos for about 1 unit per 100 new comments.
-3. **New replies on old threads:** whenever a scan or sweep shows a thread's `totalReplyCount` has changed, we fetch that thread's replies
-   again.
-4. **Edits:** if `updatedAt` is newer than what we stored, we save the new text as a new version and mark the comment edited. Old versions
-   follow the same retention.
-5. **Deletions:**
-   - a comment missing from a completed full sweep is marked "missing";
-   - a batch `comments.list?id=…` call (up to 50 IDs per call) confirms it;
-   - if confirmed, we **delete its text and author data** and keep a tombstone (comment ID hash, video, deletion time), so you can still
-     count deletions.
-6. **Completeness check per video:** we compare `collected comments ÷ statistics.commentCount`. If that falls below 90% (the threshold is
-   tuned in Phase 0), the video gets a re-sweep and an alert. Some gap is normal, because spam-filtered and held comments are counted but
-   not public.
-7. **Caps for huge videos:**
-   - backfill at most N comments per video (for example 20,000, newest first);
-   - after that, rely on new-comment scans;
-   - the cap is a setting, and capped videos are flagged as "partial".
-8. **Comments turned off:** we record the state. Stored comments are deleted at the next due refresh, because they are no longer public.
+1. **Open the comment section** from the video's data, then switch to **"Newest first"**.
+2. **Read top-level comments.** Each page has about 20. For each comment we record:
+   - ID, text, author channel ID, handle/name, avatar;
+   - the relative time;
+   - likes (exact or abbreviated);
+   - reply count;
+   - **pinned**, **hearted**, author-is-creator;
+   - the "(edited)" marker.
+3. **Read replies** for threads with replies (about 10 per page), following continuations.
+4. **New-comment scans:** read newest-first and **stop after the first page that is entirely already known**, plus one page of overlap.
+   Most scans cost **1 request**. When a known thread's reply count has grown, we fetch its replies again.
+5. **Publish-time estimates:** a comment showing "25 minutes ago" when we first see it gets a timestamp accurate to a minute or two. A
+   backfilled "2 years ago" comment gets a coarse estimate, and its precision is stored.
+6. **Edits:** a changed text or a new "(edited)" marker → we save a new version.
+7. **Deletions:** a full sweep (at 7 and 30 days) that no longer finds a known comment marks it **missing**. A second miss on the next scan
+   confirms it. Then we **delete its text and author data** and keep a tombstone (ID hash, video, time) so deletions can still be
+   counted.
+8. **Completeness per video:** collected ÷ the displayed comment count. Below 90% (threshold set in Phase 0) → re-sweep and alert. Some gap
+   is normal: YouTube's displayed count includes comments it hides.
+9. **Huge videos:** backfill at most N comments per video (for example 20,000, newest first); after that, rely on new-comment scans. Capped
+   videos are flagged "partial".
+10. **Limits we accept:**
+    - there is no channel-wide "all new comments" feed on the website (that exists only in the official API);
+    - so late comments on older videos are caught by monthly first-page scans, not within hours;
+    - deletions on videos older than 30 days are only caught if they show up in those scans.
 
-### 8.8 Rate limiting, retries and failures
+### 8.8 Rate limiting, retries, stability
 
-- **Quota:** units are charged *before* each call is sent (each method's cost is known). A call is refused locally if its priority's budget
-  is used up.
-- **Speed:** a local limit of about 5 requests per second for the API, and at most 1 request per second across all RSS feeds.
+- **Rate limits:**
+  - per IP: a token bucket at the Phase 0 pace, with random gaps between requests;
+  - global: one speed multiplier (adaptive: drops quickly on trouble, recovers slowly);
+  - per endpoint: concurrency caps;
+  - per channel: at most one job at a time.
 - **Retries:**
 
   | Error | Action |
   |---|---|
-  | Network errors, 5xx, `rateLimitExceeded` | Exponential backoff: 2 s, 4 s, 8 s, 16 s, 32 s, with random jitter; at most 5 attempts |
-  | `quotaExceeded` | Stop all API work until the reset (11:00 or 10:00 Iraq time) |
-  | `commentsDisabled`, `forbidden` | Record the state; no retry |
-  | 404 / not found | Check again once; if still missing, treat as removed and delete the content |
-  | 400 | Bug: send to the dead-letter table and raise an alert |
+  | Network errors, 5xx | Exponential backoff with jitter (2 s, 4 s, 8 s, 16 s, 32 s), at most 5 attempts, on the **same** IP after its next slot |
+  | Block signals | §3 rules: cooldown, slowdown, re-queue after 15 min or more |
+  | Parse errors | Raw response kept (3 days), job moved to `parse_failures`, alert if the rate rises |
+  | Video/channel gone | Re-checked once; if still gone, content deleted and a tombstone kept |
 
-- **Circuit breakers:**
-  - per API method: open after a high error rate, then half-open probes;
-  - for RSS: if more than 20% of feeds fail at once, YouTube's feed service is probably down. We pause RSS and rely on the API checks.
-- **When blocked:** with official endpoints only, "blocked" means quota. We never rotate IPs or work around bot checks. RSS errors make us
-  slow down, never try harder.
-- **Safe re-runs:** all writes are upserts keyed by YouTube IDs, so re-running a job is harmless.
+- **Circuit breakers** per endpoint and for RSS. If more than 20% of feeds fail at once, YouTube's feed service is probably down, so we
+  pause RSS and rely on tab checks.
+- **Safe re-runs:** all writes are upserts keyed by YouTube IDs; re-running a job is harmless.
+- **Kill switches** per endpoint and per feature (comments, posts, discovery), so one problem never takes down everything.
 
 ### 8.9 Privacy: retention, pseudonymization, erasure
 
-**Retention defaults** (settings; per client values can be shorter, never longer):
+**Retention defaults** (settings; can be shortened):
 
 | Data | Kept for |
 |---|---|
-| Comments + author data | While the video is in the comment window, maximum 12 months from collection, and always refreshed within 28 days |
-| Deleted comments | Content removed when the deletion is detected; tombstone only |
-| Statistics snapshots, change history | 30 days (36 months only after YouTube approval) |
-| Derived metrics (sentiment, scores) | Only after YouTube approval; up to 36 months |
-| Raw API responses (S3) | 7 days |
-| Event topics (if Redpanda) | 7 days |
-| Logs | 14 days. Logs contain IDs only, never comment text or names |
-| Backups | 30 days rolling. On restore, erasures are re-applied from the suppression list |
+| Comments, replies, versions, author data | 12 months from collection |
+| Deleted comments | Text and author removed when detected; tombstone only |
+| Snapshots (stats over time) | 36 months (channel/video statistics, not personal) |
+| Search hits from the API | 30 days (API rule) |
+| Raw debug responses | 3 days |
+| Logs | 14 days. Logs contain IDs and counts only, never comment text or names |
+| Backups | 30 days rolling; erasures re-applied from the suppression list after any restore |
 
-**Pseudonymization modes, per client or channel:**
+**Pseudonymization modes**, per watch-list segment:
 
 | Mode | What we store |
 |---|---|
-| `full` | Author channel ID, name and avatar |
-| `pseudonymous` (proposed default) | `author_key = HMAC-SHA256(secret, author_channel_id)`; no name, avatar or URL. We can still count unique authors and honour erasure by author. The secret lives in a file like the API key. Rotating it breaks the links between old and new keys, and that is documented |
-| `text_only` | Comment text with no author key at all |
-| `aggregates_only` | Counts and metrics only; no comment text |
+| `pseudonymous` (default) | `author_key = HMAC-SHA256(secret, author_channel_id)`; no name, handle or avatar stored. Unique-author counts and erasure-by-author still work. The secret lives in a file, like other credentials |
+| `full` | Name, handle, avatar, channel ID |
+| `text_only` | No author key at all |
+| `aggregates_only` | No comment text, only counts and metrics |
 
 **Erasure requests:**
 
 | Kind | Input | What happens |
 |---|---|---|
-| By author | Channel URL, handle or ID (resolved to an ID through the API) | Delete all their comments, replies, versions and author row. Add a suppression entry, the keyed hash of the ID, so their future comments are dropped **before** storage |
-| By channel | A watched channel, or a channel owner's request | Delete the channel, its videos, the comments on them, snapshots and media. Suppress the channel ID so it can't be re-added without an admin override with a recorded reason |
-| By video / comment | ID | Delete and suppress |
+| By author | Channel URL, handle or ID (resolved by one scraped channel-page request) | Delete all their comments, replies, versions and author row. Add a suppression entry (keyed hash) so their future comments are dropped **before** storage |
+| By channel | Channel ID | Delete the channel, its videos, posts, comments on them, snapshots and media. Suppress it, so discovery can never re-add it without an admin override with a recorded reason |
+| By video / comment / post | ID | Delete and suppress |
 
 How an erasure is processed:
 
-- the request is logged in `erasure_requests`;
-- target: primary stores cleaned **within 72 hours**;
-- S3 raw responses age out within 7 days, and backups within 30;
-- an `erasure.requested` event goes to the analysis service, which must delete too;
-- completion is written to `erasure_audit`, with no personal data.
+- primary stores cleaned **within 72 hours**;
+- debug samples age out in 3 days, backups in 30;
+- every step logged in `erasure_audit`, with no personal data.
 
-**The suppression list is checked everywhere:** in the writer before every insert, in backfills, in vendor adapters, and on backup
-restores. A daily job also checks that nothing suppressed exists in the database. It should always count 0; anything else raises an alert.
+**The suppression list is checked everywhere:** in the writer, discovery, backfill and restores. A daily job confirms that suppressed items
+in the database = 0; anything else raises an alert.
 
 ### 8.10 The repo is public: hygiene
 
-- No captured responses, no real IDs, no real comments in the repo, ever.
-- Test fixtures are **generated** by a fixture builder that creates fake channels, videos and comments. Fake IDs use a recognisable pattern
-  (for example `UCfake…`) and fake names.
-- CI runs two checks on every pull request:
-  - **gitleaks** for secrets;
-  - a **fixture scanner** that fails on real-looking YouTube IDs outside the fake pattern, email addresses, phone numbers and `AIza…` keys.
-- Phase 0 output goes to a server folder outside the repo, and only **aggregate numbers** go into the report.
+- No captured responses, real IDs, real names or comments in the repo, ever.
+- **Fixtures** come from a generator: fake channels, videos and comments, with fake IDs in a recognisable pattern (for example `UCfake…`).
+- **Response skeletons:**
+  - when we need a real response's *structure* for tests, the `skeleton` tool turns every value into a type placeholder (`"<string>"`,
+    `"<int>"`);
+  - it drops arrays down to one item;
+  - a human reviews the result before commit.
+- **CI on every pull request:**
+  - gitleaks (secrets);
+  - a fixture scanner that fails on real-looking YouTube IDs, emails, phone numbers, `AIza…` keys and proxy URLs with passwords.
+- **`.gitignore`** blocks `.env*`, `*.key`, `secrets/` and data folders.
 
-### 8.11 Testing: a fake YouTube
+### 8.11 Stability against website changes
 
-- **fake-youtube:** a small Go server that imitates the Data API endpoints we use, the RSS feed and the WebSub hub. It includes:
-  - pagination and page tokens;
-  - quota accounting with real per-method costs;
-  - errors (`quotaExceeded`, `commentsDisabled`, 404s, 5xx);
-  - edits, deletions and replies appearing over time;
-  - ETags.
-- **Unit tests:** scheduler maths, quota governor, change detection, pseudonymization, suppression, and parsers (chapters, ISO 8601
-  durations).
-- **Integration tests** (Docker Compose in CI): Postgres + fake-youtube + the services. We check end to end:
-  - backfill;
-  - new upload via WebSub → fetched;
-  - comment edits and deletions detected;
-  - erasure followed by re-ingestion stays erased;
-  - the quota limit is respected.
-- **Contract checks** against the real API run only in Phase 0 and by hand. They compare response *shapes*, never store bodies, and are
-  not part of CI.
+- **Type-based parsing:** find all comment objects of a given type anywhere in the response, instead of fixed paths that break when YouTube
+  moves things.
+- **Field fill-rate monitoring:**
+  - for each field (views, likes, tags, pinned…) we track how often it is present;
+  - a drop (for example likes missing on more than 5% of videos in an hour) raises an alert within minutes;
+  - affected jobs are paused rather than storing bad data.
+- **Canary checks:** every 15 minutes a few public channels and videos are fetched and parsed. Only health metrics are kept, nothing is
+  stored.
+- **Client version auto-update:** read from YouTube's homepage once a day.
+- **Reference implementations:** when something breaks, compare with yt-dlp's (public domain) and YouTube.js's (MIT) current parsers.
+- **Expected maintenance:** a few breakages a month. Most are a parser update shipped as a small pull request the same day.
 
-### 8.12 Monitoring
+### 8.12 Testing: a fake YouTube
+
+- **fake-youtube:** a Go server that imitates the website endpoints we use (`browse`, `next`, `player`, watch page), plus RSS, the WebSub hub
+  and the search API. It uses generated data and reproduces:
+  - continuations;
+  - "Newest first" ordering;
+  - relative times and abbreviated counts;
+  - pinned and hearted comments, edits and deletions over time;
+  - block responses (429, the "confirm you're not a bot" page) and layout changes;
+  - search quota.
+- **Unit tests:** parsers, time and count estimates, scheduler, proxy manager (cooldowns, speed changes), quota governor, scoring,
+  pseudonymization, suppression.
+- **Integration tests** (Docker Compose in CI): end to end on fake-youtube, checking that:
+  - discovery promotes a channel;
+  - backfill runs;
+  - a new upload arrives by push and is fetched;
+  - comment edits and deletions are detected;
+  - **block signals cause cooldown and slowdown, not retries elsewhere**;
+  - erased data never returns;
+  - the search quota ceiling holds.
+- **No CI test touches real YouTube.**
+
+### 8.13 Monitoring
 
 - **Metrics (Prometheus):**
-  - units spent by method and priority, and the forecast to the end of the quota day;
-  - detection delay per layer;
-  - freshness per schedule tier (share of entities checked on time);
-  - comment completeness;
-  - API errors by reason; RSS 404 rate;
-  - WebSub lease expiry;
-  - queue backlog and oldest due job;
-  - erasure request age;
-  - suppression violations (must be 0);
-  - records older than 28 days without a refresh (must be 0).
+  - requests by endpoint, IP and result; block signals per IP and endpoint per hour; IPs in cooldown; the global speed multiplier;
+  - parse failures; field fill rates;
+  - detection delay per layer; freshness per tier (share of entities checked on time); comment completeness;
+  - search quota used, and its forecast to 11:00 / 10:00 Iraq time;
+  - discovery: candidates, promotions and rejections per day;
+  - backlog and oldest due job;
+  - erasure request age; suppression violations (must be 0).
 - **Alerts:**
-  - quota above 80% before 22:00 Iraq time;
-  - any `quotaExceeded`;
-  - a WebSub lease about to expire;
-  - freshness targets missed for 30 minutes;
-  - completeness below the threshold;
-  - an erasure request older than 48 hours;
-  - any suppression or 30-day violation.
-- **Dashboards (Grafana):** quota, freshness, comments, privacy.
-
-### 8.13 What I'd check in the fbs repo (once attached)
-
-- Whether its Postgres, Redpanda, S3 and analysis-service handoff can be shared, and the event formats and topic names it uses.
-- Whether its rate limiter and circuit breaker libraries can be reused for the quota governor.
-- Its fake-Facebook test harness and Phase 0 kit, as templates.
-- Its GDPR erasure flow, so a single "erase this person" request covers both platforms.
-- Its proxy tiers, which are probably **not** needed here: YouTube's official API isn't IP-limited the way Facebook scraping is.
+  - any IP-wide pause;
+  - block rate above the threshold;
+  - a fill-rate drop or parse-failure spike;
+  - freshness targets missed for 30 min;
+  - WebSub renewals failing;
+  - search quota exhausted early;
+  - an erasure request older than 48 h;
+  - any suppression violation.
+- **Dashboards (Grafana):** scraping health, freshness, discovery, comments, privacy.
 
 ---
 
 ## 9. Phase 0: measure before building
 
-**Goal:** replace the estimates in §6 and §7 with real numbers, and confirm or reject each **[verify]** item, using only official endpoints.
-Duration: about **2 weeks**, because detecting edits and deletions needs a second sweep a week after the first.
+**Goal:** measure the numbers that decide cost and design:
 
-**You provide:**
+- how fast we can go per IP without block signals;
+- which fields really come back, and how accurately;
+- bytes and requests per item;
+- comment completeness;
+- how much keyword search really finds.
 
-- 10–20 channels: a mix of small, medium and very large; Arabic and English; some with Shorts and live streams; one client-owned channel if
-  possible;
-- the Google Cloud project and API key file (steps below);
-- a small server;
-- optionally, a public HTTPS subdomain for the WebSub test.
+Everything stays strictly within §3: we stop at the first block signal and record it.
 
-**I provide (as 1–2 small draft pull requests after you approve):**
+**Duration:** about **2 weeks**, because edit/deletion detection needs a re-scan a week later.
+
+### 9.1 You provide
+
+- **30–50 Iraqi channels** of different sizes and types: news, entertainment, Shorts-heavy, a channel that streams live, Arabic and
+  Kurdish;
+- **10–20 keyword groups**;
+- the API key file (steps in §9.3);
+- one server;
+- **3–5 test proxy IPs of different kinds**: datacenter, ISP, and optionally a small residential trial;
+- optionally, a public HTTPS subdomain for push notifications.
+
+### 9.2 I provide (1–2 small draft pull requests after approval)
 
 - a `ytprobe` command-line tool;
 - the minimal fake-youtube for its tests;
+- the `skeleton` scrubber;
 - a report template.
 
-The tool stores raw data **only on your server**, in `/var/lib/securebrand-youtube/phase0`, and deletes it automatically after 14 days.
-The report contains **only counts and sizes**.
+Raw data stays **only on your server** in `/var/lib/securebrand-youtube/phase0` and is deleted automatically after 14 days. The report
+contains only aggregates.
 
 ### Experiments
 
 | # | Experiment | What we learn | Decision it feeds |
 |---|---|---|---|
-| E1 | Full metadata backfill per channel | Units and bytes per channel; whether the uploads list is complete compared with `videoCount` on very large channels | Backfill budget |
-| E2 | Full comment sweep on ~50 videos of different sizes | Units per video, comments per unit, the spread (heavy tail), bytes per comment | Quota request, caps (§8.7) |
-| E3 | Comment completeness | Collected vs `commentCount`; replies through `comments.list`; newest-first vs relevance coverage; how `allThreadsRelatedToChannelId` is ordered and what it covers | Completeness threshold, scan design |
-| E4 | Edits and deletions | Re-sweep the same videos after 7 days: how many edits and deletions we detect, and whether batch ID confirmation works | Sweep frequency |
-| E5 | New-upload detection | Delay and miss rate of WebSub vs RSS vs uploads playlist over 7–14 days; RSS error rate | Polling intervals |
-| E6 | Shorts and live classification | Do the `UUSH`/`UULF`/`UULV` playlists work, and are they correct against a human check of 50 videos? | Shorts detection method |
-| E7 | API behaviour | Does an ETag "not modified" reply (304) still cost quota? How often do view and subscriber counts actually change? How much rounding? | Refresh schedule |
-| E8 | Quota maths check | Units spent compared with the governor's own accounting | Governor correctness |
-| E9 (only if you approve) | Gap fields through a vendor trial | Coverage and cost for community posts, transcripts and pinned/hearted flags on ~10 videos, using free trial credits (for example ScrapeCreators) | Whether to add gap adapters |
+| E1 | **Block-rate curve** per endpoint (`browse`, `next`, `player`, watch page, RSS, image CDN) × IP type × pace (1 request per 10 s, 5 s, 3 s, 2 s). We stop at the first block signal on each IP and measure time to recovery | Safe pace per IP and per endpoint; whether datacenter IPs are enough | Proxy count, type and cost |
+| E2 | **Field coverage**: 200 videos, 50 channels | Which fields come back: tags, category, publish date-time, exact likes, chapters, links, country | Field list; whether we need the player endpoint |
+| E3 | **Accuracy** (only if Q13 approved): the same 200 videos via one official API call batch (≈ 10 units) | Scraped vs official views, likes, comment counts, publish times | Trust levels per field |
+| E4 | **Cost per item** | Requests and bytes per channel backfill, per video, per 100 comments, per post | Capacity model, bandwidth |
+| E5 | **Comments** | Completeness against the displayed count; whether "Newest first" stop-early works; replies; pinned/hearted detection; like abbreviation rules; publish-time precision | Comment engine settings |
+| E6 | **Edits and deletions**: re-sweep the same videos after 7 days | Edit and delete rates; the two-miss confirmation rule | Sweep schedule |
+| E7 | **New-upload detection** over 14 days | Delay and miss rate of WebSub vs RSS vs tab checks; RSS error rate; **how fresh RSS view counts are** | Tier intervals |
+| E8 | **Search yield** for each keyword group | Results per call, new channels per day, **relevance precision** (we hand-label 100 candidates), overlap between groups. If Q2 is approved, scraped search vs API search | Keyword grouping, scoring thresholds, whether scraped search is worth it |
+| E9 | **Transcripts within the rules** | Does any transcript endpoint answer **without** anti-bot tokens from our IPs? If not, transcripts are dropped | Transcript go/no-go |
+| E10 | **Parser robustness** | Parse-failure rate; client-version auto-detection | Maintenance estimate |
 
-For pinned/hearted flags, a person can also simply look at about 10 videos in a normal browser. That is not scraping, and it tells us how
-often these flags matter.
+**Phase 0 result:** `docs/phase0-results.md` (aggregates only), containing:
 
-**Not in Phase 0:** InnerTube scraping, yt-dlp, proxies, or anything logged in.
+- the measured safe pace and the proxy recommendation;
+- the updated request, cost and storage model;
+- the final field list with accuracy notes;
+- tier schedules;
+- the discovery settings;
+- a go/no-go for transcripts and the player endpoint.
 
-**Phase 0 result:** `docs/phase0-results.md`, containing aggregates only:
+### 9.3 Getting ready for Phase 0 (you run these; nothing secret is shown in chat)
 
-- the updated quota and cost model;
-- the recommended quota number to request;
-- the final schedule settings;
-- a go / no-go for each gap field.
-
-### Getting ready for Phase 0 (you run these; nothing secret is shown in chat)
-
-You can do this in the Google Cloud Console instead. These are the command-line versions. Replace `securebrand-youtube` with a globally
-unique project ID if it's taken, and `YOUR_SERVER_IP` with your server's public IP.
+You can do steps 1–4 in the Google Cloud Console instead. Replace `securebrand-youtube` with a globally unique project ID if it's taken,
+and `YOUR_SERVER_IP` with your server's public IP.
 
 1. Create the project:
 
@@ -841,7 +740,7 @@ gcloud services enable youtube.googleapis.com --project=securebrand-youtube
 3. Create an API key limited to that API and your server's IP:
 
 ```bash
-gcloud services api-keys create --project=securebrand-youtube --display-name="yt-collector" --api-target=service=youtube.googleapis.com --allowed-ips=YOUR_SERVER_IP
+gcloud services api-keys create --project=securebrand-youtube --display-name="yt-search" --api-target=service=youtube.googleapis.com --allowed-ips=YOUR_SERVER_IP
 ```
 
 4. Find the key's ID (the `uid` column):
@@ -868,8 +767,21 @@ gcloud services api-keys get-key-string KEY_UID --project=securebrand-youtube --
 sudo chmod 600 /etc/securebrand-youtube/youtube_api_key
 ```
 
-I'll double-check these exact flags against the current `gcloud` documentation when we start Phase 0. If one fails, tell me the error
-message, but never the key.
+8. Proxy credentials go into a file in the same folder, one proxy URL per line, in the form `http://user:password@host:port`. Create it
+   with an editor:
+
+```bash
+sudo nano /etc/securebrand-youtube/proxies.txt
+```
+
+9. Make the proxy file readable by its owner only:
+
+```bash
+sudo chmod 600 /etc/securebrand-youtube/proxies.txt
+```
+
+I'll double-check these exact `gcloud` flags when we start Phase 0. If a command fails, send me the error message, but never a key or
+password.
 
 ---
 
@@ -878,19 +790,19 @@ message, but never the key.
 These are small draft pull requests, each with unit and integration tests. I review each one and merge it when CI is green.
 
 1. Repo skeleton: Go module, CI (lint, tests, gitleaks, fixture scanner), Docker Compose, `.gitignore`, README.
-2. `ytprobe` + minimal fake-youtube (Phase 0 kit). → **Run Phase 0, publish the results, adjust this plan.**
-3. Database schema and migrations; privacy building blocks (HMAC, suppression check, retention settings).
-4. Data API client: header key, batching, paging, retries, quota charging; plus the full fake-youtube.
-5. Quota governor + scheduler + job queue.
-6. Registry (add or remove channels, handle resolution) + admin command-line tool.
-7. Channel and video collection + snapshots + change logs.
-8. New-upload detection: WebSub receiver, RSS poller, playlist checks.
-9. Comment engine: sweeps, scans, replies, edits, deletions, completeness, caps.
-10. Retention jobs, erasure workflow, suppression audit job.
-11. Media handoff (thumbnails) and events to the analysis service.
-12. Monitoring: metrics, dashboards, alerts.
-13. (If approved) owned channels: OAuth + Analytics/Reporting API.
-14. (If approved) gap adapters, one per field and vendor.
+2. Phase 0 kit: `ytprobe`, minimal fake-youtube, `skeleton` scrubber. → **Run Phase 0, publish results, adjust this plan.**
+3. Database schema + migrations; privacy building blocks (HMAC, suppression check, retention settings).
+4. Proxy manager: pool, per-IP budgets, cooldowns, global speed, block detection. Tested hard against fake-youtube.
+5. InnerTube client + parsers (channel, tabs, video, player) with fill-rate metrics.
+6. Scheduler + job queue + registry + admin CLI.
+7. Channel and video collection, snapshots, change logs.
+8. New-upload detection: WebSub receiver, RSS poller, tab checks.
+9. Comment engine: newest-first scans, replies, pinned/hearted, edits, deletions, completeness, caps.
+10. Community posts and playlists.
+11. Search-runner + quota governor + discovery (scoring, review list, promotion, capacity check).
+12. Retention jobs, erasure workflow, suppression audit job.
+13. Media (thumbnails, avatars, banners).
+14. Monitoring: metrics, dashboards, alerts, canaries.
 
 ---
 
@@ -898,66 +810,79 @@ These are small draft pull requests, each with unit and integration tests. I rev
 
 | # | Risk | Impact | Mitigation |
 |---|---|---|---|
-| 1 | Quota extension **slow or refused** | Stuck at ~100 channels | Apply in week 1 with Phase 0 numbers; strict prioritisation; possibly a paid vendor for overflow (costly) |
-| 2 | **Statistics storage / derived metrics refused** | Only 30 days of trends; sentiment on comments possibly not allowed under the API policies | Apply early and explain the use case; for owned channels, use the Analytics API (no 30-day limit); for history, license Social Blade data |
-| 3 | We misread the policy (30-day rule, aggregation) | Audit failure | Legal review of the policy text; design is already conservative (refresh ≤ 28 days) |
-| 4 | Any scraping, including via vendors, seen by YouTube | Lost API access, Terms claims | Official-only by default; vendor use per field, after legal review, labelled by source |
-| 5 | GDPR exposure from commenter data | Fines, complaints | DPIA, legitimate-interest assessment, Article 14 notice, pseudonymization by default, retention limits, erasure + suppression, aggregates in reports |
-| 6 | Comment completeness lower than counts suggest | Under-reporting | Completeness metric, re-sweeps, honest "partial" flags |
-| 7 | Undocumented behaviours change (`UUSH` playlists, channel-wide comment ordering, RSS) | Wrong classification or missed items | Layered detection; fallbacks; contract checks |
-| 8 | Viral videos with huge comment counts | Quota spikes | Per-video caps, budget reservations |
-| 9 | Subscriber rounding | Coarse subscriber trends | Explain it in reports; for owned channels, Analytics gives exact gains and losses |
-| 10 | API key leak | Quota theft, suspension | IP + API restriction, file storage, header-only sending, redaction, gitleaks, rotation |
-| 11 | Tight coupling with fbs infrastructure | One project's outage affects the other | Separate database schema, credentials and quotas; shared services only where it clearly helps |
-| 12 | Owned-channel OAuth verification takes long | Delays the Analytics features | Run in testing mode with ≤ 100 users first |
+| 1 | **YouTube's Terms (automated access, collecting identities)** | Legal claims, cease-and-desist | Your decision (D4); lawyer review; data minimisation; pseudonymization by default; aggregate reporting |
+| 2 | **API key terminated** for being part of a scraping system | Search-based discovery stops | Free discovery sources (§5.2) keep working; optional scraped search as fallback |
+| 3 | **Blocking tightens** (more bot checks, more anti-bot tokens) | Endpoints or fields lost; slower collection | Polite pacing, diverse IPs, per-endpoint switches; we accept losing a field rather than breaking your rules |
+| 4 | **The player endpoint unavailable without anti-bot tokens** | No tags or category; maybe date-only publish times for old videos | Detected in Phase 0; the rest still works |
+| 5 | **Website changes break parsers** | Gaps in data | Type-based parsing, fill-rate alerts, canaries, same-day fixes |
+| 6 | **Relative comment times and abbreviated likes** | Lower precision than the official API | Frequent scans on new videos; precision stored per value; explained in reports |
+| 7 | **Search quota is small** (≈ 100 calls/day) | Slower discovery | Keyword grouping; free discovery; optional scraped search |
+| 8 | **Discovery floods the watch list** | Capacity and cost blow-up | Scoring, daily cap, capacity check, review list, dormant tier |
+| 9 | Proxy provider issues (bad IPs, outages, unethical sourcing) | Instability, ethical exposure | 2–3 providers; health scoring; residential only from consent-based sources, capped |
+| 10 | **GDPR exposure** (diaspora commenters) | Fines, complaints | DPIA, legitimate-interest assessment, Article 14 notice, retention, erasure + suppression, pseudonymization |
+| 11 | Viral videos with huge comment volumes | Capacity spikes | Per-video caps, priority queues |
+| 12 | Credential leak (API key, proxy passwords) | Abuse, cost | Files only, IP-restricted key, log redaction, gitleaks, rotation |
 
 ## 12. Open questions and things to verify
 
-- Your answers to §1, especially **channel count**, **owned channels**, **mention search**, **gaps policy** and **budget**.
-- **Attach the fbs repo?** (Q19)
-- To verify against Google's pages, or in Phase 0:
-  - the exact 30-day and statistics wording;
-  - the `captions.download` cost and rules;
-  - the cost and permissions of `captions.list`;
-  - how `allThreadsRelatedToChannelId` is ordered and what it covers;
-  - the `UUSH`/`UULF`/`UULV` playlists;
-  - the WebSub lease length and deletion notifications;
-  - whether a 304 "not modified" reply costs quota;
-  - whether very large channels return their full uploads list;
-  - whether the API terms forbid scraping, and their exact wording;
-  - the current classification of the OAuth scopes.
+- Your answers to §1, especially **Q1 (rule interpretation)**, **Q2 (scraped search)**, **Q3–Q4 (keywords and relevance)** and **Q5 (target
+  size)**.
+- To verify in Phase 0:
+  - safe pace per IP and endpoint;
+  - whether the player endpoint works without anti-bot tokens;
+  - whether transcripts work within the rules;
+  - publish-time format for old videos;
+  - like-count abbreviation rules;
+  - whether total views and comment counts are exact;
+  - how fresh RSS stats are;
+  - items per tab page;
+  - WebSub lease and deletion notifications;
+  - API search yield.
 - Legal:
-  - legal basis and DPIA;
+  - lawyer review of the Terms and data-protection risks;
+  - legitimate-interest assessment, DPIA, privacy notice;
   - Iraq law status;
-  - transfers if EU/UK commenters are involved;
-  - whether derived analysis (sentiment, logo detection on thumbnails) falls under YouTube's derived-metrics rules.
+  - transfers if the server is outside the EU and EU commenters are involved.
 
 ---
 
+## Appendix A: options considered (from plan v1)
+
+| Approach | Coverage | Cost at 5,000 channels | Reliability | Blocking risk | Terms/legal risk | Maintenance | Role in v2 |
+|---|---|---|---|---|---|---|---|
+| Official Data API v3 | High, but no community posts, pinned/hearted, transcripts or About links | $0, but **quota**: ~500k units/day needed for collection, far above the free 10k | High | None | Low | Low | **Search only** (D4) |
+| Analytics API | Owned channels only | $0 | High | None | Low | Low–Med | **Not used** (D2) |
+| Website endpoints (InnerTube), logged out | Very high (minus anti-bot-token endpoints) | Proxies $30–450/month | Medium (breakages) | Medium–High | **High** | **High** | **Main collection** (D4) |
+| RSS + WebSub | New uploads + latest-15 stats | $0 | Medium + High | Low | Low | Low | **Detection** |
+| yt-dlp | Similar to InnerTube | — | Low (frequent breakage) | High | High | High | **Reference code only**; its server use needs logins or anti-bot tokens |
+| Paid vendors (ScrapeCreators, Apify, Bright Data…) | Similar to InnerTube | $27k+/month at comment scale | Medium | Vendor's | Medium | Low–Med | **Not used** (own scraper is far cheaper); possible emergency fallback |
+
 ## Sources
 
-Google's developer pages could not be fetched from my sandbox; claims from secondary sources are marked **[verify]** above.
+Primary Google pages could not be fetched from my sandbox; secondary claims are marked **[verify]**.
 
-- YouTube Data API quota costs: [determine_quota_cost](https://developers.google.com/youtube/v3/determine_quota_cost),
+- Data API quota costs and audits: [determine_quota_cost](https://developers.google.com/youtube/v3/determine_quota_cost),
+  [Quota and Compliance Audits](https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits),
   [OutlierKit quota guide](https://outlierkit.com/resources/youtube-api-quota/), [Blotato pricing guide](https://www.blotato.com/blog/youtube-api-pricing)
-- Quota and compliance audits: [Quota and Compliance Audits](https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits),
-  [Audit and Quota Extension Form](https://support.google.com/youtube/contact/yt_api_form)
+- Search operators and parameters: [search.list](https://developers.google.cn/youtube/v3/docs/search/list)
 - Policies: [Developer Policies](https://developers.google.com/youtube/terms/developer-policies),
   [Derived metrics and data storage policy](https://developers.google.com/youtube/terms/derived-metrics-policy),
-  [Revision history](https://developers.google.com/youtube/terms/revision-history),
-  [Policies guide](https://developers.google.com/youtube/terms/developer-policies-guide)
+  [Revision history](https://developers.google.com/youtube/terms/revision-history)
 - Multiple-project enforcement example: [Solar2D forum post](https://forums.solar2d.com/t/critical-problem-with-your-google-cloud-platform-api-project-appodeal/350374)
 - YouTube Terms of Service: [youtube.com/t/terms](https://www.youtube.com/static?gl=US&template=terms)
-- Bot checks and proof-of-origin tokens: [yt-dlp #15865](https://github.com/yt-dlp/yt-dlp/issues/15865),
-  [yt-dlp #16147](https://github.com/yt-dlp/yt-dlp/issues/16147), [bgutil PO token provider](https://pypi.org/project/bgutil-ytdlp-pot-provider/2.0.2/),
-  [youtube-transcript-api #592](https://github.com/jdepoix/youtube-transcript-api/issues/592), [#593](https://github.com/jdepoix/youtube-transcript-api/issues/593)
+- Bot checks and anti-bot tokens: [yt-dlp #15865](https://github.com/yt-dlp/yt-dlp/issues/15865),
+  [yt-dlp #16147](https://github.com/yt-dlp/yt-dlp/issues/16147), [bgutil PO token provider](https://pypi.org/project/bgutil-ytdlp-pot-provider/2.0.2/)
+- Transcripts in 2026: [youtube-transcript-api #592](https://github.com/jdepoix/youtube-transcript-api/issues/592),
+  [#593](https://github.com/jdepoix/youtube-transcript-api/issues/593),
+  [DEV: transcripts without the Data API](https://dev.to/xixisuperman/getting-youtube-transcripts-without-the-data-api-and-why-translate-to-100-languages-is-usually-43m8)
+- Datacenter-proxy blocking anecdote: [strapi-plugin-youtube-transcripts PR #12](https://github.com/PaulBratslavsky/strapi-plugin-youtube-transcripts/pull/12)
+- Comment fields on the website: [yt-dlp commit mirror](https://bytes.keithhacks.cyou/etc/yt-dlp/commit/c35448b7b14113b35c4415dbfbf488c4731f006f),
+  [Apify comment ledger actor (relative-time fields)](https://apify.com/danthedataman/youtube-channel-comment-ledger.md),
+  [YouTube.js Comments](https://www.ytjs.dev/api/namespaces/YT/classes/Comments)
 - RSS reliability: [Google AI forum: RSS 404s](https://discuss.ai.google.dev/t/youtube-rss-feed-endpoint-returns-404-errors/113379),
   [Feeder help](https://feeder.co/help/rss/youtube-feeds/)
-- Playlist prefixes: [Decoding YouTube playlist IDs](https://simpledecisionmaker.onrender.com/blogs/decoding-youtube-playlist-ids/)
-- yt-dlp comment fields: [yt-dlp commit mirror](https://bytes.keithhacks.cyou/etc/yt-dlp/commit/c35448b7b14113b35c4415dbfbf488c4731f006f)
-- Vendor prices: [Bright Data YouTube scrapers](https://brightdata.com/blog/web-data/best-youtube-scrapers),
-  [Apify YouTube comment scrapers](https://apify.com/apidojo/youtube-comments-scraper),
-  [ScrapeCreators comment scrapers](https://scrapecreators.com/blog/youtube-comment-scrapers),
-  [Social Blade Business API](https://socialblade.com/business-api)
 - WebSub: [Invidious lease handling](https://git.linux.ucla.edu/lug/invidious/commit/7425700009b2e127775ba33b9b9cf661867ecc2e),
   [ytWatchBot push handler](https://github.com/Feverqwe/ytWatchBot/blob/f03e8c53b27ba651868d495e310340ce4e8e62d5/legacy/pushApi.js)
+- Vendor prices: [Bright Data YouTube scrapers](https://brightdata.com/blog/web-data/best-youtube-scrapers),
+  [Apify YouTube comment scrapers](https://apify.com/apidojo/youtube-comments-scraper),
+  [ScrapeCreators comment scrapers](https://scrapecreators.com/blog/youtube-comment-scrapers)

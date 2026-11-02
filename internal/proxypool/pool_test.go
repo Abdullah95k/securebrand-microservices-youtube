@@ -342,3 +342,37 @@ func TestDoPreferStartsOnPreferredAndFailsOver(t *testing.T) {
 		t.Errorf("want first attempt on the preferred IP and the retry elsewhere, used %v", used)
 	}
 }
+
+// TestPlayerBlocksDoNotBrake: blocks on the player endpoint rest that IP's
+// player class but never slow or pause the pool; the same blocks on browse
+// do. An empty BrakeIgnore brakes on player too.
+func TestPlayerBlocksDoNotBrake(t *testing.T) {
+	var hosts []string
+	for i := 1; i <= 10; i++ {
+		hosts = append(hosts, fmt.Sprintf("203.0.%d.1:80", 113+i))
+	}
+	blockSix := func(p *Pool, c Class) {
+		for i := 0; i < 6; i++ {
+			st := p.states[i]
+			st.inFlight = true
+			p.releaseAt(t0, st, c, Blocked)
+		}
+	}
+	p := New(makeProxies(t, hosts...), Config{Jitter: noJitter}, 1)
+	blockSix(p, ClassPlayer)
+	if p.speed != 1 || !p.pausedUntil.IsZero() {
+		t.Fatalf("after 6 player blocks: speed %v, paused until %v; want full speed, no pause", p.speed, p.pausedUntil)
+	}
+	if st, _ := p.pickAt(t0.Add(time.Minute), ClassPlayer, map[string]bool{p.states[6].p.id: true, p.states[7].p.id: true, p.states[8].p.id: true, p.states[9].p.id: true}, ""); st != nil {
+		t.Error("the blocked IPs' player class should still be resting")
+	}
+	if st, _ := p.pickAt(t0.Add(time.Minute), ClassBrowse, nil, ""); st == nil {
+		t.Error("browse should carry on")
+	}
+
+	strict := New(makeProxies(t, hosts...), Config{Jitter: noJitter, BrakeIgnore: []Class{}}, 1)
+	blockSix(strict, ClassPlayer)
+	if strict.pausedUntil.IsZero() {
+		t.Error("with an empty BrakeIgnore, player blocks should brake like any other")
+	}
+}

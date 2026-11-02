@@ -21,6 +21,7 @@ const (
 	EnvProxiesFile  = "YT_PROXIES_FILE"
 	EnvAPIKeyFile   = "YT_API_KEY_FILE"
 	EnvChannelsFile = "YT_CHANNELS_FILE"
+	EnvKeywordsFile = "YT_KEYWORDS_FILE"
 	EnvDataDir      = "YT_DATA_DIR"
 	EnvBaseURL      = "YT_BASE_URL" // tests only; default https://www.youtube.com
 )
@@ -31,6 +32,9 @@ const (
 	DefaultProxiesFile  = "/etc/securebrand-youtube/proxies.txt"
 	DefaultAPIKeyFile   = "/etc/securebrand-youtube/youtube_api_key"
 	DefaultChannelsFile = "/etc/securebrand-youtube/phase0-channels.txt"
+	// DefaultKeywordsFile holds your own search terms (brands, people,
+	// topics), one per line. It is optional and stays on the server.
+	DefaultKeywordsFile = "/etc/securebrand-youtube/phase0-keywords.txt"
 	DefaultDataDir      = "/var/lib/securebrand-youtube/phase0"
 )
 
@@ -60,6 +64,7 @@ type Env struct {
 	Feeds     *feeds.Fetcher
 	API       *ytapi.Client // nil when no key is configured
 	Channels  []string
+	Keywords  []string // your own search terms; empty when there is no keywords file
 	BaseURL   string
 	run       string // labels this process's pool snapshots
 }
@@ -101,6 +106,12 @@ func Setup(poolCfg proxypool.Config) (*Env, error) {
 		env.API = ytapi.New(key, apiBase, ledger)
 	}
 
+	if path := PathFromEnv(EnvKeywordsFile, DefaultKeywordsFile); os.Getenv(EnvKeywordsFile) != "" || fileExists(path) {
+		env.Keywords, err = readList(path)
+		if err != nil {
+			return nil, fmt.Errorf("keywords file: %w", err)
+		}
+	}
 	if path := PathFromEnv(EnvChannelsFile, DefaultChannelsFile); os.Getenv(EnvChannelsFile) != "" || fileExists(path) {
 		env.Channels, err = readList(path)
 		if err != nil {

@@ -7,9 +7,11 @@
 //	YT_PROXIES_FILE   proxy list, one per line (chmod 600); default /etc/securebrand-youtube/proxies.txt
 //	YT_API_KEY_FILE   YouTube Data API key (chmod 600); default /etc/securebrand-youtube/youtube_api_key
 //	YT_CHANNELS_FILE  channels to measure; default /etc/securebrand-youtube/phase0-channels.txt
+//	YT_KEYWORDS_FILE  your own search terms, optional; default /etc/securebrand-youtube/phase0-keywords.txt
 //	YT_DATA_DIR       results, deleted after 14 days; default /var/lib/securebrand-youtube/phase0
 //
-// Commands: check, resolve, crawl, detect, resweep, accuracy, pace, report, cleanup.
+// Commands: check, resolve, crawl, detect, resweep, accuracy, pace, discover,
+// census, report, cleanup.
 package main
 
 import (
@@ -38,6 +40,8 @@ Usage: ytprobe <command> [flags]
   resweep    re-read comments of crawled videos to find edits and deletions (E7)
   accuracy   compare scraped numbers with the official API (E4, ~1 unit per 50 videos)
   pace       step the request pace up per endpoint until the first block signal (E1)
+  discover   search your keywords on the official API and the website; compare them (E9)
+  census     profile channels that discover found and the list lacks (E10)
   report     print the aggregate report (safe to share: no IDs, names or text)
   cleanup    delete Phase 0 data older than 14 days
 
@@ -145,6 +149,32 @@ func main() {
 			break
 		}
 		err = phase0.RunPace(ctx, env, t, o, log)
+	case "discover":
+		o := phase0.DefaultDiscoverOptions()
+		seed := fs.Int("seed", 20, "seed keywords to search as well (first spelling of each); 0 = only your keywords file")
+		fs.IntVar(&o.WebPages, "web-pages", o.WebPages, "website search pages per term")
+		fs.IntVar(&o.APIPages, "api-pages", o.APIPages, "official API pages per term (100 quota units each)")
+		fs.IntVar(&o.APIUnits, "api-units", o.APIUnits, "most quota units this run may use (0 = website only)")
+		days := fs.Int("api-days", 30, "official API: only videos published in the last N days (0 = any time)")
+		fs.StringVar(&o.WebParams, "web-params", "", "website search filter parameters (advanced)")
+		fs.Parse(args)
+		o.APIWithin = time.Duration(*days) * 24 * time.Hour
+		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+		o.Terms = append(append([]string{}, env.Keywords...), phase0.SeedTerms(*seed)...)
+		api := env.API
+		if o.APIUnits <= 0 {
+			api = nil
+		}
+		go env.SavePoolStatsEvery(ctx, "discover", 10*time.Minute)
+		err = phase0.Discover(ctx, env.Collector, api, o, log)
+		env.SavePoolStats("discover")
+	case "census":
+		max := fs.Int("max", 500, "channels to profile")
+		fs.Parse(args)
+		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+		go env.SavePoolStatsEvery(ctx, "census", 10*time.Minute)
+		err = phase0.Census(ctx, env.Collector, phase0.CensusOptions{Max: *max}, log)
+		env.SavePoolStats("census")
 	case "report":
 		fs.Parse(args)
 		store, serr := phase0.OpenStore(phase0.DataDir())

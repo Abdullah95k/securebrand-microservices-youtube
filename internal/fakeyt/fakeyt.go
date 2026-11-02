@@ -160,6 +160,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		endpoint = strings.TrimPrefix(r.URL.Path, "/youtubei/v1/")
 	case r.URL.Path == "/feeds/videos.xml":
 		endpoint = "feed"
+	case strings.HasPrefix(r.URL.Path, "/vi/"):
+		endpoint = "cdn" // thumbnails (i.ytimg.com)
 	case strings.HasPrefix(r.URL.Path, "/youtube/v3/"):
 		// Official Data API routes, answered by handlers named "api:<method>".
 		endpoint = "api:" + strings.TrimPrefix(r.URL.Path, "/youtube/v3/")
@@ -205,6 +207,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch endpoint {
+	case "cdn":
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("\xff\xd8\xff fake jpeg"))
+		return
 	case "home":
 		page := fmt.Sprintf(`<html><script>ytcfg.set({"INNERTUBE_CLIENT_VERSION":"%s","VISITOR_DATA":"%s"});</script></html>`, version, visitor)
 		writeBody(w, r, "text/html", []byte(page))

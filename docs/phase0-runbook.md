@@ -21,6 +21,7 @@ This is how to run the Phase 0 measurements (plan §9) on your DigitalOcean drop
 | Channel cost, fields, comments, parser check (E3, E5, E6, E13) | `crawl` | Day 0 |
 | Accuracy against the official API (E4) | `accuracy` | After the crawl |
 | Edits and deletions (E7) | `resweep` | Day 7 |
+| Safe pace per endpoint and failover (E1, E2) | `pace` (about an hour; when no crawl is running) | After the crawl |
 | Report | `report` | Any time; final on Day 14 |
 
 The remaining experiments come in the next update. You can start the long-running parts now:

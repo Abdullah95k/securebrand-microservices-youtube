@@ -80,7 +80,7 @@ func Setup(poolCfg proxypool.Config) (*Env, error) {
 	}
 	env := &Env{Store: store, Proxies: proxies, BaseURL: os.Getenv(EnvBaseURL), run: time.Now().UTC().Format(time.RFC3339Nano)}
 	env.Pool = proxypool.New(proxies, poolCfg, time.Now().UnixNano())
-	env.Client = innertube.New(innertube.Options{Pool: env.Pool, BaseURL: env.BaseURL})
+	env.Client = innertube.New(innertube.Options{Pool: env.Pool, BaseURL: env.BaseURL, CDNBase: env.BaseURL})
 	env.Collector = &Collector{Client: env.Client, Store: store, Now: time.Now}
 	env.Feeds = feeds.NewFetcher(env.Client)
 

@@ -9,7 +9,7 @@
 //	YT_CHANNELS_FILE  channels to measure; default /etc/securebrand-youtube/phase0-channels.txt
 //	YT_DATA_DIR       results, deleted after 14 days; default /var/lib/securebrand-youtube/phase0
 //
-// Commands: check, resolve, crawl, detect, resweep, accuracy, report, cleanup.
+// Commands: check, resolve, crawl, detect, resweep, accuracy, pace, report, cleanup.
 package main
 
 import (
@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +37,7 @@ Usage: ytprobe <command> [flags]
   detect     watch feeds and channel tabs for new uploads; runs until stopped (E8)
   resweep    re-read comments of crawled videos to find edits and deletions (E7)
   accuracy   compare scraped numbers with the official API (E4, ~1 unit per 50 videos)
+  pace       step the request pace up per endpoint until the first block signal (E1)
   report     print the aggregate report (safe to share: no IDs, names or text)
   cleanup    delete Phase 0 data older than 14 days
 
@@ -119,6 +121,30 @@ func main() {
 		}
 		err = phase0.Accuracy(ctx, env.Collector, env.API, *maxVideos, log)
 		env.SavePoolStats("accuracy")
+	case "pace":
+		o := phase0.DefaultPaceOptions()
+		classes := fs.String("classes", joinClasses(o.Classes), "endpoint classes to test, comma-separated")
+		steps := fs.String("steps", joinDurations(o.Steps), "gaps between requests on one IP, slowest first")
+		fs.IntVar(&o.PerStep, "per-step", o.PerStep, "requests per IP in each step")
+		fs.IntVar(&o.Proxies, "proxies", o.Proxies, "test the first N proxies of the list")
+		fs.IntVar(&o.StopAfterBlocks, "stop-after", o.StopAfterBlocks, "block signals in one step that end an endpoint's test")
+		channels := fs.Int("channels", 10, "channels from the list to take test targets from")
+		fs.Parse(args)
+		var perr error
+		if o.Classes, perr = parseClasses(*classes); perr == nil {
+			o.Steps, perr = parseDurations(*steps)
+		}
+		if perr != nil {
+			fmt.Fprintln(os.Stderr, perr)
+			os.Exit(2)
+		}
+		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+		t, gerr := phase0.GatherPaceTargets(ctx, env.Collector, env.Channels, *channels, log)
+		if gerr != nil {
+			err = gerr
+			break
+		}
+		err = phase0.RunPace(ctx, env, t, o, log)
 	case "report":
 		fs.Parse(args)
 		store, serr := phase0.OpenStore(phase0.DataDir())
@@ -185,4 +211,64 @@ func resolveAll(ctx context.Context, env *phase0.Env, log *slog.Logger) []string
 	}
 	_ = env.Store.WriteJSON("resolved.json", cache)
 	return ids
+}
+
+func joinClasses(cs []proxypool.Class) string {
+	parts := make([]string, len(cs))
+	for i, c := range cs {
+		parts[i] = string(c)
+	}
+	return strings.Join(parts, ",")
+}
+
+func parseClasses(s string) ([]proxypool.Class, error) {
+	known := map[string]bool{}
+	for _, c := range phase0.DefaultPaceOptions().Classes {
+		known[string(c)] = true
+	}
+	var out []proxypool.Class
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if !known[part] {
+			return nil, fmt.Errorf("unknown endpoint class %q (known: %s)", part, joinClasses(phase0.DefaultPaceOptions().Classes))
+		}
+		out = append(out, proxypool.Class(part))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no endpoint classes given")
+	}
+	return out, nil
+}
+
+func joinDurations(ds []time.Duration) string {
+	parts := make([]string, len(ds))
+	for i, d := range ds {
+		parts[i] = d.String()
+	}
+	return strings.Join(parts, ",")
+}
+
+func parseDurations(s string) ([]time.Duration, error) {
+	var out []time.Duration
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		d, err := time.ParseDuration(part)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("bad step %q: use durations like 10s or 1.5s", part)
+		}
+		if len(out) > 0 && d >= out[len(out)-1] {
+			return nil, fmt.Errorf("steps must get faster: %s is not shorter than %s", d, out[len(out)-1])
+		}
+		out = append(out, d)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no steps given")
+	}
+	return out, nil
 }

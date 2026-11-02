@@ -76,6 +76,10 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	paceRecs, err := ReadAll[PaceRecord](s, "pace_steps")
+	if err != nil {
+		return err
+	}
 	skels, _ := s.List("skeletons")
 
 	p := func(format string, a ...any) { fmt.Fprintf(w, format+"\n", a...) }
@@ -276,7 +280,15 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 	}
 
 	// Blocks and proxies (E1/E2 come later; these are the crawl's counters).
-	if pools = latestPerRun(pools); len(pools) > 0 {
+	// The pace experiment blocks on purpose; its pool is reported in E1,
+	// not in the crawl's block counts or the failover figures.
+	var work []PoolSnapshot
+	for _, ps := range pools {
+		if ps.Command != "pace" {
+			work = append(work, ps)
+		}
+	}
+	if pools = latestPerRun(work); len(pools) > 0 {
 		byKind := map[proxypool.Kind][2]int64{}
 		byClass := map[proxypool.Class]int64{}
 		pauses, subnetCools := 0, 0
@@ -325,6 +337,9 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 		p("Safety pauses of all requests: %d (%s in total). Subnet rests: %d.", pauses, paused.Round(time.Minute), subnetCools)
 		p("")
 	}
+
+	reportPace(p, paceRecs)
+	reportFailover(p, pools)
 
 	p("## Parser problems (E13)")
 	p("")
@@ -442,4 +457,114 @@ func pctStr(x float64) string {
 		return "n/a"
 	}
 	return fmt.Sprintf("%.0f%%", x*100)
+}
+
+// reportPace writes E1: for each endpoint, the fastest gap per IP that drew
+// no block signal and the gap that drew the first one. When an endpoint was
+// tested in several runs, its latest run counts.
+func reportPace(p func(string, ...any), recs []PaceRecord) {
+	if len(recs) == 0 {
+		return
+	}
+	latest := map[string]string{} // class → latest run
+	for _, r := range recs {
+		if r.Run > latest[r.Class] {
+			latest[r.Class] = r.Run
+		}
+	}
+	var classes []string
+	for _, c := range DefaultPaceOptions().Classes {
+		if _, ok := latest[string(c)]; ok {
+			classes = append(classes, string(c))
+		}
+	}
+	for c := range latest {
+		known := false
+		for _, k := range classes {
+			known = known || k == c
+		}
+		if !known {
+			classes = append(classes, c)
+		}
+	}
+	p("## Safe pace per endpoint (E1)")
+	p("")
+	p("Gap = time between two requests on one IP. Each endpoint was tested from the slowest gap down and stopped at its first block signal.")
+	p("")
+	p("| Endpoint | Proxy type | Fastest gap with no block | First block at | Requests / blocks | Median response at fastest clean gap |")
+	p("|---|---|---|---|---|---|")
+	for _, c := range classes {
+		var steps []PaceRecord
+		for _, r := range recs {
+			if r.Class == c && r.Run == latest[c] {
+				steps = append(steps, r)
+			}
+		}
+		sort.Slice(steps, func(i, j int) bool { return steps[i].GapSec > steps[j].GapSec })
+		clean, firstBlock, kinds := "none", "none", ""
+		var req, blocks int
+		var cleanMS int64
+		for _, st := range steps {
+			req += st.Requests
+			blocks += st.Blocks
+			kinds = st.Kinds
+			if st.Blocks == 0 && st.Requests > 0 {
+				clean, cleanMS = gapStr(st.GapSec), st.MedianMS
+			} else if st.Blocks > 0 && firstBlock == "none" {
+				firstBlock = gapStr(st.GapSec)
+			}
+		}
+		if firstBlock == "none" && len(steps) > 0 {
+			firstBlock = "none up to " + gapStr(steps[len(steps)-1].GapSec)
+		}
+		p("| %s | %s | %s | %s | %d / %d | %d ms |", c, kinds, clean, firstBlock, req, blocks, cleanMS)
+	}
+	p("")
+}
+
+func gapStr(sec float64) string {
+	return strings.TrimSuffix(strings.TrimSuffix(fmt.Sprintf("%.2f", sec), "0"), ".0") + " s"
+}
+
+// reportFailover writes E2 from the crawl's and detection's pools: what
+// happened to requests that met a block, and whether rested IPs came back.
+func reportFailover(p func(string, ...any), pools []PoolSnapshot) {
+	byClass := map[proxypool.Class]*proxypool.ClassStats{}
+	for _, ps := range pools {
+		for c, cs := range ps.Stats.Classes {
+			a := byClass[c]
+			if a == nil {
+				a = &proxypool.ClassStats{}
+				byClass[c] = a
+			}
+			a.BlockedRequests += cs.BlockedRequests
+			a.FailoverOK += cs.FailoverOK
+			a.Parked += cs.Parked
+			a.Recovered += cs.Recovered
+			a.Reblocked += cs.Reblocked
+			a.RecoverySeconds = append(a.RecoverySeconds, cs.RecoverySeconds...)
+		}
+	}
+	if len(byClass) == 0 {
+		return
+	}
+	classes := make([]string, 0, len(byClass))
+	for c := range byClass {
+		classes = append(classes, string(c))
+	}
+	sort.Strings(classes)
+	p("## Failover and recovery (E2)")
+	p("")
+	p("| Endpoint | Requests that met a block | Finished on another IP | Given up (3 IPs blocked) | IPs working after their rest / blocked again | Median minutes from block to working again |")
+	p("|---|---|---|---|---|---|")
+	for _, c := range classes {
+		a := byClass[proxypool.Class(c)]
+		mins := make([]float64, len(a.RecoverySeconds))
+		for i, s := range a.RecoverySeconds {
+			mins[i] = s / 60
+		}
+		p("| %s | %d | %d (%s) | %d | %d / %d | %s |", c, a.BlockedRequests, a.FailoverOK, pctStr(share(int(a.FailoverOK), int(a.BlockedRequests))),
+			a.Parked, a.Recovered, a.Reblocked, f0(pct(mins, 50)))
+	}
+	p("")
 }

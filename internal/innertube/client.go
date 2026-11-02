@@ -82,6 +82,9 @@ type Options struct {
 	UserAgent string // default DefaultUserAgent
 	// UTCOffsetMinutes is sent in the client context (Iraq: +180).
 	UTCOffsetMinutes int
+	// CDNBase serves thumbnails, default https://i.ytimg.com (tests use the
+	// fake server).
+	CDNBase string
 }
 
 // Client is safe for concurrent use.
@@ -112,6 +115,10 @@ func New(opt Options) *Client {
 	if opt.UTCOffsetMinutes == 0 {
 		opt.UTCOffsetMinutes = 180
 	}
+	if opt.CDNBase == "" {
+		opt.CDNBase = "https://i.ytimg.com"
+	}
+	opt.CDNBase = strings.TrimRight(opt.CDNBase, "/")
 	return &Client{opt: opt, visitorByIPID: map[string]string{}}
 }
 
@@ -177,7 +184,17 @@ func (c *Client) CallPrefer(ctx context.Context, ep Endpoint, payload map[string
 // "/watch?v=…" or "/feeds/videos.xml?channel_id=…") as endpoint class cl.
 // Extra headers (for conditional requests) may be given.
 func (c *Client) Get(ctx context.Context, cl proxypool.Class, path string, extra http.Header) (*Response, error) {
-	url := c.opt.BaseURL + path
+	return c.get(ctx, cl, c.opt.BaseURL+path, extra)
+}
+
+// Thumbnail fetches a video's thumbnail from the image CDN ("hqdefault",
+// "mqdefault"…). It is used to measure the CDN endpoint (E1) and later for
+// media.
+func (c *Client) Thumbnail(ctx context.Context, videoID, size string) (*Response, error) {
+	return c.get(ctx, proxypool.ClassCDN, c.opt.CDNBase+"/vi/"+videoID+"/"+size+".jpg", nil)
+}
+
+func (c *Client) get(ctx context.Context, cl proxypool.Class, url string, extra http.Header) (*Response, error) {
 	return c.do(ctx, cl, func(px *proxypool.Proxy) (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {

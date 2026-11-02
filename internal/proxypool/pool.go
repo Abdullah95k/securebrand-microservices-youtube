@@ -196,7 +196,24 @@ type classState struct {
 	coolUntil time.Time
 	lastBlock time.Time
 	blocks    int64
+	// resting is true from a block until this IP's next outcome on the
+	// class, which tells whether the rest worked (E2).
+	resting bool
 }
+
+// classCounters are failover and recovery counters for one endpoint class
+// (Phase 0 experiment E2).
+type classCounters struct {
+	blockedRequests int64 // requests that met at least one block
+	failoverOK      int64 // ... and still succeeded on another IP
+	parked          int64 // ... and were given up after ParkAfter IPs
+	recovered       int64 // IPs whose first request after a rest succeeded
+	reblocked       int64 // IPs blocked again on their first request after a rest
+	recoverySecs    []float64
+}
+
+// maxRecoverySamples bounds the stored block-to-recovery times per class.
+const maxRecoverySamples = 500
 
 type proxyState struct {
 	p             *Proxy
@@ -245,6 +262,7 @@ type Pool struct {
 	pauses      int
 	pausedTotal time.Duration
 	subnetCools int
+	classes     map[Class]*classCounters
 }
 
 // New creates a pool. seed makes jitter reproducible in tests; use
@@ -410,8 +428,21 @@ func (p *Pool) releaseAt(now time.Time, st *proxyState, c Class, o Outcome) {
 	st.nextAllowed = now.Add(p.intervalLocked())
 
 	switch o {
+	case OK:
+		if cs := st.classes[c]; cs != nil && cs.resting {
+			cs.resting = false
+			cc := p.counters(c)
+			cc.recovered++
+			if len(cc.recoverySecs) < maxRecoverySamples {
+				cc.recoverySecs = append(cc.recoverySecs, now.Sub(cs.lastBlock).Seconds())
+			}
+		}
 	case Blocked:
 		cs := st.class(c)
+		if cs.resting {
+			p.counters(c).reblocked++
+		}
+		cs.resting = true
 		if cs.strikes > 0 && now.Sub(cs.coolUntil) >= p.cfg.StrikeReset {
 			cs.strikes = 0 // a clean day after the cooldown ended
 		}
@@ -481,6 +512,44 @@ func (p *Pool) coolSubnetLocked(now time.Time, subnet string, c Class) {
 			m[c] = until
 		}
 	}
+}
+
+// counters returns the E2 counters for c. Caller holds p.mu.
+func (p *Pool) counters(c Class) *classCounters {
+	if p.classes == nil {
+		p.classes = map[Class]*classCounters{}
+	}
+	cc := p.classes[c]
+	if cc == nil {
+		cc = &classCounters{}
+		p.classes[c] = cc
+	}
+	return cc
+}
+
+// noteRequest records how a whole request (with its failovers) ended.
+func (p *Pool) noteRequest(c Class, res Result, err error) {
+	if len(res.BlockedOn) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cc := p.counters(c)
+	cc.blockedRequests++
+	switch {
+	case err == nil:
+		cc.failoverOK++
+	case errors.Is(err, ErrParked):
+		cc.parked++
+	}
+}
+
+// SetMinInterval changes the gap between requests on one IP, for the pace
+// experiment (E1), which steps it down while it runs.
+func (p *Pool) SetMinInterval(d time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cfg.MinInterval = d
 }
 
 func (p *Pool) brakeIgnores(c Class) bool {
@@ -604,6 +673,18 @@ type Stats struct {
 	Pauses          int           // times the brake paused every request
 	PausedTotal     time.Duration // time spent in those pauses
 	SubnetCooldowns int           // times a whole subnet was rested for a class
+	// Classes holds failover and recovery counters per endpoint class (E2).
+	Classes map[Class]ClassStats
+}
+
+// ClassStats are the failover and recovery counters of one endpoint class.
+type ClassStats struct {
+	BlockedRequests int64     // requests that met at least one block
+	FailoverOK      int64     // ... and still succeeded on another IP
+	Parked          int64     // ... and were given up after ParkAfter IPs
+	Recovered       int64     // IPs whose first request after a rest succeeded
+	Reblocked       int64     // IPs blocked again on their first request after a rest
+	RecoverySeconds []float64 // block → first success on that IP, per recovery (capped)
 }
 
 // Stats returns a snapshot.
@@ -611,7 +692,14 @@ func (p *Pool) Stats() Stats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
-	s := Stats{Speed: p.speed, Pauses: p.pauses, PausedTotal: p.pausedTotal, SubnetCooldowns: p.subnetCools}
+	s := Stats{Speed: p.speed, Pauses: p.pauses, PausedTotal: p.pausedTotal, SubnetCooldowns: p.subnetCools, Classes: map[Class]ClassStats{}}
+	for c, cc := range p.classes {
+		s.Classes[c] = ClassStats{
+			BlockedRequests: cc.blockedRequests, FailoverOK: cc.failoverOK, Parked: cc.parked,
+			Recovered: cc.recovered, Reblocked: cc.reblocked,
+			RecoverySeconds: append([]float64(nil), cc.recoverySecs...),
+		}
+	}
 	if now.Before(p.pausedUntil) {
 		s.PausedUntil = p.pausedUntil
 	}

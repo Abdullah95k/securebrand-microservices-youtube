@@ -8,6 +8,7 @@
 //	YT_API_KEY_FILE   YouTube Data API key (chmod 600); default /etc/securebrand-youtube/youtube_api_key
 //	YT_CHANNELS_FILE  channels to measure; default /etc/securebrand-youtube/phase0-channels.txt
 //	YT_KEYWORDS_FILE  your own search terms, optional; default /etc/securebrand-youtube/phase0-keywords.txt
+//	YT_ANTHROPIC_KEY_FILE  Anthropic API key for "label -ai" (chmod 600); default /etc/securebrand-youtube/anthropic_api_key
 //	YT_DATA_DIR       results, deleted after 14 days; default /var/lib/securebrand-youtube/phase0
 //
 // Commands: check, resolve, crawl, detect, resweep, accuracy, pace, discover,
@@ -25,8 +26,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ailabel"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/secrets"
 )
 
 const usage = `ytprobe: Phase 0 measurement kit (docs/phase0-runbook.md)
@@ -42,7 +45,8 @@ Usage: ytprobe <command> [flags]
   pace       step the request pace up per endpoint until the first block signal (E1)
   discover   search your keywords on the official API and the website; compare them (E9)
   census     profile channels that discover found and the list lacks (E10)
-  label      mark found videos relevant or not, to score keyword matching (E11; interactive)
+  label      label found videos relevant or not, to score keyword matching (E11): -ai lets the AI do it;
+             without -ai you answer in the terminal (a spot check of the AI with -limit 30)
   transcripts check whether transcripts come back without anti-bot tokens (E12)
   report     print the aggregate report (safe to share: no IDs, names or text)
   cleanup    delete Phase 0 data older than 14 days
@@ -180,14 +184,36 @@ func main() {
 	case "label":
 		size := fs.Int("size", 300, "videos in the sample (half accepted, half rejected by the matcher)")
 		reset := fs.Bool("reset", false, "draw a new sample and drop earlier answers")
+		useAI := fs.Bool("ai", false, "let the AI label the sample (sends only the public titles to the AI provider)")
+		model := fs.String("model", "", "with -ai: the Claude model ID to use (required)")
+		effort := fs.String("effort", "high", "with -ai: effort level ("+strings.Join(ailabel.Efforts, ", ")+"; empty = the model's default)")
+		batch := fs.Int("batch", 25, "with -ai: titles per request")
+		fallback := fs.Bool("fallback", true, "with -ai: if the model declines, let the API answer with a fallback model")
+		limit := fs.Int("limit", 0, "by hand: answer at most this many titles this time (0 = all)")
 		fs.Parse(args)
+		if *useAI {
+			env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+			key, kerr := secrets.ReadFile(phase0.PathFromEnv(phase0.EnvAIKeyFile, phase0.DefaultAIKeyFile))
+			if kerr != nil {
+				log.Error("Anthropic API key", "err", kerr)
+				os.Exit(2)
+			}
+			client, cerr := ailabel.New(ailabel.Config{APIKey: key, Model: *model, Effort: *effort, Fallback: *fallback})
+			if cerr != nil {
+				fmt.Fprintln(os.Stderr, cerr)
+				os.Exit(2)
+			}
+			err = phase0.LabelAI(ctx, env.Store, client, phase0.AILabelOptions{
+				LabelOptions: phase0.LabelOptions{Size: *size, Terms: env.Keywords, Reset: *reset}, Batch: *batch}, log)
+			break
+		}
 		stop() // Ctrl+C quits at once; every answer is already saved
 		if fi, serr := os.Stdin.Stat(); serr == nil && fi.Mode()&os.ModeCharDevice == 0 {
-			fmt.Fprintln(os.Stderr, "label needs your keyboard: run it with \"docker run -it ...\" (note the -it).")
+			fmt.Fprintln(os.Stderr, "label needs your keyboard: run it with \"docker run -it ...\" (note the -it), or use -ai.")
 			os.Exit(2)
 		}
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
-		err = phase0.Label(context.Background(), env.Store, os.Stdin, os.Stdout, phase0.LabelOptions{Size: *size, Terms: env.Keywords, Reset: *reset})
+		err = phase0.Label(context.Background(), env.Store, os.Stdin, os.Stdout, phase0.LabelOptions{Size: *size, Terms: env.Keywords, Reset: *reset, Limit: *limit})
 	case "transcripts":
 		videos := fs.Int("videos", 30, "videos to check")
 		channels := fs.Int("channels", 15, "channels from the list to take recent videos from")

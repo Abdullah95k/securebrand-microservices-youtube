@@ -24,7 +24,7 @@ This is how to run the Phase 0 measurements (plan §9) on your DigitalOcean drop
 | Safe pace per endpoint and failover (E1, E2) | `pace` (about an hour; when no crawl is running) | After the crawl |
 | Discovery: website search vs official API (E9) | `discover` (repeat every few days) | After the crawl |
 | Channel census (E10) | `census` | After the first `discover` |
-| Keyword-matching quality (E11) | `label` (you answer 300 titles, about an hour; can be split) | After `discover` |
+| Keyword-matching quality (E11) | `label -ai` (the AI labels 300 titles, about 10 minutes), then optionally `label -limit 30` (you check 30 of them, about 5 minutes) | After `discover` |
 | Transcripts without anti-bot tokens (E12) | `transcripts` (a few minutes) | Any time |
 | Report | `report` | Any time; final on Day 14 |
 
@@ -36,6 +36,8 @@ You already have these from plan §9.3:
 
 - `/etc/securebrand-youtube/youtube_api_key` (mode 600);
 - `/etc/securebrand-youtube/proxies.txt` (mode 600).
+
+Step 18 (E11) also needs an Anthropic API key in `/etc/securebrand-youtube/anthropic_api_key` (mode 600); step 18 shows how to create it.
 
 Add a type to each proxy line so the report can compare proxy kinds: `type=dc` for datacenter, `type=isp`, or `type=res` for residential. The format is one proxy per line, for example:
 
@@ -189,11 +191,31 @@ docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/
 docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe census
 ```
 
-18. Keyword-matching quality (E11), about an hour of your time, can be split over several sessions. It shows 300 found video titles one at a time; type y (relevant to Iraq or Iraqi audiences), n (not relevant), s (can't tell) or q (stop for now), then Enter. Note the `-it`: it needs your keyboard:
+18. Keyword-matching quality (E11), about 10 minutes. The AI labels the 300-title sample: is each video about Iraq or relevant to Iraqi audiences? Only the public video titles are sent to Anthropic's API, 25 per request: no video or channel IDs, no comments, no names, and not what the keyword matcher decided (the AI labels blind).
+
+a. Once: put your Anthropic API key in a file. Create the key in the Claude Console (https://platform.claude.com, "API keys"). The editor keeps the key out of your shell history: paste the key, then save with Ctrl+O, Enter, and leave with Ctrl+X:
 
 ```bash
-docker run -it --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe label
+sudo nano /etc/securebrand-youtube/anthropic_api_key
 ```
+
+```bash
+sudo chmod 600 /etc/securebrand-youtube/anthropic_api_key
+```
+
+b. Run the labelling. Replace `MODEL_ID` with the Claude model ID to use (I give you the current one in chat; the list is at https://platform.claude.com/docs/en/about-claude/models/overview). If it stops (Ctrl+C, a network error, a rate limit), run the same command again: it continues where it stopped. The last log line shows the requests and tokens used:
+
+```bash
+docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe label -ai -model MODEL_ID
+```
+
+c. Optional, recommended, about 5 minutes: check the AI on 30 titles yourself. You answer y (relevant), n (not relevant), s (can't tell) or q (stop) without seeing the AI's answers; at the end it lists the titles where you disagreed, with the AI's reason. The report then shows how often you and the AI agree, and your answer counts where you gave one. Note the `-it`: it needs your keyboard:
+
+```bash
+docker run -it --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe label -limit 30
+```
+
+Labelling all 300 titles by hand still works: run `label` with `-it` and without `-ai` or `-limit`.
 
 19. Transcripts (E12), a few minutes: checks whether transcripts come back without anti-bot tokens. The report gives the go or no-go:
 
@@ -333,5 +355,8 @@ Add these after the command name, for example `ytprobe crawl -videos 12`:
 | `discover` | `-seed` / `-web-pages` | `20` / `10` | Seed keywords searched besides your file; website pages per term |
 | `discover` | `-api-units` / `-api-pages` / `-api-days` | `2000` / `1` / `30` | API budget per run (0 = website only); API pages per term; only videos from the last N days |
 | `census` | `-max` | `500` | Channels to profile |
-| `label` | `-size` / `-reset` | `300` / off | Sample size; draw a new sample (drops earlier answers) |
+| `label` | `-size` / `-reset` | `300` / off | Sample size; draw a new sample (drops earlier answers, yours and the AI's) |
+| `label` | `-ai` / `-model` | off / none | Let the AI label the sample; the Claude model ID (required with `-ai`) |
+| `label` | `-effort` / `-batch` / `-fallback` | `high` / `25` / on | With `-ai`: how hard the model thinks (`low`, `medium`, `high`, `xhigh`, `max`); titles per request; if the model declines a request, the API answers with a fallback model |
+| `label` | `-limit` | `0` (all) | By hand: answer at most this many titles this time |
 | `transcripts` | `-videos` | `30` | Videos to check |

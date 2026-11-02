@@ -255,3 +255,52 @@ func TestResolveListSaysWhy(t *testing.T) {
 		t.Errorf("ok=%v output:\n%s", ok, s)
 	}
 }
+
+// TestBlockedPlayerNeverStallsTheListing: when the player endpoint is
+// blocked, the Shorts date check gives up at once, later checks are skipped
+// while it rests, and the listing carries on page by page. Before, a blocked
+// check waited for the proxy cooldown (30 minutes or more).
+func TestBlockedPlayerNeverStallsTheListing(t *testing.T) {
+	var vs []fakeyt.FakeVideo
+	for i := 0; i < 7; i++ {
+		vs = append(vs, fakeyt.FakeVideo{ID: fmt.Sprintf("fakeS%02d", i), Title: "s", Views: 5, Short: true})
+	}
+	ch := fakeyt.FakeChannel{ID: chOne, Handle: "@fakeone", Title: "c", Subscribers: "1 subscriber", Videos: vs}
+	yt, col := stickyRig(t, []fakeyt.FakeChannel{ch})
+	yt.Handle("player", func(map[string]any) (int, any) { return 429, map[string]any{} })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var cost Cost
+	start := time.Now()
+	res, err := col.Tab(ctx, chOne, "TAB_shorts", time.Now().Add(-365*24*time.Hour), 10, &cost)
+	if err != nil || len(res.Items) != 7 || res.Pages != 4 {
+		t.Fatalf("Tab: %d items over %d pages, err %v; want all 7 over 4 pages", len(res.Items), res.Pages, err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("listing took %v; a blocked player must not hold it up", took)
+	}
+	if cost.ByEndpoint["player:date:skipped"] != 2 {
+		t.Errorf("cost %v; want the first check to try and the next two to be skipped", cost.ByEndpoint)
+	}
+	// The in-depth video check reports the skipped player instead of waiting.
+	vr, err := col.Video(ctx, "fakeS00", true, &cost)
+	if err != nil || vr.PlayerErr != errPlayerResting.Error() {
+		t.Errorf("Video: PlayerErr %q, err %v; want the resting notice", vr.PlayerErr, err)
+	}
+}
+
+func TestReportCountsEachRunOnce(t *testing.T) {
+	snap := func(run string, at int, requests int64) PoolSnapshot {
+		return PoolSnapshot{Run: run, At: time.Unix(int64(at), 0), Stats: proxypool.Stats{
+			Proxies: []proxypool.ProxyStats{{ID: "px-a", Requests: requests}}}}
+	}
+	// Run "a" saved twice (cumulative), run "b" once, plus an old unlabelled one.
+	got := latestPerRun([]PoolSnapshot{snap("a", 1, 10), snap("b", 2, 5), snap("a", 3, 25), snap("", 4, 7)})
+	var total int64
+	for _, ps := range got {
+		total += ps.Stats.Proxies[0].Requests
+	}
+	if len(got) != 3 || total != 25+5+7 {
+		t.Errorf("latestPerRun kept %d snapshots totalling %d requests; want 3 and 37", len(got), total)
+	}
+}

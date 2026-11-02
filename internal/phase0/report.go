@@ -14,7 +14,33 @@ import (
 type PoolSnapshot struct {
 	At      time.Time       `json:"at"`
 	Command string          `json:"command"`
+	Run     string          `json:"run,omitempty"` // one process run; its snapshots are cumulative
 	Stats   proxypool.Stats `json:"stats"`
+}
+
+// latestPerRun keeps the last snapshot of each run: a run's counters are
+// cumulative, so adding its earlier snapshots would count requests twice.
+// Snapshots written before runs were labelled each count as their own run.
+func latestPerRun(pools []PoolSnapshot) []PoolSnapshot {
+	last := map[string]int{}
+	var order []string
+	for i, ps := range pools {
+		key := ps.Run
+		if key == "" {
+			key = fmt.Sprintf("old-%d", i)
+		}
+		if _, ok := last[key]; !ok {
+			order = append(order, key)
+		}
+		if j, ok := last[key]; !ok || !pools[j].At.After(ps.At) {
+			last[key] = i
+		}
+	}
+	out := make([]PoolSnapshot, 0, len(order))
+	for _, k := range order {
+		out = append(out, pools[last[k]])
+	}
+	return out
 }
 
 var iraq = time.FixedZone("Iraq (UTC+3)", 3*3600)
@@ -247,15 +273,24 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 	}
 
 	// Blocks and proxies (E1/E2 come later; these are the crawl's counters).
-	if len(pools) > 0 {
+	if pools = latestPerRun(pools); len(pools) > 0 {
 		byKind := map[proxypool.Kind][2]int64{}
+		byClass := map[proxypool.Class]int64{}
+		pauses, subnetCools := 0, 0
+		var paused time.Duration
 		for _, ps := range pools {
 			for _, px := range ps.Stats.Proxies {
 				v := byKind[px.Kind]
 				v[0] += px.Requests
 				v[1] += px.Blocks
 				byKind[px.Kind] = v
+				for c, n := range px.BlocksByClass {
+					byClass[c] += n
+				}
 			}
+			pauses += ps.Stats.Pauses
+			paused += ps.Stats.PausedTotal
+			subnetCools += ps.Stats.SubnetCooldowns
 		}
 		p("## Requests and block signals by proxy type")
 		p("")
@@ -270,6 +305,21 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 			v := byKind[proxypool.Kind(k)]
 			p("| %s | %d | %d | %s |", k, v[0], v[1], f1(per1000(v[1], v[0])))
 		}
+		p("")
+		if len(byClass) > 0 {
+			classes := make([]string, 0, len(byClass))
+			for c := range byClass {
+				classes = append(classes, string(c))
+			}
+			sort.Strings(classes)
+			parts := make([]string, 0, len(classes))
+			for _, c := range classes {
+				parts = append(parts, fmt.Sprintf("%s %d", c, byClass[proxypool.Class(c)]))
+			}
+			p("Block signals by request kind: %s.", strings.Join(parts, ", "))
+			p("")
+		}
+		p("Safety pauses of all requests: %d (%s in total). Subnet rests: %d.", pauses, paused.Round(time.Minute), subnetCools)
 		p("")
 	}
 

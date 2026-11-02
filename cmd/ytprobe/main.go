@@ -79,12 +79,14 @@ func main() {
 		fs.IntVar(&o.CommentLimit, "comments", o.CommentLimit, "maximum comments read per video (0 = all)")
 		fs.IntVar(&o.Workers, "workers", o.Workers, "channels processed in parallel")
 		fs.IntVar(&o.Limit, "limit", 0, "crawl only the first N channels of the list (0 = all); for quick tests")
+		fs.IntVar(&o.MaxTabPages, "max-pages", o.MaxTabPages, "safety limit of pages per channel tab (30 videos or 48 Shorts a page)")
 		noPlayer := fs.Bool("no-player", false, "skip the player endpoint (tags, category)")
 		fs.Parse(args)
 		o.Window = time.Duration(*days) * 24 * time.Hour
 		o.WithPlayer = !*noPlayer
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
 		cleanup(env, log)
+		go env.SavePoolStatsEvery(ctx, "crawl", 10*time.Minute)
 		err = phase0.Crawl(ctx, env.Collector, env.Channels, o, log)
 		env.SavePoolStats("crawl")
 	case "detect":
@@ -95,6 +97,7 @@ func main() {
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
 		cleanup(env, log)
 		ids := resolveAll(ctx, env, log)
+		go env.SavePoolStatsEvery(ctx, "detect", 10*time.Minute)
 		err = phase0.Detect(ctx, env.Collector, env.Feeds, ids, o, log)
 		env.SavePoolStats("detect")
 		if err == context.Canceled {

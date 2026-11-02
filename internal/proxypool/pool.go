@@ -80,7 +80,15 @@ type Config struct {
 	// DisableBrake turns the pool brake off. Use it for single-IP pools, such
 	// as the Phase 0 per-IP measurements, where one block would otherwise
 	// count as "100% of IPs blocked".
-	DisableBrake       bool
+	DisableBrake bool
+	// BrakeIgnore lists endpoint classes whose blocks rest only that IP's
+	// class and never slow or pause the pool. Default: player. On 2 November
+	// 2026 the player endpoint drew most of 20 block signals in 427 requests
+	// across all 10 ISP proxies while browse and next stayed clean, yet each
+	// player block fed the brake and the whole pool fell to 23% speed.
+	// Leave it nil for the default; set an empty, non-nil slice to brake on
+	// every class.
+	BrakeIgnore        []Class
 	BrakeWindow        time.Duration // window for counting blocked IPs (default 1h)
 	BrakeSlowFraction  float64       // above this share of blocked IPs, slow down (default 0.2)
 	BrakePauseFraction float64       // above this share, pause everything (default 0.5)
@@ -132,6 +140,9 @@ func (c Config) withDefaults() Config {
 	setDur(&c.MinInterval, d.MinInterval)
 	if c.Jitter == 0 {
 		c.Jitter = d.Jitter
+	}
+	if c.BrakeIgnore == nil {
+		c.BrakeIgnore = []Class{ClassPlayer}
 	}
 	if len(c.Cooldowns) == 0 {
 		c.Cooldowns = d.Cooldowns
@@ -426,7 +437,9 @@ func (p *Pool) releaseAt(now time.Time, st *proxyState, c Class, o Outcome) {
 		}
 
 		p.coolSubnetLocked(now, st.p.subnet, c)
-		p.brakeLocked(now, st.p.id)
+		if !p.brakeIgnores(c) {
+			p.brakeLocked(now, st.p.id)
+		}
 
 	case ProxyFailed:
 		st.proxyErrors++
@@ -468,6 +481,15 @@ func (p *Pool) coolSubnetLocked(now time.Time, subnet string, c Class) {
 			m[c] = until
 		}
 	}
+}
+
+func (p *Pool) brakeIgnores(c Class) bool {
+	for _, x := range p.cfg.BrakeIgnore {
+		if x == c {
+			return true
+		}
+	}
+	return false
 }
 
 // brakeLocked applies the pool brake after a block. Caller holds p.mu.

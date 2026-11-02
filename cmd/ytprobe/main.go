@@ -11,7 +11,7 @@
 //	YT_DATA_DIR       results, deleted after 14 days; default /var/lib/securebrand-youtube/phase0
 //
 // Commands: check, resolve, crawl, detect, resweep, accuracy, pace, discover,
-// census, report, cleanup.
+// census, label, report, cleanup.
 package main
 
 import (
@@ -42,6 +42,7 @@ Usage: ytprobe <command> [flags]
   pace       step the request pace up per endpoint until the first block signal (E1)
   discover   search your keywords on the official API and the website; compare them (E9)
   census     profile channels that discover found and the list lacks (E10)
+  label      mark found videos relevant or not, to score keyword matching (E11; interactive)
   report     print the aggregate report (safe to share: no IDs, names or text)
   cleanup    delete Phase 0 data older than 14 days
 
@@ -175,6 +176,13 @@ func main() {
 		go env.SavePoolStatsEvery(ctx, "census", 10*time.Minute)
 		err = phase0.Census(ctx, env.Collector, phase0.CensusOptions{Max: *max}, log)
 		env.SavePoolStats("census")
+	case "label":
+		size := fs.Int("size", 300, "videos in the sample (half accepted, half rejected by the matcher)")
+		reset := fs.Bool("reset", false, "draw a new sample and drop earlier answers")
+		fs.Parse(args)
+		stop() // Ctrl+C quits at once; every answer is already saved
+		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+		err = phase0.Label(context.Background(), env.Store, os.Stdin, os.Stdout, phase0.LabelOptions{Size: *size, Terms: env.Keywords, Reset: *reset})
 	case "report":
 		fs.Parse(args)
 		store, serr := phase0.OpenStore(phase0.DataDir())

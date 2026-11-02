@@ -38,13 +38,16 @@ const (
 	Search Endpoint = "search"
 	// ResolveURL turns a channel URL or @handle into a channel ID.
 	ResolveURL Endpoint = "navigation/resolve_url"
+	// GetTranscript returns a video's transcript, when the watch page
+	// offers one (Phase 0 E12 checks whether it answers without tokens).
+	GetTranscript Endpoint = "get_transcript"
 )
 
 func (e Endpoint) class() proxypool.Class {
 	switch e {
 	case Browse:
 		return proxypool.ClassBrowse
-	case Next:
+	case Next, GetTranscript:
 		return proxypool.ClassNext
 	case Player:
 		return proxypool.ClassPlayer

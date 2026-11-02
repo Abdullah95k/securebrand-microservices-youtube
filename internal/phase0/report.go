@@ -100,6 +100,10 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	transcripts, err := ReadAll[TranscriptRecord](s, "transcripts")
+	if err != nil {
+		return err
+	}
 	skels, _ := s.List("skeletons")
 
 	p := func(format string, a ...any) { fmt.Fprintf(w, format+"\n", a...) }
@@ -363,6 +367,7 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 	reportDiscovery(p, discRecs, discItems, knownChannelHashes(s))
 	reportCensus(p, census)
 	reportLabels(p, labelSampleRecs, labelAnswers, discItems)
+	reportTranscripts(p, transcripts)
 
 	p("## Parser problems (E13)")
 	p("")

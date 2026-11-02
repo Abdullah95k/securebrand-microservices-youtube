@@ -11,7 +11,7 @@
 //	YT_DATA_DIR       results, deleted after 14 days; default /var/lib/securebrand-youtube/phase0
 //
 // Commands: check, resolve, crawl, detect, resweep, accuracy, pace, discover,
-// census, label, report, cleanup.
+// census, label, transcripts, report, cleanup.
 package main
 
 import (
@@ -43,6 +43,7 @@ Usage: ytprobe <command> [flags]
   discover   search your keywords on the official API and the website; compare them (E9)
   census     profile channels that discover found and the list lacks (E10)
   label      mark found videos relevant or not, to score keyword matching (E11; interactive)
+  transcripts check whether transcripts come back without anti-bot tokens (E12)
   report     print the aggregate report (safe to share: no IDs, names or text)
   cleanup    delete Phase 0 data older than 14 days
 
@@ -183,6 +184,21 @@ func main() {
 		stop() // Ctrl+C quits at once; every answer is already saved
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
 		err = phase0.Label(context.Background(), env.Store, os.Stdin, os.Stdout, phase0.LabelOptions{Size: *size, Terms: env.Keywords, Reset: *reset})
+	case "transcripts":
+		videos := fs.Int("videos", 30, "videos to check")
+		channels := fs.Int("channels", 15, "channels from the list to take recent videos from")
+		fs.Parse(args)
+		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+		t, gerr := phase0.GatherPaceTargets(ctx, env.Collector, env.Channels, *channels, log)
+		if gerr != nil {
+			err = gerr
+			break
+		}
+		ids := t.Videos
+		if len(ids) > *videos {
+			ids = ids[:*videos]
+		}
+		err = phase0.Transcripts(ctx, env.Collector, ids, log)
 	case "report":
 		fs.Parse(args)
 		store, serr := phase0.OpenStore(phase0.DataDir())

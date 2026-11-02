@@ -106,13 +106,23 @@ func (d *discoveryMatcher) qualifies(text string) bool {
 	return len(ids) >= 2
 }
 
-// knownChannelHashes are the crawled channels (the list, resolved).
+// knownChannelHashes are the channels already in your list: the crawled
+// ones, plus every channel the list resolved to (detection's lookup cache),
+// so a listed channel whose crawl failed is not counted as a new find.
 func knownChannelHashes(s *Store) map[string]bool {
 	recs, _ := ReadAll[ChannelRecord](s, "crawl_channels")
 	known := map[string]bool{}
 	for _, r := range recs {
 		if r.Error == "" {
 			known[r.ChannelHash] = true
+		}
+	}
+	resolved := map[string]string{}
+	if ok, _ := s.ReadJSON("resolved.json", &resolved); ok {
+		for _, id := range resolved {
+			if id != "" {
+				known[shortHash(id)] = true
+			}
 		}
 	}
 	return known

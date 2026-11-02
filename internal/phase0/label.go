@@ -14,13 +14,17 @@ import (
 	"time"
 )
 
-// Keyword-matching quality (E11): you label a sample of found videos as
-// relevant or not, one title at a time in the terminal, without seeing
-// what the matcher decided. Half the sample is videos the matcher accepted,
-// half videos it rejected, so the report can estimate both precision (how
-// many accepted videos are really relevant) and recall (how many relevant
-// videos it catches). Titles are public video titles; the sample stays in
-// the data folder and the report shows only rates and seed keyword names.
+// Keyword-matching quality (E11): a sample of found videos is labelled
+// relevant or not without seeing what the matcher decided, either by the AI
+// (LabelAI: only the public titles are sent to the AI provider) or by you,
+// one title at a time in the terminal (Label). Half the sample is videos the
+// matcher accepted, half videos it rejected, so the report can estimate both
+// precision (how many accepted videos are really relevant) and recall (how
+// many relevant videos it catches). When the AI labelled, you can answer a
+// few titles yourself as a spot check; the report then shows how often you
+// and the AI agree, and your answer counts where you gave one. The sample
+// stays in the data folder and the report shows only rates and seed keyword
+// names.
 
 // LabelItem is one video in the sample.
 type LabelItem struct {
@@ -31,19 +35,26 @@ type LabelItem struct {
 	Keywords  []string `json:"keywords"`  // matched keyword IDs
 }
 
-// LabelAnswer is your answer for one sample item.
+// LabelAnswer is one answer for one sample item, yours or the AI's.
 type LabelAnswer struct {
 	At       time.Time `json:"at"`
 	Index    int       `json:"index"`
 	Relevant bool      `json:"relevant"`
-	Skipped  bool      `json:"skipped"`
+	Skipped  bool      `json:"skipped"`          // can't tell
+	Source   string    `json:"source,omitempty"` // SourceAI, or empty for your own answer
+	Model    string    `json:"model,omitempty"`  // AI: the model that answered
+	Reason   string    `json:"reason,omitempty"` // AI: what decided it
 }
+
+// SourceAI marks answers given by the AI.
+const SourceAI = "ai"
 
 // LabelOptions configures the labelling session.
 type LabelOptions struct {
 	Size  int      // sample size (half accepted, half rejected by the matcher)
 	Terms []string // your own keywords, matched like the seed list
 	Reset bool     // draw a new sample and drop earlier answers
+	Limit int      // by hand: answer at most this many titles this time (0 = all)
 }
 
 // labelSample loads the sample, or draws and saves it on first use.
@@ -100,9 +111,12 @@ func labelSample(s *Store, o LabelOptions) ([]LabelItem, error) {
 	return sample, nil
 }
 
-// Label runs the interactive session: it shows each unlabelled title and
-// reads y (relevant), n (not relevant), s (skip) or q (quit) from in. Every
-// answer is saved at once, so you can stop and continue later.
+// Label runs the interactive session: it shows each title you have not
+// answered and reads y (relevant), n (not relevant), s (skip) or q (quit)
+// from in. Every answer is saved at once, so you can stop and continue
+// later. When the AI has labelled the sample, this is the spot check: the
+// AI's answers stay hidden until the end, then the titles where you and the
+// AI disagree are listed with the AI's reason.
 func Label(ctx context.Context, s *Store, in io.Reader, out io.Writer, o LabelOptions) error {
 	if o.Size <= 0 {
 		o.Size = 300
@@ -116,13 +130,27 @@ func Label(ctx context.Context, s *Store, in io.Reader, out io.Writer, o LabelOp
 		return err
 	}
 	done := map[int]bool{}
+	ai := map[int]LabelAnswer{}
 	for _, a := range answers {
-		done[a.Index] = true
+		if a.Source == SourceAI {
+			ai[a.Index] = a
+		} else {
+			done[a.Index] = true
+		}
 	}
-	fmt.Fprintf(out, "Keyword-matching check: %d videos, %d already answered.\n", len(sample), len(done))
+	if len(ai) > 0 {
+		fmt.Fprintf(out, "Spot check of the AI's labels: %d videos, %d answered by you so far. The AI's answers stay hidden until the end.\n", len(sample), len(done))
+	} else {
+		fmt.Fprintf(out, "Keyword-matching check: %d videos, %d already answered.\n", len(sample), len(done))
+	}
 	fmt.Fprintln(out, "For each title: is this video about Iraq, or relevant to Iraqi audiences, so that we should collect it?")
 	fmt.Fprintln(out, "Type y (yes), n (no), s (skip, can't tell) or q (quit; you can continue later), then Enter.")
 	sc := bufio.NewScanner(in)
+	session := 0
+	var mine []LabelAnswer // this session's answers, for the comparison
+	finish := func() {
+		reportDisagreements(out, sample, ai, mine)
+	}
 	for _, it := range sample {
 		if done[it.Index] {
 			continue
@@ -130,10 +158,20 @@ func Label(ctx context.Context, s *Store, in io.Reader, out io.Writer, o LabelOp
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if o.Limit > 0 && session >= o.Limit {
+			fmt.Fprintf(out, "\nDone: %d answered this time (%d of %d in total). Run the same command to answer more.\n", session, len(done), len(sample))
+			finish()
+			return nil
+		}
 		for {
-			fmt.Fprintf(out, "\n[%d/%d] %s\n> ", len(done)+1, len(sample), it.Title)
+			if o.Limit > 0 {
+				fmt.Fprintf(out, "\n[%d/%d] %s\n> ", session+1, o.Limit, it.Title)
+			} else {
+				fmt.Fprintf(out, "\n[%d/%d] %s\n> ", len(done)+1, len(sample), it.Title)
+			}
 			if !sc.Scan() {
 				fmt.Fprintf(out, "\nStopped. %d of %d answered; run the same command to continue.\n", len(done), len(sample))
+				finish()
 				return sc.Err()
 			}
 			var a LabelAnswer
@@ -146,6 +184,7 @@ func Label(ctx context.Context, s *Store, in io.Reader, out io.Writer, o LabelOp
 				a = LabelAnswer{Skipped: true}
 			case "q", "quit":
 				fmt.Fprintf(out, "Saved. %d of %d answered; run the same command to continue.\n", len(done), len(sample))
+				finish()
 				return nil
 			default:
 				fmt.Fprintln(out, "Please type y, n, s or q.")
@@ -156,11 +195,50 @@ func Label(ctx context.Context, s *Store, in io.Reader, out io.Writer, o LabelOp
 				return err
 			}
 			done[it.Index] = true
+			session++
+			mine = append(mine, a)
 			break
 		}
 	}
 	fmt.Fprintf(out, "\nAll %d answered. Thank you! The report now includes the keyword-matching results.\n", len(sample))
+	finish()
 	return nil
+}
+
+// reportDisagreements lists the titles you answered this session where the
+// AI said otherwise (both gave a yes or no), with the AI's reason.
+func reportDisagreements(out io.Writer, sample []LabelItem, ai map[int]LabelAnswer, mine []LabelAnswer) {
+	if len(ai) == 0 || len(mine) == 0 {
+		return
+	}
+	title := map[int]string{}
+	for _, it := range sample {
+		title[it.Index] = it.Title
+	}
+	yn := map[bool]string{true: "yes", false: "no"}
+	both, differ := 0, 0
+	var lines []string
+	for _, a := range mine {
+		b, ok := ai[a.Index]
+		if !ok || a.Skipped || b.Skipped {
+			continue
+		}
+		both++
+		if a.Relevant != b.Relevant {
+			differ++
+			lines = append(lines, fmt.Sprintf("- %s\n  you: %s, AI: %s (%s)", title[a.Index], yn[a.Relevant], yn[b.Relevant], b.Reason))
+		}
+	}
+	if both == 0 {
+		return
+	}
+	fmt.Fprintf(out, "\nThis time you and the AI agreed on %d of %d titles you both answered.\n", both-differ, both)
+	if differ > 0 {
+		fmt.Fprintln(out, "Where you disagreed (your answer counts in the report):")
+		for _, l := range lines {
+			fmt.Fprintln(out, l)
+		}
+	}
 }
 
 // matches is qualifies plus the matched keyword IDs.
@@ -182,9 +260,46 @@ func reportLabels(p func(string, ...any), sample []LabelItem, answers []LabelAns
 	if len(sample) == 0 || len(answers) == 0 {
 		return
 	}
-	last := map[int]LabelAnswer{} // the latest answer per item counts
+	// The latest answer per item and source counts; yours wins over the AI's.
+	mine, ai := map[int]LabelAnswer{}, map[int]LabelAnswer{}
+	models := map[string]bool{}
 	for _, a := range answers {
-		last[a.Index] = a
+		if a.Source == SourceAI {
+			ai[a.Index] = a
+			if a.Model != "" {
+				models[a.Model] = true
+			}
+		} else {
+			mine[a.Index] = a
+		}
+	}
+	last := map[int]LabelAnswer{}
+	for i, a := range ai {
+		last[i] = a
+	}
+	for i, a := range mine {
+		last[i] = a
+	}
+	byAI, byYou, both, agree := 0, 0, 0, 0
+	for i, a := range last {
+		if a.Source == SourceAI {
+			byAI++
+		} else {
+			byYou++
+		}
+		if b, ok := ai[i]; ok && a.Source != SourceAI && !a.Skipped && !b.Skipped {
+			both++
+			if a.Relevant == b.Relevant {
+				agree++
+			}
+		}
+	}
+	who := "you marked"
+	switch {
+	case byAI > 0 && byYou == 0:
+		who = "the AI marked"
+	case byAI > 0:
+		who = "were marked"
 	}
 	var tp, fp, fn, tn, skipped int
 	falseByKw := map[string]int{}
@@ -239,12 +354,27 @@ func reportLabels(p func(string, ...any), sample []LabelItem, answers []LabelAns
 	p("")
 	p("| | Value |")
 	p("|---|---|")
+	if byAI > 0 {
+		names := make([]string, 0, len(models))
+		for m := range models {
+			names = append(names, m)
+		}
+		sort.Strings(names)
+		p("| Labelled by the AI / by you | %d / %d (AI model: %s) |", byAI, byYou, strings.Join(names, ", "))
+		if both > 0 {
+			p("| You and the AI agree (titles you both answered) | %s (%d of %d) |", pctStr(share(agree, both)), agree, both)
+		}
+	}
 	p("| Videos answered / skipped / sample size | %d / %d / %d |", tp+fp+fn+tn, skipped, len(sample))
-	p("| Precision: accepted videos that you marked relevant | %s (%d of %d) |", pctStr(precision), tp, tp+fp)
-	p("| Rejected videos that you marked relevant | %s (%d of %d) |", pctStr(missRate), fn, fn+tn)
+	p("| Precision: accepted videos that %s relevant | %s (%d of %d) |", who, pctStr(precision), tp, tp+fp)
+	p("| Rejected videos that %s relevant | %s (%d of %d) |", who, pctStr(missRate), fn, fn+tn)
 	p("| Share of all found videos the matcher accepts | %s |", pctStr(pAcc))
 	p("| Estimated recall: relevant videos the matcher catches | %s |", pctStr(recall))
 	p("")
+	if byAI > 0 {
+		p("The AI judged each title alone, against the same question you would answer. Its labels measure agreement with its judgment, not the truth: the spot-check row shows how far to trust them. Where you answered, your answer counts.")
+		p("")
+	}
 	if len(falseByKw) > 0 {
 		type kc struct {
 			k string

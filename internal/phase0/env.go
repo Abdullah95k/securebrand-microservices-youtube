@@ -22,8 +22,10 @@ const (
 	EnvAPIKeyFile   = "YT_API_KEY_FILE"
 	EnvChannelsFile = "YT_CHANNELS_FILE"
 	EnvKeywordsFile = "YT_KEYWORDS_FILE"
-	EnvDataDir      = "YT_DATA_DIR"
-	EnvBaseURL      = "YT_BASE_URL" // tests only; default https://www.youtube.com
+	// EnvAIKeyFile names the Anthropic API key file, used only by "label -ai".
+	EnvAIKeyFile = "YT_ANTHROPIC_KEY_FILE"
+	EnvDataDir   = "YT_DATA_DIR"
+	EnvBaseURL   = "YT_BASE_URL" // tests only; default https://www.youtube.com
 )
 
 // Default locations, used when the environment variable is not set (they
@@ -35,6 +37,7 @@ const (
 	// DefaultKeywordsFile holds your own search terms (brands, people,
 	// topics), one per line. It is optional and stays on the server.
 	DefaultKeywordsFile = "/etc/securebrand-youtube/phase0-keywords.txt"
+	DefaultAIKeyFile    = "/etc/securebrand-youtube/anthropic_api_key"
 	DefaultDataDir      = "/var/lib/securebrand-youtube/phase0"
 )
 

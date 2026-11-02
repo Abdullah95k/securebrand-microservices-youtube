@@ -46,6 +46,7 @@ and YouTube's internal website endpoints are undocumented. Phase 0 (§9) confirm
 | D22 | 1 Nov 2026 | Legal review done: a lawyer has signed off on the approach |
 | D23 | 1 Nov 2026 | Push-notification subdomain: later. Until then, new uploads are detected by RSS and channel-tab checks |
 | D24 | 1 Nov 2026 | No live chat |
+| D25 | 2 Nov 2026 | E11: the 300-title sample is labelled by AI (only the public titles are sent to the AI provider), with an optional hand spot check of about 30 titles to measure how far to trust the AI |
 
 Your non-negotiable rules still apply:
 
@@ -904,7 +905,7 @@ aggregates.
 | E8 | **New-upload detection** (14 days) | WebSub vs RSS vs tab checks: delay and misses; RSS errors and stats freshness | Tier intervals |
 | E9 | **Discovery yield**, API vs scraped search | Results per call or page; how deep a query goes before results run out; new qualifying channels per day; overlap between the two engines | Search mix, keyword scheduling |
 | E10 | **Channel census**: ~500 discovered channels, About + first page only | Share of core vs mention; size mix; uploads/month; comments/video | **Real scenario size and cost** (replaces §6 assumptions) |
-| E11 | **Keyword matching quality** on a hand-labelled sample of 300 items | Precision/recall with Arabic/Kurdish normalization; ambiguous keywords | Matcher rules, suggestion threshold |
+| E11 | **Keyword matching quality** on a sample of 300 items labelled by AI, spot-checked by hand (D25) | Precision/recall with Arabic/Kurdish normalization; ambiguous keywords | Matcher rules, suggestion threshold |
 | E12 | **Transcripts within the rules** | Does any transcript endpoint answer **without** anti-bot tokens? If not, transcripts are dropped | Transcript go/no-go |
 | E13 | **Parser robustness** | Parse-failure rate; client-version auto-detection | Maintenance estimate |
 

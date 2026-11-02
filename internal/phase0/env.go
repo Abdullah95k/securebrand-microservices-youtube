@@ -2,6 +2,7 @@ package phase0
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -60,6 +61,7 @@ type Env struct {
 	API       *ytapi.Client // nil when no key is configured
 	Channels  []string
 	BaseURL   string
+	run       string // labels this process's pool snapshots
 }
 
 // Setup reads configuration from the environment. poolCfg sets pacing.
@@ -76,7 +78,7 @@ func Setup(poolCfg proxypool.Config) (*Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	env := &Env{Store: store, Proxies: proxies, BaseURL: os.Getenv(EnvBaseURL)}
+	env := &Env{Store: store, Proxies: proxies, BaseURL: os.Getenv(EnvBaseURL), run: time.Now().UTC().Format(time.RFC3339Nano)}
 	env.Pool = proxypool.New(proxies, poolCfg, time.Now().UnixNano())
 	env.Client = innertube.New(innertube.Options{Pool: env.Pool, BaseURL: env.BaseURL})
 	env.Collector = &Collector{Client: env.Client, Store: store, Now: time.Now}
@@ -135,5 +137,20 @@ func readList(path string) ([]string, error) {
 
 // SavePoolStats appends the pool's counters for the report.
 func (e *Env) SavePoolStats(command string) {
-	_ = e.Store.Append("pool_stats", PoolSnapshot{At: time.Now(), Command: command, Stats: e.Pool.Stats()})
+	_ = e.Store.Append("pool_stats", PoolSnapshot{At: time.Now(), Command: command, Run: e.run, Stats: e.Pool.Stats()})
+}
+
+// SavePoolStatsEvery saves pool statistics every interval until ctx ends, so
+// a report taken during a long run already shows blocks and pauses.
+func (e *Env) SavePoolStatsEvery(ctx context.Context, command string, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			e.SavePoolStats(command)
+		}
+	}
 }

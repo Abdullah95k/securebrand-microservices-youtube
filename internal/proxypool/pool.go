@@ -184,6 +184,7 @@ type classState struct {
 	strikes   int
 	coolUntil time.Time
 	lastBlock time.Time
+	blocks    int64
 }
 
 type proxyState struct {
@@ -228,6 +229,11 @@ type Pool struct {
 	pausedUntil    time.Time
 	lastBlockAt    time.Time
 	lastRecoverAt  time.Time
+
+	// Counters for diagnostics (Stats).
+	pauses      int
+	pausedTotal time.Duration
+	subnetCools int
 }
 
 // New creates a pool. seed makes jitter reproducible in tests; use
@@ -405,6 +411,7 @@ func (p *Pool) releaseAt(now time.Time, st *proxyState, c Class, o Outcome) {
 		}
 		cs.coolUntil = now.Add(p.cfg.Cooldowns[idx])
 		cs.lastBlock = now
+		cs.blocks++
 		st.blocks++
 
 		// Quarantine after blocks on several distinct days.
@@ -455,6 +462,9 @@ func (p *Pool) coolSubnetLocked(now time.Time, subnet string, c Class) {
 		}
 		until := now.Add(p.cfg.SubnetCooldown)
 		if until.After(m[c]) {
+			if !m[c].After(now) {
+				p.subnetCools++ // a new subnet cooldown, not an extension
+			}
 			m[c] = until
 		}
 	}
@@ -496,6 +506,8 @@ func (p *Pool) brakeLocked(now time.Time, proxyID string) {
 				d += time.Duration(p.rng.Int63n(int64(span)))
 			}
 			p.pausedUntil = now.Add(d)
+			p.pauses++
+			p.pausedTotal += d
 		}
 		p.slowLocked()
 	case share > p.cfg.BrakeSlowFraction:
@@ -557,6 +569,8 @@ type ProxyStats struct {
 	ProxyErrors int64
 	Quarantined bool
 	CoolUntil   map[Class]time.Time // only classes still cooling
+	// BlocksByClass splits Blocks by endpoint class (browse, player…).
+	BlocksByClass map[Class]int64
 }
 
 // Stats is a snapshot of the pool for monitoring and the Phase 0 report.
@@ -564,6 +578,10 @@ type Stats struct {
 	Proxies     []ProxyStats
 	Speed       float64 // 1 = normal; lower when the brake is on
 	PausedUntil time.Time
+	// Diagnostics since the pool was created.
+	Pauses          int           // times the brake paused every request
+	PausedTotal     time.Duration // time spent in those pauses
+	SubnetCooldowns int           // times a whole subnet was rested for a class
 }
 
 // Stats returns a snapshot.
@@ -571,7 +589,7 @@ func (p *Pool) Stats() Stats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
-	s := Stats{Speed: p.speed}
+	s := Stats{Speed: p.speed, Pauses: p.pauses, PausedTotal: p.pausedTotal, SubnetCooldowns: p.subnetCools}
 	if now.Before(p.pausedUntil) {
 		s.PausedUntil = p.pausedUntil
 	}
@@ -579,12 +597,15 @@ func (p *Pool) Stats() Stats {
 		ps := ProxyStats{
 			ID: st.p.id, Kind: st.p.kind, Subnet: st.p.subnet,
 			Requests: st.requests, Blocks: st.blocks, ProxyErrors: st.proxyErrors,
-			Quarantined: st.quarantined, CoolUntil: map[Class]time.Time{},
+			Quarantined: st.quarantined, CoolUntil: map[Class]time.Time{}, BlocksByClass: map[Class]int64{},
 		}
 		for c, cs := range st.classes {
 			until := maxTime(cs.coolUntil, p.subnetCool[st.p.subnet][c])
 			if until.After(now) {
 				ps.CoolUntil[c] = until
+			}
+			if cs.blocks > 0 {
+				ps.BlocksByClass[c] = cs.blocks
 			}
 		}
 		s.Proxies = append(s.Proxies, ps)

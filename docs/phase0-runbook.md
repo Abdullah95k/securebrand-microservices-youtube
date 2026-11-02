@@ -276,6 +276,7 @@ Add these after the command name, for example `ytprobe crawl -videos 12`:
 | `crawl` | `-workers` | `4` | Channels processed at the same time |
 | `crawl` | `-limit` | `0` (all) | Crawl only the first N channels of the list; use it for a quick test |
 | `crawl` | `-window-days` | `365` | Backfill window |
+| `crawl` | `-max-pages` | `400` | Safety limit of pages per channel tab (30 videos or 48 Shorts per page). The one-year window normally ends a tab first; `capped=true` in the log means it didn't |
 | `crawl` | `-no-player` | off | Skip the player endpoint (tags, category) |
 | `detect` | `-rss-every` | `15m` | Feed check interval per channel |
 | `resweep` | `-comments` | `0` (all) | Use the same value as the crawl |

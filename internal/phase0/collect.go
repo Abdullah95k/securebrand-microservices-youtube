@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
@@ -62,6 +63,45 @@ type Collector struct {
 	Store  *Store
 	Now    func() time.Time
 	Log    *slog.Logger // optional
+
+	playerMu       sync.Mutex
+	playerOffUntil time.Time // player calls are skipped until then
+}
+
+// The player endpoint is the one YouTube guards hardest, and everything the
+// crawl asks it for is optional (a Short's date, a video's tags). A player
+// call waits at most playerWait for a proxy, and after a block every player
+// call is skipped for playerRest, so the endpoint can never hold up the
+// listing. On 2 November 2026 two blocked Shorts date checks rested the whole
+// proxy group and a 10-minute test took 4 hours.
+var (
+	playerWait = 20 * time.Second
+	playerRest = 30 * time.Minute
+)
+
+// errPlayerResting is reported instead of calling the player while it rests.
+var errPlayerResting = errors.New("player endpoint resting after a block; skipped")
+
+// playerBestEffort calls the player endpoint as described above.
+func (c *Collector) playerBestEffort(ctx context.Context, cost *Cost, label, id, prefer string) (*innertube.Response, error) {
+	c.playerMu.Lock()
+	resting := c.Now().Before(c.playerOffUntil)
+	c.playerMu.Unlock()
+	if resting {
+		cost.add(label, nil) // makes sure the map exists
+		cost.ByEndpoint[label+":skipped"]++
+		return nil, errPlayerResting
+	}
+	pctx, cancel := context.WithTimeout(ctx, playerWait)
+	defer cancel()
+	r, err := c.callVia(pctx, cost, innertube.Player, label, map[string]any{"videoId": id}, prefer)
+	if err != nil && ctx.Err() == nil && (errors.Is(err, innertube.ErrBlocked) || errors.Is(err, proxypool.ErrParked) || errors.Is(err, context.DeadlineExceeded)) {
+		c.playerMu.Lock()
+		c.playerOffUntil = c.Now().Add(playerRest)
+		c.playerMu.Unlock()
+		c.warn("player endpoint blocked or busy; skipping player calls for a while", "rest", playerRest.String())
+	}
+	return r, err
 }
 
 func (c *Collector) call(ctx context.Context, cost *Cost, ep innertube.Endpoint, label string, payload map[string]any) (*innertube.Response, error) {
@@ -337,7 +377,7 @@ func (c *Collector) Tab(ctx context.Context, channelID, params string, since tim
 
 // publishedAt reads a video's publish date from the player endpoint.
 func (c *Collector) publishedAt(ctx context.Context, id string, cost *Cost) (time.Time, bool) {
-	r, err := c.call(ctx, cost, innertube.Player, "player:date", map[string]any{"videoId": id})
+	r, err := c.playerBestEffort(ctx, cost, "player:date", id, "")
 	if err != nil {
 		return time.Time{}, false
 	}
@@ -377,7 +417,7 @@ func (c *Collector) Video(ctx context.Context, id string, withPlayer bool, cost 
 		c.Store.SaveSkeleton("watch-"+shortHash(id), r.Body)
 	}
 	if withPlayer {
-		pr, err := c.callVia(ctx, cost, innertube.Player, "player", map[string]any{"videoId": id}, r.Proxy)
+		pr, err := c.playerBestEffort(ctx, cost, "player", id, r.Proxy)
 		if err != nil {
 			res.PlayerErr = err.Error()
 		} else {

@@ -151,6 +151,10 @@ func TestSubnetCooldown(t *testing.T) {
 	if s, _ := p.pickAt(later, ClassBrowse, exclude, ""); s == nil {
 		t.Error("subnet cooldown is per class; browse should still work")
 	}
+	p.now = func() time.Time { return later }
+	if got := p.Stats().SubnetCooldowns; got != 1 {
+		t.Errorf("Stats().SubnetCooldowns = %d, want 1", got)
+	}
 }
 
 func TestBrakeSlowsAndRecovers(t *testing.T) {
@@ -210,6 +214,10 @@ func TestBrakePausesWhenMostIPsBlocked(t *testing.T) {
 	if s, _ := p.pickAt(p.pausedUntil, ClassRSS, nil, ""); s == nil {
 		t.Error("work resumes after the pause")
 	}
+	p.now = func() time.Time { return t0 }
+	if s := p.Stats(); s.Pauses != 1 || s.PausedTotal != pause {
+		t.Errorf("Stats: %d pauses for %v; want 1 for %v", s.Pauses, s.PausedTotal, pause)
+	}
 }
 
 func TestProxyFailureRestsBriefly(t *testing.T) {
@@ -261,6 +269,9 @@ func TestStats(t *testing.T) {
 	}
 	if _, ok := s.Proxies[0].CoolUntil[ClassSearch]; !ok {
 		t.Error("stats should show the search cooldown")
+	}
+	if got := s.Proxies[0].BlocksByClass; got[ClassSearch] != 1 || len(got) != 1 {
+		t.Errorf("BlocksByClass = %v, want search: 1", got)
 	}
 }
 

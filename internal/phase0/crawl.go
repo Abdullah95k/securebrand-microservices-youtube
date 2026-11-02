@@ -14,7 +14,7 @@ import (
 // CrawlOptions controls the crawl experiment (E3, E5, E6, E13).
 type CrawlOptions struct {
 	Window          time.Duration // backfill window (D12: 365 days)
-	MaxTabPages     int           // safety limit per tab
+	MaxTabPages     int           // safety limit per tab; the window normally ends a tab first
 	VideosPerChan   int           // videos sampled for the deep check
 	CommentLimit    int           // comments read per video at most; 0 = all
 	Workers         int           // channels processed in parallel
@@ -26,7 +26,7 @@ type CrawlOptions struct {
 // DefaultCrawlOptions returns the Phase 0 defaults.
 func DefaultCrawlOptions() CrawlOptions {
 	return CrawlOptions{
-		Window: 365 * 24 * time.Hour, MaxTabPages: 80, VideosPerChan: 8, CommentLimit: 0,
+		Window: 365 * 24 * time.Hour, MaxTabPages: 400, VideosPerChan: 8, CommentLimit: 0,
 		Workers: 4, WithPlayer: true, IncludeComments: true,
 	}
 }

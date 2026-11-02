@@ -224,6 +224,9 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 		var delays []float64
 		layers := map[string]int{}
 		for _, sgt := range sights {
+			if sgt.Layer == "tab" && sgt.Published.IsZero() {
+				continue // recorded before tab sightings needed a recent publish date
+			}
 			layers[sgt.Layer]++
 			if sgt.Layer == "rss" && sgt.DelaySec > 0 {
 				delays = append(delays, sgt.DelaySec/60)

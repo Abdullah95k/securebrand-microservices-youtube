@@ -3,6 +3,8 @@ package phase0
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -302,5 +304,41 @@ func TestReportCountsEachRunOnce(t *testing.T) {
 	}
 	if len(got) != 3 || total != 25+5+7 {
 		t.Errorf("latestPerRun kept %d snapshots totalling %d requests; want 3 and 37", len(got), total)
+	}
+}
+
+// TestTabSightingNeedsARecentUpload: a tab check counts a video as a new
+// upload only when it was published in the last 48 hours. Older videos it
+// reaches for the first time (a second page) and undated Shorts are marked
+// seen without a sighting.
+func TestTabSightingNeedsARecentUpload(t *testing.T) {
+	ch := fakeyt.FakeChannel{ID: chOne, Handle: "@fakeone", Title: "c", Subscribers: "1 subscriber", Videos: []fakeyt.FakeVideo{
+		{ID: "fakeNew01", Title: "new", Views: 1, Ago: "1 hour ago", LengthSec: 60},
+		{ID: "fakeOld01", Title: "older", Views: 1, Ago: "3 days ago", LengthSec: 60},
+		{ID: "fakeSht01", Title: "short", Views: 1, Short: true},
+	}}
+	_, col := stickyRig(t, []fakeyt.FakeChannel{ch})
+	st := detectState{Seen: map[string]bool{}, Primed: map[string]bool{chOne: true}}
+	checkTab(context.Background(), col, chOne, &st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	got, _ := ReadAll[SightingRecord](col.Store, "detect_sightings")
+	if len(got) != 1 || got[0].Layer != "tab" || got[0].VideoHash != shortHash("fakeNew01") || got[0].Published.IsZero() {
+		t.Fatalf("sightings %+v; want one tab sighting for the 1-hour-old video, with its publish time", got)
+	}
+	for _, id := range []string{"fakeNew01", "fakeOld01", "fakeSht01"} {
+		if !st.Seen["tab:"+id] {
+			t.Errorf("%s should be marked seen", id)
+		}
+	}
+
+	// The report ignores tab sightings recorded without a publish time
+	// (before this rule) and counts the rest.
+	_ = col.Store.Append("detect_sightings", SightingRecord{At: time.Now(), Layer: "tab"})
+	_ = col.Store.Append("detect_feeds", FeedRecord{At: time.Now(), Outcome: "ok"})
+	var rep strings.Builder
+	if err := Report(col.Store, &rep, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rep.String(), "| New uploads first seen by RSS / by tab check | 0 / 1 |") {
+		t.Errorf("report:\n%s", rep.String())
 	}
 }

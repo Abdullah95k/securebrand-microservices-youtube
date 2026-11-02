@@ -208,3 +208,24 @@ func TestDiscoverDeduplicatesTermsAndFlagsMissingChannels(t *testing.T) {
 		t.Error("want a skeleton when search results carry no channel IDs")
 	}
 }
+
+// TestListedChannelsAreNotNewFinds: a channel of your list counts as known
+// even when its crawl failed, because detection resolved it.
+func TestListedChannelsAreNotNewFinds(t *testing.T) {
+	_, col, _ := discoveryRig(t)
+	if err := col.Store.Append("crawl_channels", ChannelRecord{ChannelHash: shortHash(chNew1), Error: "tab: blocked"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := col.Store.WriteJSON("resolved.json", map[string]string{"@new1": chNew1}); err != nil {
+		t.Fatal(err)
+	}
+	o := DefaultDiscoverOptions()
+	o.Terms = []string{"بغداد"}
+	if err := Discover(context.Background(), col, nil, o, quietLog); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := ReadAll[DiscoverRecord](col.Store, "discover")
+	if len(recs) != 1 || recs[0].Channels != 3 || recs[0].NewChannels != 1 {
+		t.Fatalf("records %+v; want 3 channels found, only chNew2 new (chOne crawled, chNew1 resolved)", recs)
+	}
+}

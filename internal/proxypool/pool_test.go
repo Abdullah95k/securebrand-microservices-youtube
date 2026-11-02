@@ -376,3 +376,52 @@ func TestPlayerBlocksDoNotBrake(t *testing.T) {
 		t.Error("with an empty BrakeIgnore, player blocks should brake like any other")
 	}
 }
+
+// TestFailoverAndRecoveryCounters covers the E2 counters: a request blocked
+// on one IP that succeeds on another, a request parked after ParkAfter IPs,
+// and whether an IP works again after its rest.
+func TestFailoverAndRecoveryCounters(t *testing.T) {
+	ps := makeProxies(t, "192.0.2.1:80", "198.51.100.1:80", "203.0.113.1:80")
+	p := New(ps, Config{MinInterval: time.Millisecond, Jitter: noJitter, DisableBrake: true,
+		FailoverDelayMin: time.Millisecond, FailoverDelayMax: 2 * time.Millisecond}, 1)
+	first := ""
+	_, err := p.Do(context.Background(), ClassBrowse, func(_ context.Context, px *Proxy) (Outcome, error) {
+		if first == "" {
+			first = px.ID()
+			return Blocked, nil
+		}
+		return OK, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Do(context.Background(), ClassNext, func(context.Context, *Proxy) (Outcome, error) { return Blocked, nil })
+	if !errors.Is(err, ErrParked) {
+		t.Fatalf("err = %v, want ErrParked", err)
+	}
+	s := p.Stats()
+	if b := s.Classes[ClassBrowse]; b.BlockedRequests != 1 || b.FailoverOK != 1 || b.Parked != 0 {
+		t.Errorf("browse counters %+v; want 1 blocked request that succeeded elsewhere", b)
+	}
+	if n := s.Classes[ClassNext]; n.BlockedRequests != 1 || n.Parked != 1 || n.FailoverOK != 0 {
+		t.Errorf("next counters %+v; want 1 parked request", n)
+	}
+
+	// Recovery: the first outcome after a block says whether the rest worked.
+	q := New(ps[:1], Config{Jitter: noJitter, DisableBrake: true}, 1)
+	st := take(t, q, t0, ClassSearch)
+	q.releaseAt(t0, st, ClassSearch, Blocked)
+	afterRest := t0.Add(31 * time.Minute)
+	st = take(t, q, afterRest, ClassSearch)
+	q.releaseAt(afterRest, st, ClassSearch, OK)
+	st = take(t, q, afterRest.Add(time.Minute), ClassSearch)
+	q.releaseAt(afterRest.Add(time.Minute), st, ClassSearch, Blocked) // a new block, not a re-block
+	again := afterRest.Add(time.Minute + 2*time.Hour + time.Minute)   // second strike: 2 h rest
+	st = take(t, q, again, ClassSearch)
+	q.releaseAt(again, st, ClassSearch, Blocked) // blocked on the first request after the rest
+	q.now = func() time.Time { return again }
+	c := q.Stats().Classes[ClassSearch]
+	if c.Recovered != 1 || c.Reblocked != 1 || len(c.RecoverySeconds) != 1 || c.RecoverySeconds[0] != (31*time.Minute).Seconds() {
+		t.Errorf("search counters %+v; want 1 recovery after 31 min and 1 re-block", c)
+	}
+}

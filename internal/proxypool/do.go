@@ -37,8 +37,8 @@ func (p *Pool) Do(ctx context.Context, c Class, fn Func) (Result, error) {
 // DoPrefer is Do starting on the preferred proxy when it is healthy (see
 // AcquirePrefer). After a block or proxy failure the request moves to other
 // IPs exactly as in Do.
-func (p *Pool) DoPrefer(ctx context.Context, c Class, prefer string, fn Func) (Result, error) {
-	var res Result
+func (p *Pool) DoPrefer(ctx context.Context, c Class, prefer string, fn Func) (res Result, err error) {
+	defer func() { p.noteRequest(c, res, err) }()
 	blocked := map[string]bool{}
 	for {
 		lease, err := p.AcquirePrefer(ctx, c, blocked, prefer)

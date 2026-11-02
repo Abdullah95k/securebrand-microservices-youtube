@@ -162,7 +162,10 @@ func checkTab(ctx context.Context, col *Collector, id string, st *detectState, l
 		log.Warn("tab check failed", "channel", shortHash(id), "err", err)
 		return
 	}
-	for _, key := range []string{"videos", "shorts", "streams"} {
+	// Not the Shorts tab: Shorts carry no date there, so they never count as
+	// tab sightings (RSS sees them), and dating them would cost a player
+	// call per page on the endpoint YouTube guards hardest.
+	for _, key := range []string{"videos", "streams"} {
 		t, ok := ch.Channel.Tabs[key]
 		if !ok {
 			continue

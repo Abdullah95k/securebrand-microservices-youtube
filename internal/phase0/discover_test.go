@@ -120,9 +120,12 @@ func TestDiscoverComparesEnginesAndFindsNewChannels(t *testing.T) {
 	if !n1.UploadsKnown || n1.UploadsPerMonth != 6 || !n1.NewestComments.OK || n1.NewestComments.Min != 12 {
 		t.Errorf("new1 activity %+v; want 6 uploads a month and 12 comments on the newest video", n1)
 	}
-	// A second census run finds nothing new to profile.
-	if err := Census(context.Background(), col, CensusOptions{Max: 10}, quietLog); err == nil {
-		t.Error("a second census should have nothing left to profile")
+	// A second census run finds nothing new to profile, and that is fine.
+	if err := Census(context.Background(), col, CensusOptions{Max: 10}, quietLog); err != nil {
+		t.Errorf("a finished census should not fail: %v", err)
+	}
+	if again, _ := ReadAll[CensusRecord](col.Store, "census"); len(again) != 3 {
+		t.Errorf("a second census profiled channels again: %d records", len(again))
 	}
 
 	var rep strings.Builder
@@ -175,4 +178,33 @@ func datedItems(now time.Time, ages ...time.Duration) []ytparse.VideoItem {
 		out = append(out, ytparse.VideoItem{VideoID: string(rune('a' + i)), Published: ytparse.TimeEstimate{At: now.Add(-a), OK: true}})
 	}
 	return out
+}
+
+// TestDiscoverDeduplicatesTermsAndFlagsMissingChannels: a term given twice
+// (your file and the seed list) is searched once, and results without
+// channel IDs save a skeleton instead of vanishing silently.
+func TestDiscoverDeduplicatesTermsAndFlagsMissingChannels(t *testing.T) {
+	yt, col, _ := discoveryRig(t)
+	yt.Handle("search", func(map[string]any) (int, any) {
+		return 200, map[string]any{"contents": map[string]any{"itemSectionRenderer": map[string]any{"contents": []any{
+			map[string]any{"videoRenderer": map[string]any{"videoId": "fakeNC1", "title": map[string]any{"simpleText": "t"}}},
+		}}}}
+	})
+	o := DefaultDiscoverOptions()
+	o.Terms = []string{"بغداد", " بغداد ", "", "بغداد"}
+	if err := Discover(context.Background(), col, nil, o, quietLog); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := ReadAll[DiscoverRecord](col.Store, "discover")
+	if len(recs) != 1 || recs[0].Results != 1 || recs[0].Channels != 0 {
+		t.Errorf("records %+v; want one search of one term, 1 video, no channels", recs)
+	}
+	files, _ := os.ReadDir(filepath.Join(col.Store.Dir(), "skeletons"))
+	found := false
+	for _, f := range files {
+		found = found || strings.HasPrefix(f.Name(), "searchnochannel-")
+	}
+	if !found {
+		t.Error("want a skeleton when search results carry no channel IDs")
+	}
 }

@@ -28,11 +28,7 @@ This is how to run the Phase 0 measurements (plan §9) on your DigitalOcean drop
 | Transcripts without anti-bot tokens (E12) | `transcripts` (a few minutes) | Any time |
 | Report | `report` | Any time; final on Day 14 |
 
-The remaining experiments come in the next update. You can start the long-running parts now:
-
-- the safe-pace and failover curve (E1, E2);
-- keyword search and the channel census (E9, E10, E11);
-- the transcript check (E12).
+All 13 experiments are in this version. The order is: Day 0 (setup, detection, crawl), then "After the crawl" (accuracy and the remaining experiments), then Day 7 and Day 14.
 
 ## Before you start
 
@@ -165,9 +161,55 @@ sudo ls /var/lib/securebrand-youtube/phase0/skeletons
 sudo sh -c 'cat "$(ls -1 /var/lib/securebrand-youtube/phase0/skeletons/* | head -n 1)"'
 ```
 
+## The remaining experiments (after the crawl has finished)
+
+Run these one at a time, while detection keeps running. Every command can be stopped with Ctrl+C and run again.
+
+14. Optional: put your own search terms (brands, people, topics) in a keywords file, one per line. They stay on the server, are stored only as hashes, and never appear in the report:
+
+```bash
+sudo nano /etc/securebrand-youtube/phase0-keywords.txt
+```
+
+15. Safe pace and failover (E1, E2), about an hour. On 3 proxies it steps the pace up per endpoint and stops each endpoint at its first block signal; nothing goes faster after a block:
+
+```bash
+docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe pace
+```
+
+16. Discovery (E9), about 30 minutes. Your keywords plus 20 seed keywords, each on the website's search (10 pages) and the official API (one page, at most 2,000 of the 10,000 daily units). Repeat it every 2–3 days until Day 14; the report then shows how many new channels each run finds:
+
+```bash
+docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe discover
+```
+
+17. Channel census (E10), about 30 minutes: profiles up to 500 channels discovery found that are not in your list. Running it again after a later `discover` profiles only the new ones:
+
+```bash
+docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe census
+```
+
+18. Keyword-matching quality (E11), about an hour of your time, can be split over several sessions. It shows 300 found video titles one at a time; type y (relevant to Iraq or Iraqi audiences), n (not relevant), s (can't tell) or q (stop for now), then Enter. Note the `-it`: it needs your keyboard:
+
+```bash
+docker run -it --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe label
+```
+
+19. Transcripts (E12), a few minutes: checks whether transcripts come back without anti-bot tokens. The report gives the go or no-go:
+
+```bash
+docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe transcripts
+```
+
+20. Print the report and send it to me (the commands above each add a section):
+
+```bash
+docker run --rm -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe report
+```
+
 ## Day 7
 
-14. Re-read the comments of the crawled videos to measure edits and deletions. If the crawl ran on 2 November 2026, run this on 9 November 2026:
+21. Re-read the comments of the crawled videos to measure edits and deletions. If the crawl ran on 2 November 2026, run this on 9 November 2026:
 
 ```bash
 docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe resweep
@@ -175,19 +217,19 @@ docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/
 
 ## Day 14
 
-15. Print the final report and send it to me:
+22. Print the final report and send it to me:
 
 ```bash
 docker run --rm -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe report
 ```
 
-16. Stop detection:
+23. Stop detection:
 
 ```bash
 docker stop ytprobe-detect
 ```
 
-17. Remove the stopped container:
+24. Remove the stopped container:
 
 ```bash
 docker rm ytprobe-detect
@@ -286,3 +328,10 @@ Add these after the command name, for example `ytprobe crawl -videos 12`:
 | `detect` | `-rss-every` | `15m` | Feed check interval per channel |
 | `resweep` | `-comments` | `0` (all) | Use the same value as the crawl |
 | `accuracy` | `-max` | `200` | Videos to compare |
+| `pace` | `-proxies` / `-steps` / `-per-step` | `3` / `10s,6s,4s,3s,2s,1.5s,1s` / `20` | Proxies tested, gaps tried (slowest first), requests per proxy per step |
+| `pace` | `-classes` | all | Endpoints to test: `browse,next,player,search,rss,watch,cdn` |
+| `discover` | `-seed` / `-web-pages` | `20` / `10` | Seed keywords searched besides your file; website pages per term |
+| `discover` | `-api-units` / `-api-pages` / `-api-days` | `2000` / `1` / `30` | API budget per run (0 = website only); API pages per term; only videos from the last N days |
+| `census` | `-max` | `500` | Channels to profile |
+| `label` | `-size` / `-reset` | `300` / off | Sample size; draw a new sample (drops earlier answers) |
+| `transcripts` | `-videos` | `30` | Videos to check |

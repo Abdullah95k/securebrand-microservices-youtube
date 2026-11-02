@@ -229,7 +229,16 @@ func CaptionCues(body []byte) int {
 		}
 		return n
 	}
+	// XML only when it is a caption document: an HTML page (an error or
+	// notice answered with 200) must not count as captions.
 	s := string(body)
+	head := strings.ToLower(strings.TrimSpace(s))
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	if !strings.Contains(head, "<transcript") && !strings.Contains(head, "<timedtext") {
+		return 0
+	}
 	if n := strings.Count(s, "<text"); n > 0 {
 		return n
 	}

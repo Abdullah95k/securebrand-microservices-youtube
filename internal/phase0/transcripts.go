@@ -171,10 +171,13 @@ func reportTranscripts(p func(string, ...any), recs []TranscriptRecord) {
 	p("| Watch pages offering \"show transcript\" | %s (%d of %d) |", pctStr(share(offered, len(recs))), offered, len(recs))
 	p("| ... that returned transcript lines | %s (%d of %d) |", pctStr(share(transcriptText, offered)), transcriptText, offered)
 	p("")
-	if anyText > 0 {
+	switch {
+	case anyText > 0:
 		p("Verdict: transcripts are reachable without anti-bot tokens for %s of the videos checked: keep transcripts (go).", pctStr(share(anyText, len(recs))))
-	} else {
-		p("Verdict: no transcript came back without an anti-bot token: drop transcripts (no-go), as plan E12 says.")
+	case withTracks+offered == 0:
+		p("Verdict: inconclusive. No caption file or transcript could be tried (player unavailable or no captions on these videos); run the check again later.")
+	default:
+		p("Verdict: no transcript came back without an anti-bot token (%d caption files and %d transcript requests tried): drop transcripts (no-go), as plan E12 says.", withTracks, offered)
 	}
 	p("")
 }

@@ -466,9 +466,10 @@ func TestCaptionsAndTranscriptHelpers(t *testing.T) {
 		t.Errorf("TranscriptSegments = %d", n)
 	}
 	for body, want := range map[string]int{
-		`{"events":[{"segs":[{"utf8":"a"}]},{"tStartMs":1},{"segs":[{"utf8":"b"}]}]}`: 2,
-		`<transcript><text start="0">a</text><text start="1">b</text></transcript>`:   2,
-		`<timedtext><body><p t="0">a</p></body></timedtext>`:                          1,
+		`{"events":[{"segs":[{"utf8":"a"}]},{"tStartMs":1},{"segs":[{"utf8":"b"}]}]}`:      2,
+		`<transcript><text start="0">a</text><text start="1">b</text></transcript>`:        2,
+		`<timedtext><body><p t="0">a</p></body></timedtext>`:                               1,
+		`<html><body><p class="x">Something went wrong</p><p >Try later</p></body></html>`: 0,
 		``: 0,
 	} {
 		if got := CaptionCues([]byte(body)); got != want {

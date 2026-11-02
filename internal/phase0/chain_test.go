@@ -324,10 +324,14 @@ func TestTabSightingNeedsARecentUpload(t *testing.T) {
 	if len(got) != 1 || got[0].Layer != "tab" || got[0].VideoHash != shortHash("fakeNew01") || got[0].Published.IsZero() {
 		t.Fatalf("sightings %+v; want one tab sighting for the 1-hour-old video, with its publish time", got)
 	}
-	for _, id := range []string{"fakeNew01", "fakeOld01", "fakeSht01"} {
+	for _, id := range []string{"fakeNew01", "fakeOld01"} {
 		if !st.Seen["tab:"+id] {
 			t.Errorf("%s should be marked seen", id)
 		}
+	}
+	// The Shorts tab is not read at all: Shorts are left to RSS.
+	if st.Seen["tab:fakeSht01"] {
+		t.Error("the tab check should not read the Shorts tab")
 	}
 
 	// The report ignores tab sightings recorded without a publish time

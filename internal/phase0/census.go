@@ -2,7 +2,6 @@ package phase0
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"math"
 	"sort"
@@ -104,7 +103,8 @@ func Census(ctx context.Context, col *Collector, o CensusOptions, log *slog.Logg
 		return err
 	}
 	if len(cands) == 0 {
-		return errors.New("census: no new channels to profile; run discover first (and the crawl, so list channels are left out)")
+		log.Info("census: no new channels to profile (all found channels are profiled or in the list; run discover again to find more)")
+		return nil
 	}
 	if o.Max > 0 && len(cands) > o.Max {
 		cands = cands[:o.Max]

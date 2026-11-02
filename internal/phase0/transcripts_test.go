@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -103,5 +104,42 @@ func TestTranscriptsNoGoVerdict(t *testing.T) {
 	}
 	if !strings.Contains(rep.String(), "drop transcripts (no-go)") {
 		t.Errorf("report:\n%s", rep.String())
+	}
+}
+
+func TestTranscriptsInconclusiveWhenNothingTried(t *testing.T) {
+	_, env := paceEnv(t)
+	_ = env.Store.Append("transcripts", TranscriptRecord{VideoHash: "x", PlayerErr: "player endpoint resting after a block; skipped"})
+	_ = env.Store.Append("transcripts", TranscriptRecord{VideoHash: "y", PlayerErr: "player endpoint resting after a block; skipped"})
+	var rep strings.Builder
+	if err := Report(env.Store, &rep, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rep.String(), "Verdict: inconclusive") || strings.Contains(rep.String(), "no-go") {
+		t.Errorf("report:\n%s", rep.String())
+	}
+}
+
+// TestSlowPlayerIsSkippedNotRested: a player answer slower than playerWait
+// skips that call only; the next call tries again (no 30-minute rest).
+func TestSlowPlayerIsSkippedNotRested(t *testing.T) {
+	yt, env := paceEnv(t)
+	old := playerWait
+	playerWait = 100 * time.Millisecond
+	defer func() { playerWait = old }()
+	var calls atomic.Int32
+	yt.Handle("player", func(map[string]any) (int, any) {
+		calls.Add(1)
+		time.Sleep(300 * time.Millisecond)
+		return 200, map[string]any{"playabilityStatus": map[string]any{"status": "OK"}}
+	})
+	var cost Cost
+	for i := 0; i < 2; i++ {
+		if _, err := env.Collector.playerBestEffort(context.Background(), &cost, "player", "fakeV1", ""); err == nil {
+			t.Fatal("want a timeout")
+		}
+	}
+	if cost.ByEndpoint["player:skipped"] != 0 || calls.Load() < 2 {
+		t.Errorf("cost %v, %d player calls; a slow answer must not rest the player", cost.ByEndpoint, calls.Load())
 	}
 }

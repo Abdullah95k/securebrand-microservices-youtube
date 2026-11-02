@@ -182,6 +182,10 @@ func main() {
 		reset := fs.Bool("reset", false, "draw a new sample and drop earlier answers")
 		fs.Parse(args)
 		stop() // Ctrl+C quits at once; every answer is already saved
+		if fi, serr := os.Stdin.Stat(); serr == nil && fi.Mode()&os.ModeCharDevice == 0 {
+			fmt.Fprintln(os.Stderr, "label needs your keyboard: run it with \"docker run -it ...\" (note the -it).")
+			os.Exit(2)
+		}
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
 		err = phase0.Label(context.Background(), env.Store, os.Stdin, os.Stdout, phase0.LabelOptions{Size: *size, Terms: env.Keywords, Reset: *reset})
 	case "transcripts":

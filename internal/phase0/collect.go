@@ -70,8 +70,8 @@ type Collector struct {
 
 // The player endpoint is the one YouTube guards hardest, and everything the
 // crawl asks it for is optional (a Short's date, a video's tags). A player
-// call waits at most playerWait for a proxy, and after a block every player
-// call is skipped for playerRest, so the endpoint can never hold up the
+// call waits at most playerWait for a proxy and an answer, and after a block
+// every player call is skipped for playerRest, so the endpoint can never hold up the
 // listing. On 2 November 2026 two blocked Shorts date checks rested the whole
 // proxy group and a 10-minute test took 4 hours.
 var (
@@ -95,7 +95,9 @@ func (c *Collector) playerBestEffort(ctx context.Context, cost *Cost, label, id,
 	pctx, cancel := context.WithTimeout(ctx, playerWait)
 	defer cancel()
 	r, err := c.callVia(pctx, cost, innertube.Player, label, map[string]any{"videoId": id}, prefer)
-	if err != nil && ctx.Err() == nil && (errors.Is(err, innertube.ErrBlocked) || errors.Is(err, proxypool.ErrParked) || errors.Is(err, context.DeadlineExceeded)) {
+	// Rest only after a block. A timeout means the pool was busy (or the
+	// answer slow): this call is skipped, the next one tries again.
+	if err != nil && ctx.Err() == nil && (errors.Is(err, innertube.ErrBlocked) || errors.Is(err, proxypool.ErrParked)) {
 		c.playerMu.Lock()
 		c.playerOffUntil = c.Now().Add(playerRest)
 		c.playerMu.Unlock()

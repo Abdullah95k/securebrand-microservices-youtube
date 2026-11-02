@@ -3,6 +3,7 @@ package phase0
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -45,7 +46,7 @@ type DiscoverRecord struct {
 	Engine        string    `json:"engine"` // "api" or "web"
 	TermHash      string    `json:"term_hash"`
 	Pages         int       `json:"pages"`
-	Results       int       `json:"results"` // items returned, before de-duplication
+	Results       int       `json:"results"` // videos returned, before de-duplication
 	Videos        int       `json:"videos"`
 	Channels      int       `json:"channels"`
 	NewChannels   int       `json:"new_channels"`   // not in the crawled list
@@ -79,9 +80,10 @@ type discoveryMatcher struct {
 }
 
 func newDiscoveryMatcher(terms []string) *discoveryMatcher {
+	terms = uniqueTerms(terms)
 	kws, _ := keywords.Seed()
 	for i, t := range terms {
-		kws = append(kws, keywords.Keyword{ID: "term-" + shortHash(t) + "-" + string(rune('a'+i%26)), Kind: "term", Variants: []string{t}})
+		kws = append(kws, keywords.Keyword{ID: fmt.Sprintf("term-%d", i), Kind: "term", Variants: []string{t}})
 	}
 	dm := &discoveryMatcher{m: keywords.NewMatcher(kws), ambiguous: map[string]bool{}}
 	for _, k := range kws {
@@ -119,6 +121,7 @@ func knownChannelHashes(s *Store) map[string]bool {
 // Discover runs every term on both engines. api may be nil (no key): then
 // only the website is searched.
 func Discover(ctx context.Context, col *Collector, api *ytapi.Client, o DiscoverOptions, log *slog.Logger) error {
+	o.Terms = uniqueTerms(o.Terms)
 	if len(o.Terms) == 0 {
 		return errors.New("discover: no search terms")
 	}
@@ -154,8 +157,9 @@ func Discover(ctx context.Context, col *Collector, api *ytapi.Client, o Discover
 // discoverPage is what one engine found for one term before bookkeeping.
 type discoverPage struct {
 	DiscoverRecord
-	channels map[string]bool // every channel seen, including channel results
-	err      error
+	channels        map[string]bool // every channel seen, including channel results
+	err             error
+	warnedNoChannel bool
 }
 
 func finishDiscover(col *Collector, run, th, engine string, rec *discoverPage, items []DiscoverItem, known map[string]bool, m *discoveryMatcher, log *slog.Logger) {
@@ -214,7 +218,21 @@ func (c *Collector) webSearch(ctx context.Context, term string, o DiscoverOption
 		if rec.Pages == 1 && len(l.Videos) == 0 && len(l.Channels) == 0 {
 			c.Store.SaveSkeleton("search-"+shortHash(term), r.Body)
 		}
-		rec.Results += len(l.Videos) + len(l.Channels)
+		rec.Results += len(l.Videos) // videos only, like the API's results
+		noChannel := 0
+		for _, v := range l.Videos {
+			if v.ChannelID == "" {
+				noChannel++
+			}
+		}
+		if len(l.Videos) > 0 && noChannel == len(l.Videos) && !rec.warnedNoChannel {
+			// Videos without channel IDs would silently vanish from the
+			// channel counts: keep the page's structure so the parser can
+			// be fixed.
+			rec.warnedNoChannel = true
+			c.Store.SaveSkeleton("searchnochannel-"+shortHash(term), r.Body)
+			c.warn("search results carry no channel IDs; saved a skeleton", "videos", len(l.Videos))
+		}
 		for _, v := range l.Videos {
 			if v.ChannelID != "" {
 				rec.channels[v.ChannelID] = true
@@ -267,6 +285,22 @@ func apiSearch(ctx context.Context, api *ytapi.Client, term string, o DiscoverOp
 		opts.PageToken = res.NextPageToken
 	}
 	return rec, items
+}
+
+// uniqueTerms drops empty terms and repeats (compared after normalization,
+// so "العراق" from your file and from the seed list is searched once).
+func uniqueTerms(terms []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range terms {
+		k := keywords.Normalize(t)
+		if strings.TrimSpace(k) == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, t)
+	}
+	return out
 }
 
 // containsIraq says whether an About-panel country names Iraq.

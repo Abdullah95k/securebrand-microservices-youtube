@@ -92,6 +92,14 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	labelSampleRecs, err := ReadAll[LabelItem](s, "label_sample")
+	if err != nil {
+		return err
+	}
+	labelAnswers, err := ReadAll[LabelAnswer](s, "labels")
+	if err != nil {
+		return err
+	}
 	skels, _ := s.List("skeletons")
 
 	p := func(format string, a ...any) { fmt.Fprintf(w, format+"\n", a...) }
@@ -354,6 +362,7 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 	reportFailover(p, pools)
 	reportDiscovery(p, discRecs, discItems, knownChannelHashes(s))
 	reportCensus(p, census)
+	reportLabels(p, labelSampleRecs, labelAnswers, discItems)
 
 	p("## Parser problems (E13)")
 	p("")

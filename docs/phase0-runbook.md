@@ -24,6 +24,7 @@ This is how to run the Phase 0 measurements (plan §9) on your DigitalOcean drop
 | Safe pace per endpoint and failover (E1, E2) | `pace` (about an hour; when no crawl is running) | After the crawl |
 | Discovery: website search vs official API (E9) | `discover` (repeat every few days) | After the crawl |
 | Channel census (E10) | `census` | After the first `discover` |
+| Keyword-matching quality (E11) | `label` (you answer 300 titles, about an hour; can be split) | After `discover` |
 | Report | `report` | Any time; final on Day 14 |
 
 The remaining experiments come in the next update. You can start the long-running parts now:

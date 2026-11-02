@@ -80,6 +80,18 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	discRecs, err := ReadAll[DiscoverRecord](s, "discover")
+	if err != nil {
+		return err
+	}
+	discItems, err := ReadAll[DiscoverItem](s, "discover_items")
+	if err != nil {
+		return err
+	}
+	census, err := ReadAll[CensusRecord](s, "census")
+	if err != nil {
+		return err
+	}
 	skels, _ := s.List("skeletons")
 
 	p := func(format string, a ...any) { fmt.Fprintf(w, format+"\n", a...) }
@@ -340,6 +352,8 @@ func Report(s *Store, w io.Writer, now time.Time) error {
 
 	reportPace(p, paceRecs)
 	reportFailover(p, pools)
+	reportDiscovery(p, discRecs, discItems, knownChannelHashes(s))
+	reportCensus(p, census)
 
 	p("## Parser problems (E13)")
 	p("")
@@ -566,5 +580,251 @@ func reportFailover(p func(string, ...any), pools []PoolSnapshot) {
 		p("| %s | %d | %d (%s) | %d | %d / %d | %s |", c, a.BlockedRequests, a.FailoverOK, pctStr(share(int(a.FailoverOK), int(a.BlockedRequests))),
 			a.Parked, a.Recovered, a.Reblocked, f0(pct(mins, 50)))
 	}
+	p("")
+}
+
+// reportDiscovery writes E9: yield and depth per engine, channels not in
+// the list, which engine found them, and new channels per run.
+func reportDiscovery(p func(string, ...any), recs []DiscoverRecord, items []DiscoverItem, known map[string]bool) {
+	if len(recs) == 0 {
+		return
+	}
+	engines := []string{"web", "api"}
+	type agg struct {
+		terms         map[string]bool
+		perPage       []float64
+		pages         []float64
+		ranOut, total int
+		units         int
+		errors        int
+	}
+	a := map[string]*agg{}
+	for _, e := range engines {
+		a[e] = &agg{terms: map[string]bool{}}
+	}
+	for _, r := range recs {
+		g := a[r.Engine]
+		if g == nil {
+			continue
+		}
+		g.terms[r.TermHash] = true
+		g.total++
+		g.units += r.Units
+		if r.Error != "" {
+			g.errors++
+		}
+		if r.Pages > 0 {
+			g.perPage = append(g.perPage, float64(r.Results)/float64(r.Pages))
+			g.pages = append(g.pages, float64(r.Pages))
+		}
+		if r.RanOut {
+			g.ranOut++
+		}
+	}
+	// Channels per engine, from the found videos.
+	chans := map[string]map[string]bool{"web": {}, "api": {}}
+	qualifying := map[string]bool{}
+	perTerm := map[string]map[string]map[string]bool{} // term → engine → channels
+	for _, it := range items {
+		if it.ChannelID == "" || chans[it.Engine] == nil {
+			continue
+		}
+		chans[it.Engine][it.ChannelID] = true
+		if it.Qualifies {
+			qualifying[it.ChannelID] = true
+		}
+		if perTerm[it.TermHash] == nil {
+			perTerm[it.TermHash] = map[string]map[string]bool{"web": {}, "api": {}}
+		}
+		perTerm[it.TermHash][it.Engine][it.ChannelID] = true
+	}
+	newOf := func(set map[string]bool) (n, q int) {
+		for ch := range set {
+			if !known[shortHash(ch)] {
+				n++
+				if qualifying[ch] {
+					q++
+				}
+			}
+		}
+		return
+	}
+	p("## Discovery: website search vs official API (E9)")
+	p("")
+	p("| | Website search | Official API |")
+	p("|---|---|---|")
+	p("| Terms searched | %d | %d |", len(a["web"].terms), len(a["api"].terms))
+	p("| Results per page (median) | %s | %s |", f1(pct(a["web"].perPage, 50)), f1(pct(a["api"].perPage, 50)))
+	p("| Pages read per term (median) | %s | %s |", f1(pct(a["web"].pages, 50)), f1(pct(a["api"].pages, 50)))
+	p("| Terms whose results ran out before the page limit | %s | %s |", pctStr(share(a["web"].ranOut, a["web"].total)), pctStr(share(a["api"].ranOut, a["api"].total)))
+	wn, wq := newOf(chans["web"])
+	an, aq := newOf(chans["api"])
+	p("| Channels found (unique) | %d | %d |", len(chans["web"]), len(chans["api"]))
+	p("| ... not in the list | %d | %d |", wn, an)
+	p("| ... not in the list, with a video whose title matches the keywords | %d | %d |", wq, aq)
+	p("| Searches that failed | %d | %d |", a["web"].errors, a["api"].errors)
+	p("| Quota units used | n/a | %d |", a["api"].units)
+	p("")
+	// Which engine found the new channels.
+	onlyWeb, onlyAPI, both := 0, 0, 0
+	for ch := range chans["web"] {
+		if known[shortHash(ch)] {
+			continue
+		}
+		if chans["api"][ch] {
+			both++
+		} else {
+			onlyWeb++
+		}
+	}
+	for ch := range chans["api"] {
+		if !known[shortHash(ch)] && !chans["web"][ch] {
+			onlyAPI++
+		}
+	}
+	if total := onlyWeb + onlyAPI + both; total > 0 && len(a["api"].terms) > 0 {
+		var jac []float64
+		for _, e := range perTerm {
+			w, ap := e["web"], e["api"]
+			if len(w) == 0 || len(ap) == 0 {
+				continue
+			}
+			inter := 0
+			for ch := range w {
+				if ap[ch] {
+					inter++
+				}
+			}
+			jac = append(jac, 100*float64(inter)/float64(len(w)+len(ap)-inter))
+		}
+		p("New channels found only by the website: %s; only by the API: %s; by both: %s. Median overlap of the two engines' channels for the same term: %s%%.",
+			pctStr(share(onlyWeb, total)), pctStr(share(onlyAPI, total)), pctStr(share(both, total)), f0(pct(jac, 50)))
+		p("")
+	}
+	// New qualifying channels first seen in each run.
+	runs := map[string]bool{}
+	for _, it := range items {
+		runs[it.Run] = true
+	}
+	if len(runs) > 1 {
+		order := make([]string, 0, len(runs))
+		for r := range runs {
+			order = append(order, r)
+		}
+		sort.Strings(order)
+		seen := map[string]bool{}
+		var parts []string
+		for _, r := range order {
+			n := 0
+			for _, it := range items {
+				if it.Run == r && it.Qualifies && !known[shortHash(it.ChannelID)] && !seen[it.ChannelID] {
+					seen[it.ChannelID] = true
+					n++
+				}
+			}
+			t, _ := time.Parse(time.RFC3339, r)
+			parts = append(parts, fmt.Sprintf("%s: %d", t.In(iraq).Format("2 Jan 15:04"), n))
+		}
+		p("New keyword-matching channels first seen per run: %s.", strings.Join(parts, "; "))
+		p("")
+	}
+}
+
+// reportCensus writes E10: core vs mention, size mix, upload rate and
+// comments per video of the channels discovery found.
+func reportCensus(p func(string, ...any), recs []CensusRecord) {
+	if len(recs) == 0 {
+		return
+	}
+	var ok []CensusRecord
+	errs := 0
+	for _, r := range recs {
+		if r.Error != "" {
+			errs++
+			continue
+		}
+		ok = append(ok, r)
+	}
+	core, byCountry, byMeta := 0, 0, 0
+	found := map[string]int{}
+	var reqs []float64
+	for _, r := range recs {
+		reqs = append(reqs, float64(r.Requests))
+	}
+	for _, r := range ok {
+		if r.Core {
+			core++
+		}
+		if r.CountryIraq {
+			byCountry++
+		}
+		if r.MetaMatch {
+			byMeta++
+		}
+		found[r.FoundBy]++
+	}
+	p("## Channel census (E10)")
+	p("")
+	p("| | Value |")
+	p("|---|---|")
+	p("| Channels profiled (failed) | %d (%d) |", len(ok), errs)
+	p("| Iraq channels (core) / mention only | %s / %s |", pctStr(share(core, len(ok))), pctStr(share(len(ok)-core, len(ok))))
+	p("| Core signals: About country is Iraq / own title, description or keywords match | %s / %s |", pctStr(share(byCountry, len(ok))), pctStr(share(byMeta, len(ok))))
+	p("| Found by: website only / API only / both | %s / %s / %s |", pctStr(share(found["web"], len(ok))), pctStr(share(found["api"], len(ok))), pctStr(share(found["both"], len(ok))))
+	p("| Requests per channel profiled (median) | %s |", f1(pct(reqs, 50)))
+	p("")
+	buckets := []struct {
+		name string
+		max  int64
+	}{{"< 1K", 1e3}, {"1K–10K", 1e4}, {"10K–100K", 1e5}, {"100K–1M", 1e6}, {"≥ 1M", 1 << 62}}
+	p("| Subscribers | Core | Mention only |")
+	p("|---|---|---|")
+	for i, b := range buckets {
+		var lo int64
+		if i > 0 {
+			lo = buckets[i-1].max
+		}
+		nc, nm, tc, tm := 0, 0, 0, 0
+		for _, r := range ok {
+			if !r.Subscribers.OK {
+				continue
+			}
+			in := r.Subscribers.Min >= lo && r.Subscribers.Min < b.max
+			if r.Core {
+				tc++
+				if in {
+					nc++
+				}
+			} else {
+				tm++
+				if in {
+					nm++
+				}
+			}
+		}
+		p("| %s | %s | %s |", b.name, pctStr(share(nc, tc)), pctStr(share(nm, tm)))
+	}
+	p("")
+	var upC, upM, comC, comM []float64
+	for _, r := range ok {
+		if r.UploadsKnown {
+			if r.Core {
+				upC = append(upC, r.UploadsPerMonth)
+			} else {
+				upM = append(upM, r.UploadsPerMonth)
+			}
+		}
+		if r.NewestComments.OK {
+			if r.Core {
+				comC = append(comC, float64(r.NewestComments.Min))
+			} else {
+				comM = append(comM, float64(r.NewestComments.Min))
+			}
+		}
+	}
+	p("| | Core | Mention only |")
+	p("|---|---|---|")
+	p("| Uploads per month, videos tab (median / p90) | %s / %s | %s / %s |", f1(pct(upC, 50)), f1(pct(upC, 90)), f1(pct(upM, 50)), f1(pct(upM, 90)))
+	p("| Comments on the newest video (median / p90) | %s / %s | %s / %s |", f0(pct(comC, 50)), f0(pct(comC, 90)), f0(pct(comM, 50)), f0(pct(comM, 90)))
 	p("")
 }

@@ -446,3 +446,33 @@ func TestLockupReadsLabelsAndShortForms(t *testing.T) {
 		}
 	}
 }
+
+func TestCaptionsAndTranscriptHelpers(t *testing.T) {
+	p := ParsePlayer(doc(t, M{"captions": M{"playerCaptionsTracklistRenderer": M{"captionTracks": A{
+		M{"baseUrl": "https://www.youtube.com/api/timedtext?v=x&lang=ar", "languageCode": "ar", "kind": "asr"},
+		M{"baseUrl": "https://www.youtube.com/api/timedtext?v=x&lang=en", "languageCode": "en"},
+	}}}}))
+	if len(p.CaptionTracks) != 2 || !p.CaptionTracks[0].Auto || p.CaptionTracks[1].Auto || p.CaptionTracks[1].URL == "" ||
+		len(p.CaptionLangs) != 2 || p.CaptionLangs[0] != "ar (auto)" {
+		t.Errorf("caption tracks %+v, langs %v", p.CaptionTracks, p.CaptionLangs)
+	}
+	if got := TranscriptParams(doc(t, M{"engagementPanels": A{M{"x": M{"getTranscriptEndpoint": M{"params": "P1"}}}}})); got != "P1" {
+		t.Errorf("TranscriptParams = %q", got)
+	}
+	if got := TranscriptParams(doc(t, M{"contents": M{}})); got != "" {
+		t.Errorf("no panel: TranscriptParams = %q", got)
+	}
+	if n := TranscriptSegments(doc(t, A{M{"transcriptSegmentRenderer": M{}}, M{"transcriptSegmentRenderer": M{}}})); n != 2 {
+		t.Errorf("TranscriptSegments = %d", n)
+	}
+	for body, want := range map[string]int{
+		`{"events":[{"segs":[{"utf8":"a"}]},{"tStartMs":1},{"segs":[{"utf8":"b"}]}]}`: 2,
+		`<transcript><text start="0">a</text><text start="1">b</text></transcript>`:   2,
+		`<timedtext><body><p t="0">a</p></body></timedtext>`:                          1,
+		``: 0,
+	} {
+		if got := CaptionCues([]byte(body)); got != want {
+			t.Errorf("CaptionCues(%q) = %d, want %d", body, got, want)
+		}
+	}
+}

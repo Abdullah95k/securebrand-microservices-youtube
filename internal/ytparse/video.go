@@ -142,6 +142,18 @@ type PlayerInfo struct {
 	FamilySafe   bool
 	CaptionLangs []string
 	Playability  string // "OK", "LOGIN_REQUIRED", "UNPLAYABLE", "ERROR"…
+	// CaptionTracks are the caption files the player offers. Their URLs
+	// carry no anti-bot token; the website's player adds one, and we never
+	// generate one (plan §3), so whether they answer without it is what
+	// Phase 0 experiment E12 measures.
+	CaptionTracks []CaptionTrack
+}
+
+// CaptionTrack is one caption file the player offers.
+type CaptionTrack struct {
+	Lang string
+	Auto bool   // automatic speech recognition
+	URL  string // timedtext URL
 }
 
 // ParsePlayer reads a "player" response.
@@ -174,10 +186,52 @@ func ParsePlayer(data any) PlayerInfo {
 	}
 	for _, tr := range jsonx.Slice(data, "captions", "playerCaptionsTracklistRenderer", "captionTracks") {
 		lang := jsonx.String(tr, "languageCode")
-		if jsonx.String(tr, "kind") == "asr" {
+		auto := jsonx.String(tr, "kind") == "asr"
+		p.CaptionTracks = append(p.CaptionTracks, CaptionTrack{Lang: lang, Auto: auto, URL: jsonx.String(tr, "baseUrl")})
+		if auto {
 			lang += " (auto)"
 		}
 		p.CaptionLangs = append(p.CaptionLangs, lang)
 	}
 	return p
+}
+
+// TranscriptParams returns the parameters of the watch page's "show
+// transcript" request, or "" when the page offers none.
+func TranscriptParams(watch any) string {
+	for _, ep := range jsonx.FindMaps(watch, "getTranscriptEndpoint") {
+		if p := jsonx.String(ep, "params"); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+// TranscriptSegments counts the lines in a get_transcript response (older
+// and newer layouts).
+func TranscriptSegments(data any) int {
+	n := len(jsonx.FindMaps(data, "transcriptSegmentRenderer"))
+	if n == 0 {
+		n = len(jsonx.FindMaps(data, "transcriptCueGroupRenderer"))
+	}
+	return n
+}
+
+// CaptionCues counts the cues in a timedtext response: JSON ("json3",
+// events with text segments) or XML (<text> or <p> elements).
+func CaptionCues(body []byte) int {
+	if d, err := jsonx.Decode(body); err == nil {
+		n := 0
+		for _, ev := range jsonx.Slice(d, "events") {
+			if len(jsonx.Slice(ev, "segs")) > 0 {
+				n++
+			}
+		}
+		return n
+	}
+	s := string(body)
+	if n := strings.Count(s, "<text"); n > 0 {
+		return n
+	}
+	return strings.Count(s, "<p ")
 }

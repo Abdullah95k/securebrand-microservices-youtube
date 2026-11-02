@@ -30,12 +30,16 @@ type FeedRecord struct {
 }
 
 // SightingRecord marks the first time a layer saw a new upload.
+// tabNewWithin is how recently a video found by a tab check must have been
+// published to count as a new upload.
+const tabNewWithin = 48 * time.Hour
+
 type SightingRecord struct {
 	At          time.Time `json:"at"`
 	ChannelHash string    `json:"channel_hash"`
 	VideoHash   string    `json:"video_hash"`
-	Layer       string    `json:"layer"` // rss or tab
-	Published   time.Time `json:"published"`
+	Layer       string    `json:"layer"`     // rss or tab
+	Published   time.Time `json:"published"` // feed time (rss) or the tab's relative time (tab, approximate)
 	DelaySec    float64   `json:"delay_sec"` // first seen − published (rss only)
 	// RSS stats freshness: views reported by the feed at first sighting.
 	FeedViews int64 `json:"feed_views"`
@@ -173,8 +177,14 @@ func checkTab(ctx context.Context, col *Collector, id string, st *detectState, l
 				continue
 			}
 			st.Seen[k] = true
-			if st.Primed[id] {
-				_ = col.Store.Append("detect_sightings", SightingRecord{At: col.Now(), ChannelHash: shortHash(id), VideoHash: shortHash(v.VideoID), Layer: "tab"})
+			// Only a recent upload is a new sighting. A tab check can reach
+			// videos it never listed before that are not new at all: once
+			// tabs read their second page (2 November 2026), thousands of
+			// older videos were counted as "first seen by tab check".
+			// Shorts carry no date on the tab, so they are left to RSS.
+			now := col.Now()
+			if st.Primed[id] && v.Published.OK && now.Sub(v.Published.At) <= tabNewWithin {
+				_ = col.Store.Append("detect_sightings", SightingRecord{At: now, ChannelHash: shortHash(id), VideoHash: shortHash(v.VideoID), Layer: "tab", Published: v.Published.At})
 			}
 		}
 	}

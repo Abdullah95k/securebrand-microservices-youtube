@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,8 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
 )
+
+var quietLog = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func TestChannelsAndHealthCommands(t *testing.T) {
 	pool := dbtest.New(t)
@@ -98,6 +102,42 @@ func TestKeywordsCommand(t *testing.T) {
 		t.Errorf("after set:\n%s", out.String())
 	}
 	if err := keywordsCmd(ctx, pool, &out, []string{"remove", id}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEraseAndExportCommands(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	key := filepath.Join(t.TempDir(), "privacy_key")
+	_ = os.WriteFile(key, []byte("test-secret-0123456789abcdef-0123456789"), 0o600)
+	t.Setenv(EnvPrivacyKeyFile, key)
+	if err := registry.List(ctx, pool, nil, "UCfakeADMIN0000000000002", registry.Input{Input: "UCfakeADMIN0000000000002"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = pool.Exec(ctx, `INSERT INTO videos (id, channel_id, kind, relevant) VALUES ('fakeXv1', 'UCfakeADMIN0000000000002', 'video', true)`)
+	_, _ = pool.Exec(ctx, `INSERT INTO comments (id, parent_kind, parent_id, channel_id, author_id, author_handle, text, text_hash, first_seen, last_seen)
+		VALUES ('fakeXc1', 'video', 'fakeXv1', 'UCfakeADMIN0000000000002', 'UCfakeADMINAUTHOR0000001', '@someone', 'hello', '\x00', now(), now())`)
+	var out strings.Builder
+	if err := eraseCmd(ctx, pool, quietLog, &out, []string{"-kind", "planet", "x"}); err == nil {
+		t.Error("an unknown kind must be refused")
+	}
+	if err := eraseCmd(ctx, pool, quietLog, &out, []string{"-kind", "comment", "-by", "ticket 9", "fakeXc1"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := erasuresCmd(ctx, pool, &out); err != nil || !strings.Contains(out.String(), "comment  pending  ticket 9") {
+		t.Errorf("erasures: %v\n%s", err, out.String())
+	}
+	file := filepath.Join(t.TempDir(), "export.jsonl")
+	if err := exportCmd(ctx, pool, quietLog, []string{"-pseudonymize", "-relevant", "-out", file}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(file)
+	if !strings.Contains(string(data), `"author_key":"`) || strings.Contains(string(data), "someone") || strings.Contains(string(data), "UCfakeADMINAUTHOR") {
+		t.Errorf("a pseudonymized export must carry keys, not identities:\n%s", data)
+	}
+	if err := privacyAuditCmd(ctx, pool, quietLog, &out); err != nil {
 		t.Fatal(err)
 	}
 }

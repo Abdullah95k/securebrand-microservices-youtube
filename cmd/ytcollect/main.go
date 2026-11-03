@@ -46,6 +46,10 @@ Usage: ytcollect <command> [flags]
   channels   add, import, list, set or unlist channels ("ytcollect channels" for details)
   keywords   import the seed list; add, list, set or remove keywords ("ytcollect keywords" for details)
   health     the job queue by kind and priority, and switched-off features
+  erase      record an erasure request (author, channel, video, comment or post); a worker carries it out
+  erasures   list erasure requests and their status
+  privacy-audit  check that nothing erased is in the database (the scheduler runs it daily)
+  export     write comments as JSON lines (-pseudonymize replaces author identities with keyed hashes)
   switch     turn a job kind (or "all") off or on: ytcollect switch comments off
   scheduler  run the maintenance loop (partitions, missing jobs); a long-running service
   worker     run the collector: lease jobs and read YouTube through the proxies; a long-running service
@@ -75,7 +79,7 @@ func main() {
 		if err == nil {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
 		}
-	case "channels", "keywords", "health", "switch", "scheduler", "worker", "websub":
+	case "channels", "keywords", "health", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export":
 		pool := mustDB(ctx, log)
 		defer pool.Close()
 		switch cmd {
@@ -93,6 +97,14 @@ func main() {
 			err = workerCmd(ctx, pool, log, args)
 		case "websub":
 			err = websubCmd(ctx, pool, log, args)
+		case "erase":
+			err = eraseCmd(ctx, pool, log, os.Stdout, args)
+		case "erasures":
+			err = erasuresCmd(ctx, pool, os.Stdout)
+		case "privacy-audit":
+			err = privacyAuditCmd(ctx, pool, log, os.Stdout)
+		case "export":
+			err = exportCmd(ctx, pool, log, args)
 		}
 	case "-h", "--help", "help":
 		fmt.Print(usage)

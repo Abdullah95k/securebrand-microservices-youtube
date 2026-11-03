@@ -17,7 +17,9 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/discovery"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/erasure"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
@@ -223,6 +225,26 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) err
 		}},
 		{name: "commenter graph", every: 24 * time.Hour, run: func() error {
 			_, err := discovery.CommenterGraph(ctx, pool)
+			return err
+		}},
+		{name: "privacy audit", every: 24 * time.Hour, run: func() error {
+			s, err := privacyService(ctx, pool, log)
+			if err != nil {
+				return err
+			}
+			res, err := s.Audit(ctx)
+			if err == nil {
+				log.Info("privacy audit done", "suppressed_found_and_erased", res.Total())
+			}
+			return err
+		}},
+		{name: "retention", every: 24 * time.Hour, run: func() error {
+			r, err := privacy.LoadRetention(ctx, pool)
+			if err != nil || r.Forever() && !r.RedactDeletedComments {
+				return err // everything is kept (the default)
+			}
+			out, err := erasure.ApplyRetention(ctx, pool, r, time.Now())
+			log.Info("retention settings applied", "rows", out)
 			return err
 		}},
 		{name: "tiers", every: 7 * 24 * time.Hour, run: func() error {

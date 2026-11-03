@@ -1,0 +1,77 @@
+package db_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db/dbtest"
+)
+
+func TestMigrateIsIdempotentAndCreatesPartitions(t *testing.T) {
+	pool := dbtest.New(t) // already migrated once
+	ctx := context.Background()
+	applied, err := db.Migrate(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applied) != 0 {
+		t.Errorf("second run applied %v", applied)
+	}
+	now := time.Now().UTC()
+	for _, p := range db.Partitioned {
+		for _, name := range []string{p.Table + "_default", db.PartitionName(p.Table, now), db.PartitionName(p.Table, now.AddDate(0, 3, 0))} {
+			var ok bool
+			if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, name).Scan(&ok); err != nil || !ok {
+				t.Errorf("partition %s missing (err %v)", name, err)
+			}
+		}
+	}
+}
+
+// TestNewPartitionTakesRowsFromDefault: a snapshot stored before its
+// month's partition existed lands in the default partition and moves into
+// the month's partition when that is created.
+func TestNewPartitionTakesRowsFromDefault(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	far := time.Date(2031, 5, 10, 12, 0, 0, 0, time.UTC)
+	if _, err := pool.Exec(ctx, `INSERT INTO video_snapshots (video_id, taken_at, views) VALUES ('fakeVID00001', $1, 7)`, far); err != nil {
+		t.Fatal(err)
+	}
+	count := func(table string) int {
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if count("video_snapshots_default") != 1 {
+		t.Fatal("the row should be in the default partition first")
+	}
+	if err := db.EnsurePartitions(ctx, pool, far, 0); err != nil {
+		t.Fatal(err)
+	}
+	if count("video_snapshots_default") != 0 || count(db.PartitionName("video_snapshots", far)) != 1 || count("video_snapshots") != 1 {
+		t.Error("the row should have moved into its month's partition")
+	}
+}
+
+func TestSettings(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	var v struct{ Speed float64 }
+	if ok, err := db.GetSetting(ctx, pool, "speed", &v); ok || err != nil {
+		t.Fatalf("unset setting: ok %v, err %v", ok, err)
+	}
+	if err := db.SetSetting(ctx, pool, "speed", map[string]any{"Speed": 0.5}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSetting(ctx, pool, "speed", map[string]any{"Speed": 0.75}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := db.GetSetting(ctx, pool, "speed", &v); !ok || err != nil || v.Speed != 0.75 {
+		t.Errorf("got %v (ok %v, err %v)", v, ok, err)
+	}
+}

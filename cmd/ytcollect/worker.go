@@ -142,7 +142,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	for k, h := range disc.Handlers() {
 		handlers[k] = h
 	}
-	er := &erasure.Service{Pool: pool, Keyer: keyer, Sup: sup, Fetch: fetch, Log: log, Media: store}
+	er := &erasure.Service{Pool: pool, Keyer: keyer, Sup: sup, Fetch: fetch, Log: log, Media: store, Webhooks: fileExists(webhooksPath())}
 	for k, h := range er.Handlers() {
 		handlers[k] = h
 	}

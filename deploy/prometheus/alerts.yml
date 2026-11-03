@@ -80,3 +80,14 @@ groups:
         for: 6h
         annotations:
           summary: "{{ $value }} image downloads are waiting"
+  - name: webhooks
+    rules:
+      - alert: WebhookDeadLetters
+        expr: yt_webhook_deliveries{status="dead"} > 0
+        annotations:
+          summary: "{{ $value }} webhook deliveries to {{ $labels.endpoint }} gave up; fix the receiver, then: ytcollect webhooks retry -endpoint {{ $labels.endpoint }}"
+      - alert: WebhookBacklog
+        expr: yt_webhook_oldest_pending_seconds > 3600
+        for: 15m
+        annotations:
+          summary: "Events for {{ $labels.endpoint }} have waited more than an hour: the receiver is failing or the scheduler is not running"

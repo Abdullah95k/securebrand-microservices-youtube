@@ -206,6 +206,15 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 	}
 	reg := metrics.New()
 	serveMetrics(ctx, *metricsAddr, reg, log)
+	// Outgoing webhooks: sent from here, every 10 seconds.
+	wh, err := dispatcher(pool, log)
+	if err != nil {
+		return fmt.Errorf("webhooks: %w", err)
+	}
+	if wh != nil {
+		log.Info("webhooks on", "endpoints", len(wh.Cfg.Endpoints))
+		go wh.Run(ctx, 10*time.Second)
+	}
 	type task struct {
 		name  string
 		every time.Duration

@@ -54,6 +54,7 @@ Usage: ytcollect <command> [flags]
   privacy-audit  check that nothing erased is in the database (the scheduler runs it daily)
   export     write comments as JSON lines (-pseudonymize replaces author identities with keyed hashes)
   archive    history older than 12 months in object storage: list, run, scrub, search, restore
+  webhooks   outgoing events: list deliveries, test an endpoint, retry dead deliveries
   switch     turn a job kind (or "all") off or on: ytcollect switch comments off
   scheduler  run the maintenance loop (partitions, missing jobs); a long-running service
   worker     run the collector: lease jobs and read YouTube through the proxies; a long-running service
@@ -83,7 +84,7 @@ func main() {
 		if err == nil {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
 		}
-	case "channels", "keywords", "health", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive":
+	case "channels", "keywords", "health", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks":
 		pool := mustDB(ctx, log)
 		defer pool.Close()
 		switch cmd {
@@ -111,6 +112,8 @@ func main() {
 			err = exportCmd(ctx, pool, log, args)
 		case "archive":
 			err = archiveCmd(ctx, pool, log, os.Stdout, args)
+		case "webhooks":
+			err = webhooksCmd(ctx, pool, log, os.Stdout, args)
 		}
 	case "-h", "--help", "help":
 		fmt.Print(usage)

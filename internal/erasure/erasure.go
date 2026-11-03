@@ -29,6 +29,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/webhook"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
 )
 
@@ -43,6 +44,9 @@ type Service struct {
 	Fetch *phase0.Collector // resolves handles and URLs; nil: IDs only
 	Log   *slog.Logger
 	Media media.Store // stored images; nil: no storage configured
+	// Webhooks: tell the receiving systems about each erasure (an
+	// "erasure" event; its ID is removed once delivered).
+	Webhooks bool
 }
 
 // Handlers maps the erasure job kind to its handler.
@@ -155,6 +159,12 @@ func (s *Service) run(ctx context.Context, j queue.Job) (time.Time, error) {
 	if err := s.Erase(ctx, reqID, kind, id); err != nil {
 		return time.Time{}, err
 	}
+	if s.Webhooks {
+		if err := webhook.Emit(ctx, s.Pool, webhook.Erasure, "erasure:"+j.EntityID, "",
+			map[string]any{"kind": kind, "id": id, "request_id": reqID}); err != nil {
+			return time.Time{}, err
+		}
+	}
 	if _, err := s.Pool.Exec(ctx, `UPDATE erasure_requests SET status = 'done', done_at = now(), target = NULL, error = NULL,
 		target_key = $2 WHERE id = $1`, j.EntityID, s.Keyer.Key(kind, id)); err != nil {
 		return time.Time{}, err
@@ -201,6 +211,7 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 			{"playlists", `DELETE FROM playlists WHERE channel_id = $1`},
 			{"search hits", `DELETE FROM search_hits WHERE channel_id = $1`},
 			{"media", `DELETE FROM media WHERE kind IN ('avatar', 'banner', 'thumb') AND (entity_id = $1 OR channel_id = $1)`},
+			{"webhook events", `DELETE FROM webhook_events WHERE type <> 'erasure' AND (channel_id = $1 OR entity_id = $1)`},
 			{"media jobs", `DELETE FROM schedule WHERE kind = 'media' AND (entity_id IN ('avatar:' || $1, 'banner:' || $1)
 				OR entity_id IN (SELECT 'thumb:' || id FROM videos WHERE channel_id = $1))`},
 			{"videos", `DELETE FROM videos WHERE channel_id = $1`},
@@ -223,6 +234,7 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 			{"playlist items", `DELETE FROM playlist_items WHERE video_id = $1`},
 			{"search hits", `DELETE FROM search_hits WHERE video_id = $1`},
 			{"media", `DELETE FROM media WHERE kind = 'thumb' AND entity_id = $1`},
+			{"webhook events", `DELETE FROM webhook_events WHERE type <> 'erasure' AND entity_id = $1`},
 			{"jobs", `DELETE FROM schedule WHERE entity_id = $1 OR kind = 'media' AND entity_id = 'thumb:' || $1`},
 			{"video", `DELETE FROM videos WHERE id = $1`},
 		}
@@ -237,6 +249,7 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 			{"comments", `DELETE FROM comments WHERE parent_kind = 'post' AND parent_id = $1`},
 			{"post snapshots", `DELETE FROM post_snapshots WHERE post_id = $1`},
 			{"post changes", `DELETE FROM video_changes WHERE video_id = $1`},
+			{"webhook events", `DELETE FROM webhook_events WHERE type <> 'erasure' AND entity_id = $1`},
 			{"jobs", `DELETE FROM schedule WHERE entity_id = $1`},
 			{"post", `DELETE FROM posts WHERE id = $1`},
 		}
@@ -312,6 +325,9 @@ func (s *Service) Audit(ctx context.Context) (AuditResult, error) {
 		{privacy.Channel, `SELECT entity_id FROM media WHERE kind IN ('avatar', 'banner')
 			UNION SELECT channel_id FROM media WHERE channel_id IS NOT NULL`},
 		{privacy.Author, `SELECT entity_id FROM media WHERE kind = 'author_avatar'`},
+		{privacy.Video, `SELECT entity_id FROM webhook_events WHERE type = 'video.relevant'`},
+		{privacy.Post, `SELECT entity_id FROM webhook_events WHERE type = 'post.relevant'`},
+		{privacy.Channel, `SELECT channel_id FROM webhook_events WHERE channel_id IS NOT NULL`},
 	}
 	for _, c := range checks {
 		rows, err := s.Pool.Query(ctx, c.sql)

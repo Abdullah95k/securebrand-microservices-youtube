@@ -9,11 +9,20 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/suggest"
 )
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
 
 const keywordsUsage = `Usage:
   ytcollect keywords import-seed            add or update the built-in place names
@@ -23,6 +32,10 @@ const keywordsUsage = `Usage:
   ytcollect keywords set [-active=true|false] [-ambiguous=true|false] [-search=true|false]
                          [-variants "spelling|spelling"] <id>
   ytcollect keywords remove <id>             (your own keywords; seed keywords are switched off with set)
+  ytcollect keywords suggestions             what the system suggests (mined daily), best first
+  ytcollect keywords accept <suggestion id>  turn a suggestion into a keyword
+  ytcollect keywords reject <suggestion id>  reject it for good (and switch it off if it was activated)
+  ytcollect keywords precision               how often each keyword's matches are confirmed; low ones are flagged
 
 Your own keywords are stored only in the database, never in the repo.
 `
@@ -111,6 +124,53 @@ func keywordsCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer, args []
 			return errors.New(keywordsUsage)
 		}
 		return kwstore.Remove(ctx, pool, id)
+	case "suggestions":
+		rows, err := pool.Query(ctx, `SELECT id, term, score, status, evidence->>'relevant', evidence->>'all', evidence->>'trending'
+			FROM keyword_suggestions ORDER BY status = 'new' DESC, score DESC LIMIT 100`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "ID	TERM	SCORE	STATUS	RELEVANT ITEMS	ALL ITEMS	TRENDING")
+		for rows.Next() {
+			var id int64
+			var term, status string
+			var score float32
+			var rel, all, trend *string
+			if err := rows.Scan(&id, &term, &score, &status, &rel, &all, &trend); err != nil {
+				return err
+			}
+			fmt.Fprintf(tw, "%d\t%s\t%.2f\t%s\t%s\t%s\t%s\n", id, term, score, status, deref(rel), deref(all), deref(trend))
+		}
+		return tw.Flush()
+	case "accept", "reject":
+		if fs.NArg() != 1 {
+			return errors.New(keywordsUsage)
+		}
+		id, err := strconv.ParseInt(fs.Arg(0), 10, 64)
+		if err != nil {
+			return errors.New(keywordsUsage)
+		}
+		if sub == "accept" {
+			return suggest.Accept(ctx, pool, id)
+		}
+		return suggest.Reject(ctx, pool, id)
+	case "precision":
+		ps, err := suggest.MeasurePrecision(ctx, pool, time.Now())
+		if err != nil {
+			return err
+		}
+		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "KEYWORD\tMATCHES (30 DAYS)\tCONFIRMED\tSHARE\tREVIEW")
+		for _, p := range ps {
+			flag := ""
+			if p.Low {
+				flag = "low precision: consider marking it ambiguous"
+			}
+			fmt.Fprintf(tw, "%s\t%d\t%d\t%.0f%%\t%s\n", p.Label, p.Matches, p.Confirmed, p.Share*100, flag)
+		}
+		return tw.Flush()
 	}
 	return errors.New(keywordsUsage)
 }

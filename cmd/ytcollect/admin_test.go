@@ -61,3 +61,43 @@ func TestChannelsAndHealthCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestKeywordsCommand(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	var out strings.Builder
+	if err := keywordsCmd(ctx, pool, &out, []string{"import-seed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := keywordsCmd(ctx, pool, &out, []string{"add", "-kind", "brand", "-variants", "Zqbrand|زيكيو", "Zqbrand"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := keywordsCmd(ctx, pool, &out, []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	line := func() []string {
+		for _, l := range strings.Split(out.String(), "\n") {
+			if f := strings.Fields(l); len(f) > 1 && f[1] == "Zqbrand" {
+				return f
+			}
+		}
+		return nil
+	}
+	f := line()
+	if len(f) < 9 || f[2] != "brand" || f[3] != "admin" || f[4] != "true" || f[6] != "false" || !strings.Contains(out.String(), "Zqbrand | زيكيو") {
+		t.Fatalf("list output:\n%s", out.String())
+	}
+	id := f[0]
+	if err := keywordsCmd(ctx, pool, &out, []string{"set", "-active=false", id}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	_ = keywordsCmd(ctx, pool, &out, []string{"list"})
+	if f := line(); len(f) < 5 || f[4] != "false" {
+		t.Errorf("after set:\n%s", out.String())
+	}
+	if err := keywordsCmd(ctx, pool, &out, []string{"remove", id}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -47,6 +47,7 @@ and YouTube's internal website endpoints are undocumented. Phase 0 (§9) confirm
 | D23 | 1 Nov 2026 | Push-notification subdomain: later. Until then, new uploads are detected by RSS and channel-tab checks |
 | D24 | 1 Nov 2026 | No live chat |
 | D25 | 2 Nov 2026 | E11: the 300-title sample is labelled by AI (only the public titles are sent to the AI provider), with an optional hand spot check of about 30 titles to measure how far to trust the AI |
+| D26 | 3 Nov 2026 | **All data is kept forever**, Phase 0 included: no time limits. Two things still remove data: an erasure request (with its suppression entry), and YouTube's API rule that data from the official API may be kept at most 30 days (the same items scraped from the website are kept) |
 
 Your non-negotiable rules still apply:
 
@@ -474,7 +475,7 @@ You decide when to buy more; the system never stops covering.
 | # | Item | Needed for | Notes |
 |---|---|---|---|
 | 1 | **Google Cloud project** + **YouTube Data API v3** + **API key** (restricted to that API and the server IP) | API search, Phase 0 accuracy check | Free. Steps in §9.3 |
-| 2 | **Phase 0 server:** one DigitalOcean droplet in your existing account | Phase 0 (2–3 weeks) | 4 vCPU / 8 GB / 160 GB, about $48–56/month; deleted after Phase 0 |
+| 2 | **Phase 0 server:** one DigitalOcean droplet in your existing account | Phase 0 (2–3 weeks) | 4 vCPU / 8 GB / 160 GB, about $48–56/month; shut down after Phase 0, once its data is copied to production (D26) |
 | 3 | **Production servers:** Hetzner dedicated (§7.2) | Everything after Phase 0 | Start with one server; add more as coverage grows |
 | 4 | **Proxies:** static datacenter IPv4 (main pool) + a smaller set of ISP IPs, from 2–3 providers, many subnets, outside the EU | Scraping | Monthly plans, bought in batches as coverage grows (§7.3) |
 | 5 | Optional **residential allowance** | Only if Phase 0 shows an endpoint fails on both datacenter and ISP IPs | Off by default; consent-based sourcing only; capped |
@@ -888,8 +889,8 @@ Everything stays within §3.
 - the `skeleton` scrubber;
 - a report template.
 
-Raw data stays only on your server, in `/var/lib/securebrand-youtube/phase0`, and is deleted after 14 days. The report contains only
-aggregates.
+Raw data stays only on your server, in `/var/lib/securebrand-youtube/phase0`, and is kept (D26; official-API data 30 days only). The
+report contains only aggregates.
 
 ### Experiments
 

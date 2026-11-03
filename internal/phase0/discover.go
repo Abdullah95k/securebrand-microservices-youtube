@@ -20,7 +20,9 @@ import (
 // query goes before results run out, and which channels each engine finds
 // that are not in the list yet. The found videos (ID, channel, public title)
 // are kept for the channel census (E10) and the keyword-matching check
-// (E11), in the data folder only, and deleted with the rest after 14 days.
+// (E11), in the data folder only. Those the official API returned are
+// removed after 30 days (YouTube's API rule, PruneAPIData); the website's
+// are kept.
 // Search terms are stored as hashes: your own keywords may be sensitive.
 
 // DiscoverOptions configures one discovery run.

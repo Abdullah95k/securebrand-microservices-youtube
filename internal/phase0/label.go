@@ -152,7 +152,7 @@ func Label(ctx context.Context, s *Store, in io.Reader, out io.Writer, o LabelOp
 		reportDisagreements(out, sample, ai, mine)
 	}
 	for _, it := range sample {
-		if done[it.Index] {
+		if done[it.Index] || it.Title == "" { // a blank title was official-API data, removed after 30 days
 			continue
 		}
 		if ctx.Err() != nil {

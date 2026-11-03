@@ -81,6 +81,23 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 		{"yt_keywords_low_precision", "Keywords flagged for low precision today.", `SELECT count(*) FROM keyword_stats
 			WHERE day = $1::date AND matches >= 20 AND confirmed::float / matches < 0.3`, []any{now.UTC().Format("2006-01-02")}, nil},
 		{"yt_db_size_bytes", "Database size.", `SELECT pg_database_size(current_database())`, nil, nil},
+		{"yt_media_bytes", "Stored images, by kind.", `SELECT kind, COALESCE(sum(bytes), 0) FROM media GROUP BY kind`, nil, []string{"kind"}},
+		{"yt_media_jobs_due", "Image downloads waiting.", `SELECT count(*) FROM schedule WHERE kind = 'media' AND due_at <= now()`, nil, nil},
+		{"yt_archive_bytes", "Archive size (compressed), by table.", `SELECT table_name, COALESCE(sum(bytes), 0) FROM archive_index GROUP BY table_name`, nil, []string{"table"}},
+		{"yt_archive_rows", "Archived rows, by table.", `SELECT table_name, COALESCE(sum(rows), 0) FROM archive_months GROUP BY table_name`, nil, []string{"table"}},
+		{"yt_archive_unscrubbed_seconds", "Age of the oldest erasure not yet applied to the archive (0: none).",
+			`SELECT COALESCE(EXTRACT(EPOCH FROM now() - min(s.created_at)), 0) FROM suppression_list s
+			WHERE EXISTS (SELECT 1 FROM archive_index a WHERE a.scrubbed_at <= s.created_at)`, nil, nil},
+		{"yt_partition_oldest_age_days", "Age of the oldest month still in Postgres, by table (archived after 12 months).",
+			`SELECT p.relname, EXTRACT(EPOCH FROM now() - to_date(substring(c.relname from '_y(\d{4}m\d{2})$'), 'YYYY"m"MM')) / 86400
+			FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent
+			JOIN pg_namespace n ON n.oid = p.relnamespace
+			WHERE n.nspname = current_schema() AND c.relname ~ '_y\d{4}m\d{2}$'
+			AND p.relname IN ('channel_snapshots', 'video_snapshots', 'post_snapshots', 'comment_versions', 'author_profiles')
+			AND to_date(substring(c.relname from '_y(\d{4}m\d{2})$'), 'YYYY"m"MM') = (
+				SELECT min(to_date(substring(c2.relname from '_y(\d{4}m\d{2})$'), 'YYYY"m"MM'))
+				FROM pg_inherits i2 JOIN pg_class c2 ON c2.oid = i2.inhrelid
+				WHERE i2.inhparent = p.oid AND c2.relname ~ '_y\d{4}m\d{2}$')`, nil, []string{"table"}},
 		{"yt_proxies_quarantined", "Proxy IPs in quarantine (all workers).", `SELECT count(*) FROM proxy_health WHERE state = 'quarantined'
 			AND updated_at >= now() - interval '10 minutes'`, nil, nil},
 		{"yt_proxies_cooling", "Proxy IPs resting after a block (all workers).", `SELECT count(*) FROM proxy_health WHERE cooldown_until > now()

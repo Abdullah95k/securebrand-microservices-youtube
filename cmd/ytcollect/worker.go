@@ -24,6 +24,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fill"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/metrics"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/monitor"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
@@ -110,7 +111,11 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	fetch := &phase0.Collector{Client: innertube.New(innertube.Options{Pool: pp}), Store: debug, Now: time.Now, Log: log}
 	rec := &fill.Recorder{}
 	reg := metrics.New()
-	wr := &writer.Writer{Pool: pool, Sup: sup, KW: live, Fill: rec}
+	store, err := openStorage(log)
+	if err != nil {
+		return err
+	}
+	wr := &writer.Writer{Pool: pool, Sup: sup, KW: live, Fill: rec, Media: store != nil}
 	stretch := &capacity.Stretcher{Q: pool}
 	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer, Write: wr, Stretch: stretch.Value}
 	handlers := svc.Handlers()
@@ -137,13 +142,19 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	for k, h := range disc.Handlers() {
 		handlers[k] = h
 	}
-	er := &erasure.Service{Pool: pool, Keyer: keyer, Sup: sup, Fetch: fetch, Log: log}
+	er := &erasure.Service{Pool: pool, Keyer: keyer, Sup: sup, Fetch: fetch, Log: log, Media: store}
 	for k, h := range er.Handlers() {
 		handlers[k] = h
 	}
-	en := &enrich.Enricher{Pool: pool, Fetch: fetch, Sup: sup, Log: log}
+	en := &enrich.Enricher{Pool: pool, Fetch: fetch, Sup: sup, Log: log, Media: store != nil}
 	for k, h := range en.Handlers() {
 		handlers[k] = h
+	}
+	if store != nil {
+		ms := &media.Service{Pool: pool, Images: fetch.Client, Store: store, Sup: sup, Log: log}
+		for k, h := range ms.Handlers() {
+			handlers[k] = h
+		}
 	}
 	wsCfg, err := webSubConfig()
 	if err != nil {
@@ -261,7 +272,7 @@ func websubCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	}
 	go live.Run(ctx, pool, time.Minute, func(err error) { log.Warn("refreshing keywords failed", "err", err) })
 	rc := &websub.Receiver{Pool: pool, Cfg: cfg, Log: log,
-		RSS: &detect.RSS{Pool: pool, Write: &writer.Writer{Pool: pool, Sup: sup, KW: live}, Log: log}}
+		RSS: &detect.RSS{Pool: pool, Write: &writer.Writer{Pool: pool, Sup: sup, KW: live, Media: fileExists(storagePath())}, Log: log}}
 	sub := &websub.Subscriber{Pool: pool, Cfg: cfg, Log: log}
 	go func() {
 		t := time.NewTicker(time.Hour)

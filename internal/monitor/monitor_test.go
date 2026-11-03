@@ -38,6 +38,11 @@ func TestDatabaseMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = db.SetSetting(ctx, pool, monitor.AuditKey, monitor.AuditResult{Violations: 0, At: now})
+	if err := db.EnsurePartitions(ctx, pool, now, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = pool.Exec(ctx, `INSERT INTO archive_index (table_name, month, part, object_key, rows, bytes, sha256, scrubbed_at)
+		VALUES ('comment_versions', '2025-01-01', 1, 'k', 10, 1234, 'x', now())`)
 	reg := metrics.New()
 	if err := monitor.DB(ctx, pool, reg, now); err != nil {
 		t.Fatal(err)
@@ -56,6 +61,9 @@ func TestDatabaseMetrics(t *testing.T) {
 		"yt_capacity_supply_per_hour 1440",
 		"yt_suppression_violations 0",
 		"yt_db_size_bytes",
+		`yt_archive_bytes{table="comment_versions"} 1234`,
+		"yt_archive_unscrubbed_seconds 0",
+		`yt_partition_oldest_age_days{table="channel_snapshots"}`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics miss %q", want)

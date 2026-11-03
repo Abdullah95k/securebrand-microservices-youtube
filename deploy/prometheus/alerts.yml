@@ -64,3 +64,19 @@ groups:
         expr: yt_suppression_violations > 0
         annotations:
           summary: "Erased items were found in the database (they were erased again); find out how they came back"
+      - alert: ArchiveErasureOverdue
+        expr: yt_archive_unscrubbed_seconds > 172800
+        annotations:
+          summary: "An erasure has not reached the archive files for 48 hours: check the scheduler's archive scrub"
+  - name: storage
+    rules:
+      - alert: ArchiverBehind
+        expr: max(yt_partition_oldest_age_days) > 430
+        for: 2d
+        annotations:
+          summary: "A month older than 14 months is still in Postgres: the archiver is not running (is object storage configured?)"
+      - alert: MediaBacklog
+        expr: yt_media_jobs_due > 50000
+        for: 6h
+        annotations:
+          summary: "{{ $value }} image downloads are waiting"

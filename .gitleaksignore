@@ -4,3 +4,8 @@
 # An invented test token in a skeleton test ("Eg0S…"), not a credential.
 # The test now builds the value at run time; this line covers the old commit.
 5987e353b5ea1dbf64ed14708e0900afc87f6195:internal/skeleton/skeleton_test.go:generic-api-key:13
+#
+# Amazon's published Signature V4 example secret key (the "…EXAMPLEKEY" value
+# from the AWS documentation) in the S3 signer test, not a credential. The
+# test now builds it from short pieces; this line covers the old commit.
+ba1a5f0bb58e5c0025254bfb6b235aef16a21c04:internal/media/store_test.go:generic-api-key:20

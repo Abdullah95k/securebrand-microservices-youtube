@@ -17,6 +17,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/comments"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/detect"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/discovery"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/erasure"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/feeds"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
@@ -125,6 +126,10 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	}
 	disc := &discovery.Runner{Pool: pool, Fetch: fetch, API: api, Write: wr, Sup: sup, Log: log}
 	for k, h := range disc.Handlers() {
+		handlers[k] = h
+	}
+	er := &erasure.Service{Pool: pool, Keyer: keyer, Sup: sup, Fetch: fetch, Log: log}
+	for k, h := range er.Handlers() {
 		handlers[k] = h
 	}
 	wsCfg, err := webSubConfig()

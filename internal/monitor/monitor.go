@@ -81,6 +81,11 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 		{"yt_keywords_low_precision", "Keywords flagged for low precision today.", `SELECT count(*) FROM keyword_stats
 			WHERE day = $1::date AND matches >= 20 AND confirmed::float / matches < 0.3`, []any{now.UTC().Format("2006-01-02")}, nil},
 		{"yt_db_size_bytes", "Database size.", `SELECT pg_database_size(current_database())`, nil, nil},
+		{"yt_webhook_deliveries", "Webhook deliveries by endpoint and status (dead: gave up).",
+			`SELECT endpoint, status, count(*) FROM webhook_deliveries GROUP BY 1, 2`, nil, []string{"endpoint", "status"}},
+		{"yt_webhook_oldest_pending_seconds", "Age of the oldest event still waiting to be delivered, by endpoint.",
+			`SELECT dl.endpoint, EXTRACT(EPOCH FROM now() - min(ev.created_at)) FROM webhook_deliveries dl
+			JOIN webhook_events ev ON ev.id = dl.event_id WHERE dl.status = 'pending' GROUP BY 1`, nil, []string{"endpoint"}},
 		{"yt_media_bytes", "Stored images, by kind.", `SELECT kind, COALESCE(sum(bytes), 0) FROM media GROUP BY kind`, nil, []string{"kind"}},
 		{"yt_media_jobs_due", "Image downloads waiting.", `SELECT count(*) FROM schedule WHERE kind = 'media' AND due_at <= now()`, nil, nil},
 		{"yt_archive_bytes", "Archive size (compressed), by table.", `SELECT table_name, COALESCE(sum(bytes), 0) FROM archive_index GROUP BY table_name`, nil, []string{"table"}},

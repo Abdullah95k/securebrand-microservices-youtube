@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/collect"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/comments"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/detect"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/feeds"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
@@ -66,6 +67,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	interval := fs.Duration("interval", 4*time.Second, "minimum gap between requests on one proxy IP (Phase 0 E1 measures the safe value)")
 	workers := fs.Int("workers", 10, "jobs at the same time")
 	noPlayer := fs.Bool("no-player", false, "skip the player endpoint (tags, category)")
+	commentCap := fs.Int("comment-cap", comments.DefaultCap, "most comments the first read of a video takes; capped videos are flagged partial")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -100,6 +102,10 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	handlers := svc.Handlers()
 	rss := &detect.RSS{Pool: pool, Feeds: feeds.NewFetcher(fetch.Client), Write: wr, Log: log}
 	for k, h := range rss.Handlers() {
+		handlers[k] = h
+	}
+	eng := &comments.Engine{Pool: pool, Client: fetch.Client, Sup: sup, Log: log, Cap: *commentCap}
+	for k, h := range eng.Handlers() {
 		handlers[k] = h
 	}
 	wsCfg, err := webSubConfig()

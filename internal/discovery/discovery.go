@@ -307,7 +307,7 @@ func (r *Runner) record(ctx context.Context, engine string, keywordID int64, hs 
 			src := engine + "_search"
 			if _, err := r.Pool.Exec(ctx, `INSERT INTO candidates (channel_id, sources) VALUES ($1, ARRAY[$2])
 				ON CONFLICT (channel_id) DO UPDATE SET hits = candidates.hits + 1, last_found = now(),
-					sources = CASE WHEN $2 = ANY(candidates.sources) THEN candidates.sources ELSE candidates.sources || $2 END`,
+					sources = CASE WHEN $2 = ANY(candidates.sources) THEN candidates.sources ELSE array_append(candidates.sources, $2::text) END`,
 				h.channelID, src); err != nil {
 				return fresh, err
 			}

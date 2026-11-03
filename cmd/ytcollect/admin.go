@@ -24,6 +24,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/suggest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
 )
 
@@ -255,6 +256,21 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) err
 				log.Info("capacity plan", "supply_per_hour", int(r.SupplyPerHour), "demand_per_hour", int(r.DemandPerHour),
 					"stretch", r.Stretch, "recommended_ips", r.RecommendedIPs, "debt_hours", r.DebtHours)
 			}
+			return err
+		}},
+		{name: "keyword suggestions", every: 24 * time.Hour, run: func() error {
+			n, activated, err := suggest.Run(ctx, pool, time.Now())
+			if err != nil {
+				return err
+			}
+			ps, err := suggest.MeasurePrecision(ctx, pool, time.Now())
+			low := 0
+			for _, p := range ps {
+				if p.Low {
+					low++
+				}
+			}
+			log.Info("keyword suggestions and precision", "suggested", n, "activated", activated, "low_precision_keywords", low)
 			return err
 		}},
 		{name: "enrichment order", every: 24 * time.Hour, run: func() error {

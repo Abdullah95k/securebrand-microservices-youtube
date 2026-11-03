@@ -111,6 +111,7 @@ type Keyword struct {
 	Group     string
 	Note      string
 	Variants  []string
+	ExpiresAt *time.Time
 }
 
 // New is a keyword you add.
@@ -122,6 +123,8 @@ type New struct {
 	Ambiguous bool
 	NoSearch  bool // match only, never searched
 	Note      string
+	Source    string     // "admin" (default) or "suggestion"
+	ExpiresAt *time.Time // trending suggestions expire after 7 days
 }
 
 // Add stores a new keyword and returns its ID.
@@ -138,9 +141,13 @@ func Add(ctx context.Context, q db.Querier, k New) (int64, error) {
 	}
 	var id int64
 	err := pgx.BeginFunc(ctx, txStarter{q}, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `INSERT INTO keywords (label, kind, ambiguous, searched, source, note)
-			VALUES ($1, $2, $3, $4, 'admin', NULLIF($5, '')) RETURNING id`,
-			k.Label, k.Kind, k.Ambiguous, !k.NoSearch, k.Note).Scan(&id); err != nil {
+		src := k.Source
+		if src == "" {
+			src = "admin"
+		}
+		if err := tx.QueryRow(ctx, `INSERT INTO keywords (label, kind, ambiguous, searched, source, note, expires_at)
+			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7) RETURNING id`,
+			k.Label, k.Kind, k.Ambiguous, !k.NoSearch, src, k.Note, k.ExpiresAt).Scan(&id); err != nil {
 			return err
 		}
 		return setVariants(ctx, tx, id, k.Variants, k.Lang)
@@ -202,7 +209,7 @@ func Remove(ctx context.Context, q db.Querier, id int64) error {
 func List(ctx context.Context, q db.Querier) ([]Keyword, error) {
 	rows, err := q.Query(ctx, `SELECT k.id, k.label, k.kind, k.ambiguous, k.active, k.searched, k.source,
 			COALESCE(k.grp, ''), COALESCE(k.note, ''),
-			COALESCE(array_agg(v.variant ORDER BY v.variant) FILTER (WHERE v.variant IS NOT NULL), '{}')
+			COALESCE(array_agg(v.variant ORDER BY v.variant) FILTER (WHERE v.variant IS NOT NULL), '{}'), k.expires_at
 		FROM keywords k LEFT JOIN keyword_variants v ON v.keyword_id = k.id
 		GROUP BY k.id ORDER BY k.source DESC, k.kind, k.label`)
 	if err != nil {
@@ -210,7 +217,7 @@ func List(ctx context.Context, q db.Querier) ([]Keyword, error) {
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Keyword, error) {
 		var k Keyword
-		err := r.Scan(&k.ID, &k.Label, &k.Kind, &k.Ambiguous, &k.Active, &k.Searched, &k.Source, &k.Group, &k.Note, &k.Variants)
+		err := r.Scan(&k.ID, &k.Label, &k.Kind, &k.Ambiguous, &k.Active, &k.Searched, &k.Source, &k.Group, &k.Note, &k.Variants, &k.ExpiresAt)
 		return k, err
 	})
 }
@@ -238,7 +245,7 @@ func NewMatcher(kws []Keyword) *Matcher {
 	var in []keywords.Keyword
 	mt := &Matcher{ambiguous: map[string]bool{}, labels: map[string]string{}}
 	for _, k := range kws {
-		if !k.Active {
+		if !k.Active || k.ExpiresAt != nil && k.ExpiresAt.Before(time.Now()) {
 			continue
 		}
 		id := MatchID(k)

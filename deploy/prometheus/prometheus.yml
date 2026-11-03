@@ -1,0 +1,19 @@
+# Prometheus for the SecureBrand YouTube collector (plan §8.13).
+# The services expose /metrics: workers on :9101, the scheduler on :9102.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 1m
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: ytcollect-worker
+    static_configs:
+      - targets: ["worker:9101"]
+  - job_name: ytcollect-scheduler
+    static_configs:
+      - targets: ["scheduler:9102"]
+
+# Alerts are delivered by Alertmanager to the receiver you choose (D20:
+# webhooks, designed later). Add an "alerting:" block here when it exists.

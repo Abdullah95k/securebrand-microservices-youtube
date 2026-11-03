@@ -20,6 +20,8 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/discovery"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/enrich"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/erasure"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/metrics"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/monitor"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
@@ -196,7 +198,14 @@ func switchCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer, args []st
 // official-API hit purge (daily), missing recurring jobs and the search
 // rotation (hourly), the commenter graph (daily) and tier recompute
 // (weekly).
-func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {
+func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []string) error {
+	fs := flag.NewFlagSet("scheduler", flag.ContinueOnError)
+	metricsAddr := fs.String("metrics-addr", ":9102", "where Prometheus reads the system metrics (empty: off)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	reg := metrics.New()
+	serveMetrics(ctx, *metricsAddr, reg, log)
 	type task struct {
 		name  string
 		every time.Duration
@@ -204,6 +213,7 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) err
 		last  time.Time
 	}
 	tasks := []*task{
+		{name: "metrics", every: time.Minute, run: func() error { return monitor.DB(ctx, pool, reg, time.Now()) }},
 		{name: "partitions", every: 24 * time.Hour, run: func() error { return db.EnsurePartitions(ctx, pool, time.Now(), 3) }},
 		{name: "rearm", every: time.Hour, run: func() error {
 			n, err := registry.Rearm(ctx, pool)
@@ -236,10 +246,11 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) err
 				return err
 			}
 			res, err := s.Audit(ctx)
-			if err == nil {
-				log.Info("privacy audit done", "suppressed_found_and_erased", res.Total())
+			if err != nil {
+				return err
 			}
-			return err
+			log.Info("privacy audit done", "suppressed_found_and_erased", res.Total())
+			return db.SetSetting(ctx, pool, monitor.AuditKey, monitor.AuditResult{Violations: res.Total(), At: time.Now()})
 		}},
 		{name: "retention", every: 24 * time.Hour, run: func() error {
 			r, err := privacy.LoadRetention(ctx, pool)

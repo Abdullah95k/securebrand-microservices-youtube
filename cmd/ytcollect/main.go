@@ -92,7 +92,7 @@ func main() {
 		case "switch":
 			err = switchCmd(ctx, pool, os.Stdout, args)
 		case "scheduler":
-			err = schedulerCmd(ctx, pool, log)
+			err = schedulerCmd(ctx, pool, log, args)
 		case "worker":
 			err = workerCmd(ctx, pool, log, args)
 		case "websub":

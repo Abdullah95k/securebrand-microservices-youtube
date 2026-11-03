@@ -1,0 +1,66 @@
+# Alerts from plan §8.13. Labels carry job kinds, tiers and opaque proxy
+# IDs only: never names, comment text or credentials.
+groups:
+  - name: scraping
+    rules:
+      - alert: PoolBrakeEngaged
+        expr: min(yt_pool_speed) < 1
+        for: 10m
+        annotations:
+          summary: "The proxy pool slowed down: more than 20% of IPs are blocked"
+      - alert: ProxyQuarantined
+        expr: yt_proxies_quarantined > 0
+        for: 15m
+        annotations:
+          summary: "{{ $value }} proxy IP(s) in quarantine"
+      - alert: FillRateDrop
+        expr: (yt_fill_rate < 0.7 * yt_fill_rate_baseline) and yt_fill_rate_baseline > 0.5
+        for: 30m
+        annotations:
+          summary: "{{ $labels.endpoint }}.{{ $labels.field }} is present far less often than usual: YouTube may have changed the page"
+      - alert: ParseFailureSpike
+        expr: yt_parse_failures_24h > 100
+        for: 15m
+        annotations:
+          summary: "{{ $value }} pages could not be parsed in 24 hours; skeletons are in the debug folder"
+      - alert: CanaryFailing
+        expr: yt_canary_targets > 0 and yt_canary_channels_ok == 0
+        for: 30m
+        annotations:
+          summary: "No canary channel could be read and parsed"
+      - alert: MonitorStale
+        expr: time() - yt_monitor_timestamp_seconds > 600
+        annotations:
+          summary: "System metrics are not being refreshed (is the scheduler running?)"
+  - name: freshness
+    rules:
+      - alert: FreshnessDebtGrowing
+        expr: delta(sum(yt_freshness_debt_hours)[24h:1h]) > 0 and sum(yt_freshness_debt_hours) > 100
+        for: 1h
+        annotations:
+          summary: "Overdue work has grown for 24 hours; capacity recommends {{ with query \"yt_capacity_recommended_ips\" }}{{ . | first | value }}{{ end }} IPs"
+      - alert: CommentCompletenessLow
+        expr: yt_comments_complete_pct < 90
+        for: 6h
+        annotations:
+          summary: "Comments collected are under 90% of the displayed counts"
+      - alert: WebSubRenewalsFailing
+        expr: yt_queue_failing{kind="websub"} > 0
+        for: 1h
+        annotations:
+          summary: "Push subscriptions are failing to renew; feeds and tab checks still find uploads"
+      - alert: APIQuotaExhausted
+        expr: yt_api_quota_cap_units > 0 and yt_api_quota_used_units >= 0.95 * yt_api_quota_cap_units
+        for: 30m
+        annotations:
+          summary: "The official API quota is almost used up for today (resets at midnight Pacific time)"
+  - name: privacy
+    rules:
+      - alert: ErasureRequestOverdue
+        expr: yt_erasure_oldest_pending_seconds > 172800
+        annotations:
+          summary: "An erasure request has waited more than 48 hours (the plan allows 72)"
+      - alert: SuppressionViolation
+        expr: yt_suppression_violations > 0
+        annotations:
+          summary: "Erased items were found in the database (they were erased again); find out how they came back"

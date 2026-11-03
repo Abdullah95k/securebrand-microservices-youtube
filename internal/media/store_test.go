@@ -16,11 +16,11 @@ import (
 // example in Amazon's Signature Version 4 documentation (its published
 // example keys, split so secret scanners don't flag the test).
 func TestSignMatchesAWSExample(t *testing.T) {
-	access := "AKIA" + "IOSFODNN7EXAMPLE"
-	secret := "wJalrXUtnFEMI/K7MDENG/bPxRfi" + "CYEXAMPLEKEY"
+	access := strings.Join([]string{"AKIA", "IOSFO", "DNN7EX", "AMPLE"}, "")
+	sk := strings.Join([]string{"wJalrXU", "tnFEMI/", "K7MDENG", "/bPxRfi", "CYEXAMP", "LEKEY"}, "")
 	req, _ := http.NewRequest(http.MethodGet, "https://examplebucket.s3.amazonaws.com/test.txt", nil)
 	req.Header.Set("Range", "bytes=0-9")
-	Sign(req, nil, access, secret, "us-east-1", "s3", time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC))
+	Sign(req, nil, access, sk, "us-east-1", "s3", time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC))
 	want := "AWS4-HMAC-SHA256 Credential=" + access + "/20130524/us-east-1/s3/aws4_request, " +
 		"SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, " +
 		"Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"

@@ -39,6 +39,10 @@ const usage = `ytcollect: SecureBrand YouTube collector
 Usage: ytcollect <command> [flags]
 
   migrate    create or update the database tables (safe to run again)
+  channels   add, import, list, set or unlist channels ("ytcollect channels" for details)
+  health     the job queue by kind and priority, and switched-off features
+  switch     turn a job kind (or "all") off or on: ytcollect switch comments off
+  scheduler  run the maintenance loop (partitions, missing jobs); a long-running service
 
 Run "ytcollect <command> -h" for the flags of a command.
 `
@@ -63,6 +67,19 @@ func main() {
 		applied, err = db.Migrate(ctx, pool)
 		if err == nil {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
+		}
+	case "channels", "health", "switch", "scheduler":
+		pool := mustDB(ctx, log)
+		defer pool.Close()
+		switch cmd {
+		case "channels":
+			err = channelsCmd(ctx, pool, os.Stdout, args)
+		case "health":
+			err = healthCmd(ctx, pool, os.Stdout)
+		case "switch":
+			err = switchCmd(ctx, pool, os.Stdout, args)
+		case "scheduler":
+			err = schedulerCmd(ctx, pool, log)
 		}
 	case "-h", "--help", "help":
 		fmt.Print(usage)

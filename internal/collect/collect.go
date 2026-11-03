@@ -61,11 +61,13 @@ func (s *Service) stretch(d time.Duration, t policy.Tier) time.Duration {
 // Handlers maps job kinds to handlers.
 func (s *Service) Handlers() map[string]worker.Handler {
 	return map[string]worker.Handler{
-		queue.KindResolve:  s.resolve,
-		queue.KindChannel:  s.channel,
-		queue.KindBackfill: s.backfill,
-		queue.KindTabs:     s.tabs,
-		queue.KindVideo:    s.video,
+		queue.KindResolve:   s.resolve,
+		queue.KindChannel:   s.channel,
+		queue.KindBackfill:  s.backfill,
+		queue.KindTabs:      s.tabs,
+		queue.KindVideo:     s.video,
+		queue.KindPosts:     s.posts,
+		queue.KindPlaylists: s.playlists,
 	}
 }
 

@@ -97,6 +97,11 @@ func Posts(t Tier) time.Duration {
 	return row{day, 3 * day, week, month, week}.of(t)
 }
 
+// Playlists: the Playlists tab and what each playlist holds.
+func Playlists(t Tier) time.Duration {
+	return row{week, week, month, month, month}.of(t)
+}
+
 // VideoStats: views, likes and the comment count, by the video's age.
 func VideoStats(t Tier, age time.Duration) time.Duration {
 	switch {

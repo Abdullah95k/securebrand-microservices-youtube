@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/collect"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/comments"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db/dbtest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fakeyt"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
@@ -193,5 +194,60 @@ func TestTabCheckQueuesOnlyNewUploads(t *testing.T) {
 	}
 	if n := r.count(t, `SELECT count(*) FROM schedule WHERE kind = 'video' AND entity_id = 'fakeCV2'`); n != 0 {
 		t.Error("a known video must not be queued again by the tab check")
+	}
+}
+
+func TestPostsAndPlaylists(t *testing.T) {
+	c := fakeChannel()
+	c.Posts = []fakeyt.FakePost{
+		{ID: "UgkxFAKEPOST1", Text: "منشور عن بغداد", Ago: "1 day ago", Likes: "1.2K", CommentsTxt: "2",
+			Comments: []fakeyt.FakeComment{{ID: "fakePC1", Text: "first", Author: "UCfakePOSTAUTHOR00000001", Ago: "5 hours ago", Likes: "1"},
+				{ID: "fakePC2", Text: "second", Author: "UCfakePOSTAUTHOR00000002", Ago: "6 hours ago", Likes: "0"}}},
+		{ID: "UgkxFAKEPOST2", Text: "unrelated post", Ago: "3 days ago", Likes: "4", CommentsTxt: "0"},
+	}
+	c.Playlists = []fakeyt.FakePlaylist{{ID: "PLfakeLIST01", Title: "تقارير بغداد", VideoIDs: []string{"fakeCV1", "fakeCV2"}}}
+	r := newRig(t, []fakeyt.FakeChannel{c})
+	ctx := context.Background()
+	if err := registry.List(ctx, r.pool, nil, chID, registry.Input{Input: chID, Tier: policy.B}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = r.pool.Exec(ctx, `DELETE FROM schedule WHERE kind NOT IN ('posts', 'playlists')`)
+	eng := &comments.Engine{Pool: r.pool, Client: r.svc.Fetch.Client, Sup: r.sup, Log: quiet}
+	h := r.svc.Handlers()
+	for k, v := range eng.Handlers() {
+		h[k] = v
+	}
+	w := &worker.Worker{Pool: r.pool, Owner: "t", Handlers: h, Concurrency: 2, Idle: 10 * time.Millisecond, Log: quiet}
+	wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_ = w.Run(wctx)
+
+	if n := r.count(t, `SELECT count(*) FROM posts WHERE channel_id = $1`, chID); n != 2 {
+		t.Fatalf("posts stored: %d", n)
+	}
+	if n := r.count(t, `SELECT count(*) FROM posts WHERE id = 'UgkxFAKEPOST1' AND relevant AND likes_min = 1200 AND comments_min = 2
+		AND detail_params IS NOT NULL AND comments_read_at IS NOT NULL`); n != 1 {
+		t.Error("the Baghdad post should be relevant, with numbers, and its comments read")
+	}
+	if n := r.count(t, `SELECT count(*) FROM comments WHERE parent_kind = 'post' AND parent_id = 'UgkxFAKEPOST1'`); n != 2 {
+		t.Errorf("post comments stored: %d", n)
+	}
+	if n := r.count(t, `SELECT count(*) FROM post_snapshots`); n != 2 {
+		t.Error("each post gets a snapshot")
+	}
+	if n := r.count(t, `SELECT count(*) FROM playlists WHERE id = 'PLfakeLIST01' AND video_count = 2 AND relevant`); n != 1 {
+		t.Error("the playlist should be stored with its count")
+	}
+	if n := r.count(t, `SELECT count(*) FROM playlist_items WHERE playlist_id = 'PLfakeLIST01' AND removed_at IS NULL`); n != 2 {
+		t.Error("the playlist's videos should be stored")
+	}
+	// A video leaves the playlist: marked removed on the next complete read.
+	c.Playlists[0].VideoIDs = []string{"fakeCV1"}
+	r.yt.ServeChannels([]fakeyt.FakeChannel{c}, 2, 2)
+	if _, err := h[queue.KindPlaylists](ctx, queue.Job{Kind: queue.KindPlaylists, EntityID: chID}); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.count(t, `SELECT count(*) FROM playlist_items WHERE video_id = 'fakeCV2' AND removed_at IS NOT NULL`); n != 1 {
+		t.Error("a video that left the playlist is marked removed")
 	}
 }

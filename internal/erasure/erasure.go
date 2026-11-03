@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
@@ -41,6 +42,7 @@ type Service struct {
 	Sup   *privacy.Suppressor
 	Fetch *phase0.Collector // resolves handles and URLs; nil: IDs only
 	Log   *slog.Logger
+	Media media.Store // stored images; nil: no storage configured
 }
 
 // Handlers maps the erasure job kind to its handler.
@@ -182,7 +184,9 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 			{"author profiles", `DELETE FROM author_profiles WHERE author_id = $1`},
 			{"author badges", `DELETE FROM author_badges WHERE author_id = $1`},
 			{"graph", `DELETE FROM channel_links_graph WHERE from_channel = $1 AND relation = 'commenter'`},
-			{"jobs", `DELETE FROM schedule WHERE kind = 'enrich' AND entity_id = $1`},
+			{"media", `DELETE FROM media WHERE kind = 'author_avatar' AND entity_id = $1`},
+			{"jobs", `DELETE FROM schedule WHERE kind = 'enrich' AND entity_id = $1
+				OR kind = 'media' AND entity_id = 'author_avatar:' || $1`},
 			{"author", `DELETE FROM authors WHERE id = $1`},
 		}
 	case privacy.Channel:
@@ -196,6 +200,9 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 				OR video_id IN (SELECT id FROM videos WHERE channel_id = $1)`},
 			{"playlists", `DELETE FROM playlists WHERE channel_id = $1`},
 			{"search hits", `DELETE FROM search_hits WHERE channel_id = $1`},
+			{"media", `DELETE FROM media WHERE kind IN ('avatar', 'banner', 'thumb') AND (entity_id = $1 OR channel_id = $1)`},
+			{"media jobs", `DELETE FROM schedule WHERE kind = 'media' AND (entity_id IN ('avatar:' || $1, 'banner:' || $1)
+				OR entity_id IN (SELECT 'thumb:' || id FROM videos WHERE channel_id = $1))`},
 			{"videos", `DELETE FROM videos WHERE channel_id = $1`},
 			{"post snapshots", `DELETE FROM post_snapshots WHERE post_id IN (SELECT id FROM posts WHERE channel_id = $1)`},
 			{"posts", `DELETE FROM posts WHERE channel_id = $1`},
@@ -215,7 +222,8 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 			{"video changes", `DELETE FROM video_changes WHERE video_id = $1`},
 			{"playlist items", `DELETE FROM playlist_items WHERE video_id = $1`},
 			{"search hits", `DELETE FROM search_hits WHERE video_id = $1`},
-			{"jobs", `DELETE FROM schedule WHERE entity_id = $1`},
+			{"media", `DELETE FROM media WHERE kind = 'thumb' AND entity_id = $1`},
+			{"jobs", `DELETE FROM schedule WHERE entity_id = $1 OR kind = 'media' AND entity_id = 'thumb:' || $1`},
 			{"video", `DELETE FROM videos WHERE id = $1`},
 		}
 	case privacy.Comment:
@@ -235,8 +243,22 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 	default:
 		return fmt.Errorf("erasure: kind %q", kind)
 	}
-	counts := map[string]int64{}
-	err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+	// Stored images go first: their rows are deleted with the rest, so a
+	// file that could not be deleted keeps its row and the erasure retries.
+	keys, err := media.Keys(ctx, s.Pool, kind, id)
+	if err != nil {
+		return fmt.Errorf("erasure: media: %w", err)
+	}
+	if len(keys) > 0 && s.Media == nil {
+		return fmt.Errorf("erasure: %d stored images, but no storage is configured to delete them from", len(keys))
+	}
+	for _, k := range keys {
+		if err := s.Media.Delete(ctx, k); err != nil {
+			return fmt.Errorf("erasure: deleting an image: %w", err)
+		}
+	}
+	counts := map[string]int64{"media files": int64(len(keys))}
+	err = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
 		for _, st := range steps {
 			tag, err := tx.Exec(ctx, st.sql, id)
 			if err != nil {
@@ -248,6 +270,9 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 	})
 	if err != nil {
 		return err
+	}
+	if len(keys) > 0 {
+		s.audit(ctx, reqID, "media files", counts["media files"])
 	}
 	for _, st := range steps {
 		s.audit(ctx, reqID, st.name, counts[st.name])
@@ -283,6 +308,10 @@ func (s *Service) Audit(ctx context.Context) (AuditResult, error) {
 		{privacy.Video, `SELECT id FROM videos`},
 		{privacy.Post, `SELECT id FROM posts`},
 		{privacy.Comment, `SELECT id FROM comments`},
+		{privacy.Video, `SELECT entity_id FROM media WHERE kind = 'thumb'`},
+		{privacy.Channel, `SELECT entity_id FROM media WHERE kind IN ('avatar', 'banner')
+			UNION SELECT channel_id FROM media WHERE channel_id IS NOT NULL`},
+		{privacy.Author, `SELECT entity_id FROM media WHERE kind = 'author_avatar'`},
 	}
 	for _, c := range checks {
 		rows, err := s.Pool.Query(ctx, c.sql)
@@ -309,7 +338,7 @@ func (s *Service) Audit(ctx context.Context) (AuditResult, error) {
 				return res, err
 			}
 		}
-		res.Violations[c.kind] = len(bad)
+		res.Violations[c.kind] += len(bad)
 	}
 	if n := res.Total(); n > 0 {
 		s.Log.Error("suppressed items were found in the database and erased again", "items", n)

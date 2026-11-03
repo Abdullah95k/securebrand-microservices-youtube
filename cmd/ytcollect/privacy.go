@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/erasure"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 )
 
@@ -28,7 +29,28 @@ func privacyService(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) (
 	if err := sup.Refresh(ctx, pool); err != nil {
 		return nil, err
 	}
-	return &erasure.Service{Pool: pool, Keyer: keyer, Sup: sup, Log: log}, nil
+	store, err := openStorage(log)
+	if err != nil {
+		return nil, err
+	}
+	return &erasure.Service{Pool: pool, Keyer: keyer, Sup: sup, Log: log, Media: store}, nil
+}
+
+// storagePath is the storage settings file.
+func storagePath() string { return pathFromEnv(EnvStorageFile, media.DefaultConfigFile) }
+
+// openStorage opens the object store; nil (and no error) when there is no
+// storage settings file.
+func openStorage(log *slog.Logger) (media.Store, error) {
+	store, err := media.Load(storagePath())
+	if errors.Is(err, media.ErrNotConfigured) {
+		log.Info("no object storage configured: media and the archive are off", "settings", storagePath())
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("storage: %w", err)
+	}
+	return store, nil
 }
 
 // eraseCmd records an erasure request; a worker carries it out at once.

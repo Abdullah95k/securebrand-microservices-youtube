@@ -18,4 +18,5 @@ const (
 	KindEnrich       = "enrich"        // a commenter's public channel page
 	KindCandidate    = "candidate"     // a channel discovery found: is it Iraq-relevant?
 	KindSearch       = "search"        // one search term on the website (and the official API for priority keywords)
+	KindMedia        = "media"         // a thumbnail, avatar or banner ("thumb:<video>", "avatar:<channel>", …)
 )

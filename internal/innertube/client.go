@@ -197,6 +197,32 @@ func (c *Client) Thumbnail(ctx context.Context, videoID, size string) (*Response
 	return c.get(ctx, proxypool.ClassCDN, c.opt.CDNBase+"/vi/"+videoID+"/"+size+".jpg", nil)
 }
 
+// ImageHosts are the image CDNs Image may fetch from.
+var ImageHosts = []string{"ytimg.com", "ggpht.com", "googleusercontent.com"}
+
+// Image fetches an image (thumbnail, avatar, banner) from one of YouTube's
+// image CDNs, through the proxy pool like every other request.
+func (c *Client) Image(ctx context.Context, rawURL string) (*Response, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "https" && u.Scheme != "http" {
+		return nil, fmt.Errorf("innertube: not an image URL")
+	}
+	host := strings.ToLower(u.Hostname())
+	ok := false
+	for _, h := range ImageHosts {
+		if host == h || strings.HasSuffix(host, "."+h) {
+			ok = true
+		}
+	}
+	if cdn, err := url.Parse(c.opt.CDNBase); err == nil && cdn.Host != "" && cdn.Host == u.Host {
+		ok = true // tests: the fake CDN
+	}
+	if !ok {
+		return nil, fmt.Errorf("innertube: %s is not a YouTube image host", host)
+	}
+	return c.get(ctx, proxypool.ClassCDN, u.String(), nil)
+}
+
 func (c *Client) get(ctx context.Context, cl proxypool.Class, url string, extra http.Header) (*Response, error) {
 	return c.do(ctx, cl, func(px *proxypool.Proxy) (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

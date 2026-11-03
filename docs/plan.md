@@ -48,6 +48,7 @@ and YouTube's internal website endpoints are undocumented. Phase 0 (§9) confirm
 | D24 | 1 Nov 2026 | No live chat |
 | D25 | 2 Nov 2026 | E11: the 300-title sample is labelled by AI (only the public titles are sent to the AI provider), with an optional hand spot check of about 30 titles to measure how far to trust the AI |
 | D26 | 3 Nov 2026 | **All data is kept forever**, Phase 0 included: no time limits. Two things still remove data: an erasure request (with its suppression entry), and YouTube's API rule that data from the official API may be kept at most 30 days (the same items scraped from the website are kept) |
+| D27 | 3 Nov 2026 | Archive format: **gzip JSON-lines files in object storage**, one line per row with the IDs whose erasure removes it. Searchable with `ytcollect archive search`, a month can be put back into Postgres for a while, and ClickHouse or DuckDB can query the files in place if reports ever need it. Media and the archive share one object store (a local folder until object storage is set up) |
 
 Your non-negotiable rules still apply:
 
@@ -611,14 +612,14 @@ coverage grows.
 | **rss-poller** | Tier-interval feed checks with conditional requests; exact stats for the latest 15 videos |
 | **privacy** | Erasure requests, suppression list, erasure audit log. Also optional retention rules and pseudonymized exports (switched off, D18) |
 | **enrichment** | Reads commenters' public channel pages using spare capacity (P4), most active commenters first; refreshes every 6–12 months |
-| **archiver** | Moves monthly partitions older than 12 months from Postgres into compressed archive storage (ClickHouse or Parquet), still searchable |
+| **archiver** | Moves monthly partitions older than 12 months from Postgres into compressed files in object storage (D27), still searchable; erasures reach the files too |
 | **webhooks** (later, D20) | Outgoing events and alerts, signed with HMAC, with retries and a dead-letter queue |
 | **media** | Thumbnails, avatars, banners |
 | **admin CLI** (later a small web page) | Keywords, channels, tiers, review of flagged keywords, erasure requests, health |
 
 **No Kafka.** Up to ~50 requests per second is comfortable with a Postgres job queue (`FOR UPDATE SKIP LOCKED`), with the queue tables split
 by priority. **Valkey** holds per-IP rate counters, cooldowns and health, shared by all fetcher processes. The archiver stores data
-older than 12 months in **ClickHouse** or **Parquet** files. Phase 0 and the first months of data decide which.
+older than 12 months as compressed JSON-lines files in object storage (D27).
 
 ### 8.3 Storage (Postgres + S3)
 

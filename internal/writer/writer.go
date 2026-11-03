@@ -18,6 +18,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fill"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytparse"
 )
@@ -32,6 +33,9 @@ type Writer struct {
 	KW   *kwstore.Live       // nil: no keyword matching
 	Now  func() time.Time
 	Fill *fill.Recorder // nil: fill rates not tracked
+	// Media: queue thumbnail, avatar and banner downloads (when storage is
+	// configured).
+	Media bool
 }
 
 func (w *Writer) now() time.Time {
@@ -153,6 +157,18 @@ func (w *Writer) Channel(ctx context.Context, c Channel) ([]string, error) {
 				return err
 			}
 		}
+		if w.Media {
+			for _, m := range []struct {
+				kind     string
+				old, new *string
+			}{{media.Avatar, old.avatar, str(c.AvatarURL)}, {media.Banner, old.banner, str(c.BannerURL)}} {
+				if m.new != nil && (m.old == nil || *m.old != *m.new) {
+					if err := media.Queue(ctx, tx, m.kind, c.ID, now); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		if _, err := tx.Exec(ctx, `UPDATE channels SET
 				handle = COALESCE($2, handle), title = COALESCE($3, title), description = COALESCE($4, description),
 				keywords = COALESCE($5, keywords), country = COALESCE($6, country), joined_text = COALESCE($7, joined_text),
@@ -246,7 +262,13 @@ func (w *Writer) ListedVia(ctx context.Context, channelID string, it ytparse.Vid
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	isNew := tag.RowsAffected() == 1
+	if isNew && w.Media {
+		if err := media.QueueNew(ctx, w.Pool, media.Thumb, it.VideoID, w.now()); err != nil {
+			return true, err
+		}
+	}
+	return isNew, nil
 }
 
 func nullCount(c ytparse.Count) *int64 {
@@ -386,6 +408,11 @@ func (w *Writer) Video(ctx context.Context, v Video) (VideoOutcome, error) {
 			Scan(&old.title, &old.desc, &old.cat, &old.tags)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
+			if w.Media {
+				if err := media.QueueNew(ctx, tx, media.Thumb, v.ID, now); err != nil {
+					return err
+				}
+			}
 		case err != nil:
 			return err
 		default:

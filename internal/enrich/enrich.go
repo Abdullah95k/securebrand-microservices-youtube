@@ -19,6 +19,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
@@ -33,6 +34,7 @@ type Enricher struct {
 	Sup   *privacy.Suppressor
 	Log   *slog.Logger
 	Now   func() time.Time
+	Media bool // queue avatar downloads (when storage is configured)
 }
 
 func (e *Enricher) now() time.Time {
@@ -107,6 +109,11 @@ func (e *Enricher) enrich(ctx context.Context, j queue.Job) (time.Time, error) {
 	})
 	if err != nil {
 		return time.Time{}, err
+	}
+	if e.Media && ch.Channel.AvatarURL != "" {
+		if err := media.Queue(ctx, e.Pool, media.AuthorAvatar, id, now); err != nil {
+			return time.Time{}, err
+		}
 	}
 	// A commenter with uploads of their own may be an Iraq channel.
 	_, hasVideos := ch.Channel.Tabs["videos"]

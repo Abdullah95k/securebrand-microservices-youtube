@@ -13,6 +13,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db/dbtest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/erasure"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
@@ -161,5 +162,67 @@ func TestRetentionIsOffByDefault(t *testing.T) {
 	}
 	if n := count(t, pool, `SELECT count(*) FROM comments WHERE id = 'fakeEc2' AND text = '' AND author_handle IS NULL`); n != 1 {
 		t.Error("a deleted comment is redacted when that setting is on")
+	}
+}
+
+func TestEraseDeletesImages(t *testing.T) {
+	pool := dbtest.New(t)
+	seed(t, pool)
+	ctx := context.Background()
+	store := media.FileStore{Dir: t.TempDir()}
+	for _, m := range []struct{ kind, entity, channel, key string }{
+		{"avatar", ch, ch, "media/avatar/" + ch + "/aaaa.jpg"},
+		{"thumb", "fakeEv1", ch, "media/thumb/fakeEv1/bbbb.jpg"},
+		{"author_avatar", authorY, "", "media/author_avatar/" + authorY + "/cccc.jpg"},
+	} {
+		if err := store.Put(ctx, m.key, "image/jpeg", []byte("img")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO media (kind, entity_id, channel_id, sha256, object_key, source_url, content_type, bytes, first_seen, last_seen)
+			VALUES ($1, $2, NULLIF($3, ''), $4, $4, 'https://i.ytimg.com/x', 'image/jpeg', 3, now(), now())`, m.kind, m.entity, m.channel, m.key); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Without storage settings, an erasure with images fails (and retries)
+	// rather than leaving the files behind.
+	s := service(t, pool)
+	if err := s.Erase(ctx, 0, privacy.Channel, ch); err == nil {
+		t.Fatal("erasing images without storage must fail")
+	}
+	if n := count(t, pool, `SELECT count(*) FROM channels`); n != 1 {
+		t.Fatal("a failed erasure must change nothing (it runs again)")
+	}
+
+	s.Media = store
+	id, err := s.Request(ctx, privacy.Channel, ch, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runJob(t, s, id)
+	for _, k := range []string{"media/avatar/" + ch + "/aaaa.jpg", "media/thumb/fakeEv1/bbbb.jpg"} {
+		if _, err := store.Get(ctx, k); !errors.Is(err, media.ErrNotFound) {
+			t.Errorf("%s must be deleted: %v", k, err)
+		}
+	}
+	if _, err := store.Get(ctx, "media/author_avatar/"+authorY+"/cccc.jpg"); err != nil {
+		t.Error("a commenter's avatar is not the channel's: it stays")
+	}
+	if n := count(t, pool, `SELECT count(*) FROM media WHERE channel_id = $1 OR entity_id = $1`, ch); n != 0 {
+		t.Errorf("%d media rows left", n)
+	}
+	if n := count(t, pool, `SELECT count(*) FROM erasure_audit WHERE request_id = $1 AND step = 'media files' AND rows = 2`, id); n != 1 {
+		t.Error("the audit log counts the deleted files")
+	}
+
+	// A thumbnail row that comes back (a restored backup) is erased again.
+	_, _ = pool.Exec(ctx, `INSERT INTO media (kind, entity_id, channel_id, sha256, object_key, source_url, content_type, bytes, first_seen, last_seen)
+		VALUES ('thumb', 'fakeEv1', $1, 'dd', 'media/thumb/fakeEv1/dd.jpg', 'x', 'image/jpeg', 1, now(), now())`, ch)
+	res, err := s.Audit(ctx)
+	if err != nil || res.Total() == 0 {
+		t.Fatalf("audit: %+v %v", res, err)
+	}
+	if n := count(t, pool, `SELECT count(*) FROM media WHERE entity_id = 'fakeEv1'`); n != 0 {
+		t.Error("the audit must erase images that came back")
 	}
 }

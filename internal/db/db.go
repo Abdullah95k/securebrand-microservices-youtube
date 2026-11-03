@@ -169,6 +169,24 @@ func EnsurePartitions(ctx context.Context, pool *pgxpool.Pool, now time.Time, ah
 	return nil
 }
 
+// EnsureMonth creates table's partition for the month that starts at
+// month (rows of that month in the default partition move into it). The
+// archiver uses it for old months, which EnsurePartitions never creates.
+func EnsureMonth(ctx context.Context, pool *pgxpool.Pool, table string, month time.Time) error {
+	known := false
+	for _, p := range Partitioned {
+		known = known || p.Table == table
+	}
+	if !known {
+		return fmt.Errorf("db: %s is not a partitioned table", table)
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s_default PARTITION OF %s DEFAULT`, table, table)); err != nil {
+		return err
+	}
+	m := month.UTC()
+	return createMonth(ctx, pool, table, time.Date(m.Year(), m.Month(), 1, 0, 0, 0, 0, time.UTC))
+}
+
 // PartitionName is the name of table's partition for the month of t.
 func PartitionName(table string, t time.Time) string {
 	return fmt.Sprintf("%s_y%04dm%02d", table, t.Year(), int(t.Month()))

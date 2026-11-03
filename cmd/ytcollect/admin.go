@@ -261,6 +261,9 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			log.Info("privacy audit done", "suppressed_found_and_erased", res.Total())
 			return db.SetSetting(ctx, pool, monitor.AuditKey, monitor.AuditResult{Violations: res.Total(), At: time.Now()})
 		}},
+		{name: "suppression list copy", every: time.Hour, run: func() error {
+			return copySuppressionList(ctx, pool, log)
+		}},
 		{name: "archive", every: 24 * time.Hour, run: func() error {
 			a, err := archiverOrNil(ctx, pool, log)
 			if a == nil || err != nil {

@@ -1,0 +1,21 @@
+# Where alerts go (plan §8.13, D20). Until a receiver is added they are
+# only shown at http://127.0.0.1:9093 (through an SSH tunnel).
+route:
+  receiver: default
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: default
+    # To send alerts to your system, uncomment and set the URL. The token
+    # is read from a file (chmod 600), never written here:
+    #
+    # webhook_configs:
+    #   - url: https://hooks.example.com/alerts
+    #     send_resolved: true
+    #     http_config:
+    #       authorization:
+    #         type: Bearer
+    #         credentials_file: /etc/securebrand-youtube/alertmanager_token

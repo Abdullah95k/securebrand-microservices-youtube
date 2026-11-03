@@ -1,0 +1,163 @@
+# The production stack on one server (plan §7.2, §8.2). From this folder:
+#
+#   docker compose build
+#   docker compose up -d
+#
+# Steps, secret files and day-to-day commands: docs/production-runbook.md.
+#
+# Secrets are files in /etc/securebrand-youtube on the host (chmod 600),
+# mounted read-only; nothing secret is in this file, the image or the
+# environment. Data lives in /var/lib/securebrand-youtube and the Postgres
+# volume. Monitoring ports listen on 127.0.0.1 only (reach them through an
+# SSH tunnel).
+name: securebrand-youtube
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+x-ytcollect: &ytcollect
+  image: securebrand-youtube:latest
+  build:
+    context: ../..
+  entrypoint: ["/usr/local/bin/ytcollect"]
+  restart: unless-stopped
+  environment:
+    # Push notifications (D23): set in .env next to this file; empty is off.
+    YT_WEBSUB_CALLBACK: ${YT_WEBSUB_CALLBACK:-}
+  volumes:
+    - /etc/securebrand-youtube:/etc/securebrand-youtube:ro
+    - /var/lib/securebrand-youtube:/var/lib/securebrand-youtube
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+  logging: *logging
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ytcollect
+      POSTGRES_DB: ytcollect
+      POSTGRES_PASSWORD_FILE: /run/ytcollect/postgres_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - /etc/securebrand-youtube/postgres_password:/run/ytcollect/postgres_password:ro
+    # Sizes for a 64 GB server; see the runbook for other sizes.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=8GB
+      - -c
+      - effective_cache_size=40GB
+      - -c
+      - work_mem=64MB
+      - -c
+      - maintenance_work_mem=2GB
+      - -c
+      - max_connections=200
+      - -c
+      - wal_compression=on
+      - -c
+      - max_wal_size=8GB
+    shm_size: 2g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ytcollect -d ytcollect"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    logging: *logging
+
+  # Creates and updates the tables, then exits; the services wait for it.
+  migrate:
+    <<: *ytcollect
+    command: ["migrate"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Maintenance: partitions, missing jobs, privacy audit, archive, capacity,
+  # keyword suggestions, metrics (:9102) and outgoing webhooks.
+  scheduler:
+    <<: *ytcollect
+    command: ["scheduler"]
+
+  # The collector. -interval: the gap between requests on one proxy IP
+  # (Phase 0 measures the safe value); -workers: jobs at the same time.
+  worker:
+    <<: *ytcollect
+    command: ["worker", "-interval", "4s", "-workers", "10"]
+
+  # Push notifications (D23: off until a public subdomain exists). Start
+  # with: docker compose --profile websub up -d. Put HTTPS (Caddy, nginx) in
+  # front of 127.0.0.1:8080.
+  websub:
+    <<: *ytcollect
+    profiles: ["websub"]
+    command: ["websub"]
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  # Daily database dumps; the last 30 days are kept here (copy them off the
+  # server too: see the runbook). A restored dump brings back erased data
+  # until the next privacy audit, so run "privacy-audit" right after one.
+  backup:
+    image: postgres:16
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - /var/lib/securebrand-youtube/backups:/backups
+      - /etc/securebrand-youtube/postgres_password:/run/ytcollect/postgres_password:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          f="/backups/ytcollect-$$(date -u +%Y%m%dT%H%MZ).dump"
+          if PGPASSWORD="$$(cat /run/ytcollect/postgres_password)" pg_dump -h postgres -U ytcollect -d ytcollect -Fc -f "$$f.part"; then
+            mv "$$f.part" "$$f"
+            find /backups -name 'ytcollect-*.dump' -mtime +30 -delete
+          else
+            echo "backup failed; the partial file is replaced next time" >&2
+          fi
+          sleep 86400
+        done
+    logging: *logging
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=400d
+    volumes:
+      - ../prometheus:/etc/prometheus:ro
+      - promdata:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    logging: *logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ../alertmanager:/etc/alertmanager:ro
+      - /etc/securebrand-youtube:/etc/securebrand-youtube:ro
+      - amdata:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    logging: *logging
+
+volumes:
+  pgdata:
+  promdata:
+  amdata:

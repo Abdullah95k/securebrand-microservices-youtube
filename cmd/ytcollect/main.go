@@ -52,6 +52,7 @@ Usage: ytcollect <command> [flags]
   erase      record an erasure request (author, channel, video, comment or post); a worker carries it out
   erasures   list erasure requests and their status
   privacy-audit  check that nothing erased is in the database (the scheduler runs it daily)
+  suppression    export the suppression list (keyed hashes), or import a copy after restoring a backup
   export     write comments as JSON lines (-pseudonymize replaces author identities with keyed hashes)
   archive    history older than 12 months in object storage: list, run, scrub, search, restore
   webhooks   outgoing events: list deliveries, test an endpoint, retry dead deliveries
@@ -84,7 +85,7 @@ func main() {
 		if err == nil {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
 		}
-	case "channels", "keywords", "health", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks":
+	case "channels", "keywords", "health", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
 		pool := mustDB(ctx, log)
 		defer pool.Close()
 		switch cmd {
@@ -114,6 +115,8 @@ func main() {
 			err = archiveCmd(ctx, pool, log, os.Stdout, args)
 		case "webhooks":
 			err = webhooksCmd(ctx, pool, log, os.Stdout, args)
+		case "suppression":
+			err = suppressionCmd(ctx, pool, os.Stdout, args)
 		}
 	case "-h", "--help", "help":
 		fmt.Print(usage)

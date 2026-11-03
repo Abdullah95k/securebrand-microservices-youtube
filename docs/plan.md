@@ -992,6 +992,10 @@ password.
 
 These are small draft pull requests, each with unit and integration tests. I review each one and merge it when CI is green.
 
+**Status (3 November 2026):** steps 1 and 3–20 are built and merged, and the production stack (Docker Compose, backups, monitoring)
+is in `deploy/`, set up with [production-runbook.md](production-runbook.md). Phase 0 (step 2) is running. Its results set the
+request gap per IP, the number of proxy IPs, and the go/no-go for transcripts before production starts.
+
 1. Repo skeleton: Go module, CI (lint, tests, gitleaks, fixture scanner), Docker Compose, `.gitignore`, README.
 2. Phase 0 kit: `ytprobe`, seed keywords + normalization, minimal fake-youtube, `skeleton`. → **Run Phase 0, publish results, adjust
    this plan.**

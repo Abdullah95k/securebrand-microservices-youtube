@@ -7,6 +7,8 @@
 //	YT_DATABASE_URL_FILE  Postgres URL with its password (chmod 600); default /etc/securebrand-youtube/database_url
 //	YT_PRIVACY_KEY_FILE   secret for keyed hashes (openssl rand -hex 32; chmod 600; back it up);
 //	                      default /etc/securebrand-youtube/privacy_key
+//	YT_PROXIES_FILE       the worker's proxies, one per line (chmod 600); default /etc/securebrand-youtube/proxies.txt
+//	YT_DEBUG_DIR          parser diagnostics (scrubbed skeletons); default /var/lib/securebrand-youtube/debug
 package main
 
 import (
@@ -44,6 +46,7 @@ Usage: ytcollect <command> [flags]
   health     the job queue by kind and priority, and switched-off features
   switch     turn a job kind (or "all") off or on: ytcollect switch comments off
   scheduler  run the maintenance loop (partitions, missing jobs); a long-running service
+  worker     run the collector: lease jobs and read YouTube through the proxies; a long-running service
 
 Run "ytcollect <command> -h" for the flags of a command.
 `
@@ -69,7 +72,7 @@ func main() {
 		if err == nil {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
 		}
-	case "channels", "keywords", "health", "switch", "scheduler":
+	case "channels", "keywords", "health", "switch", "scheduler", "worker":
 		pool := mustDB(ctx, log)
 		defer pool.Close()
 		switch cmd {
@@ -83,6 +86,8 @@ func main() {
 			err = switchCmd(ctx, pool, os.Stdout, args)
 		case "scheduler":
 			err = schedulerCmd(ctx, pool, log)
+		case "worker":
+			err = workerCmd(ctx, pool, log, args)
 		}
 	case "-h", "--help", "help":
 		fmt.Print(usage)

@@ -15,5 +15,9 @@ scrape_configs:
     static_configs:
       - targets: ["scheduler:9102"]
 
-# Alerts are delivered by Alertmanager to the receiver you choose (D20:
-# webhooks, designed later). Add an "alerting:" block here when it exists.
+# Alerts go to Alertmanager (deploy/alertmanager), which sends them to the
+# receiver you configure there (D20).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]

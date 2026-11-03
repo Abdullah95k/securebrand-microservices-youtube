@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 	"time"
 
@@ -197,4 +199,72 @@ func exportCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	}
 	log.Info("export done", "comments", n, "pseudonymized", pseudonymize)
 	return rows.Err()
+}
+
+// Where the scheduler keeps its hourly copy of the suppression list (next
+// to the daily database dumps, so it is copied off the server with them).
+const (
+	EnvBackupDir     = "YT_BACKUP_DIR"
+	DefaultBackupDir = "/var/lib/securebrand-youtube/backups"
+	suppressionCopy  = "suppression-list.jsonl"
+)
+
+// copySuppressionList writes the list copy to the backup folder and, when
+// object storage is configured, to the store.
+func copySuppressionList(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {
+	var buf bytes.Buffer
+	if _, err := privacy.ExportList(ctx, pool, &buf); err != nil {
+		return err
+	}
+	dir := pathFromEnv(EnvBackupDir, DefaultBackupDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	p := filepath.Join(dir, suppressionCopy)
+	if err := os.WriteFile(p+".tmp", buf.Bytes(), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(p+".tmp", p); err != nil {
+		return err
+	}
+	if fileExists(storagePath()) {
+		store, err := openStorage(log)
+		if err != nil {
+			return err
+		}
+		return store.Put(ctx, "backups/"+suppressionCopy, "application/x-ndjson", buf.Bytes())
+	}
+	return nil
+}
+
+// suppressionCmd exports or imports the suppression list.
+func suppressionCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer, args []string) error {
+	usage := errors.New("usage: ytcollect suppression export | import <file>   (keyed hashes only: no names or IDs)")
+	if len(args) == 0 {
+		return usage
+	}
+	switch args[0] {
+	case "export":
+		n, err := privacy.ExportList(ctx, pool, out)
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "%d entries\n", n)
+		}
+		return err
+	case "import":
+		if len(args) != 2 {
+			return usage
+		}
+		f, err := os.Open(args[1])
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		n, err := privacy.ImportList(ctx, pool, f)
+		if err == nil {
+			fmt.Fprintf(out, "%d entries added; now run: ytcollect privacy-audit\n", n)
+		}
+		return err
+	default:
+		return usage
+	}
 }

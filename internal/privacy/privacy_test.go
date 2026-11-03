@@ -124,3 +124,40 @@ func TestRetentionDefaultsToForever(t *testing.T) {
 		t.Errorf("got %+v (err %v)", r, err)
 	}
 }
+
+func TestListCopySurvivesARestore(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	k, _ := privacy.NewKeyer([]byte("test-secret-0123456789abcdef-0123456789"))
+	s := privacy.NewSuppressor(k)
+	if err := s.Add(ctx, pool, privacy.Author, "UCfakeLISTCOPYAUTHOR0001", "erasure request", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Add(ctx, pool, privacy.Channel, "UCfakeLISTCOPYCHANNEL001", "a note with someone's name", nil); err != nil {
+		t.Fatal(err)
+	}
+	var copy strings.Builder
+	if n, err := privacy.ExportList(ctx, pool, &copy); err != nil || n != 2 {
+		t.Fatalf("export: %d %v", n, err)
+	}
+	if strings.Contains(copy.String(), "UCfake") || strings.Contains(copy.String(), "someone") {
+		t.Errorf("the copy must hold keyed hashes only, no IDs or free text: %s", copy.String())
+	}
+	// A backup from before the channel's erasure is restored.
+	if _, err := pool.Exec(ctx, `DELETE FROM suppression_list WHERE kind = 'channel'`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := privacy.ImportList(ctx, pool, strings.NewReader(copy.String())); err != nil || n != 1 {
+		t.Fatalf("import added %d (want the lost one): %v", n, err)
+	}
+	s2 := privacy.NewSuppressor(k)
+	if err := s2.Refresh(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if !s2.Suppressed(privacy.Channel, "UCfakeLISTCOPYCHANNEL001") || !s2.Suppressed(privacy.Author, "UCfakeLISTCOPYAUTHOR0001") {
+		t.Error("both erasures must be in force after the import")
+	}
+	if _, err := privacy.ImportList(ctx, pool, strings.NewReader(`{"kind":"author","key":"zz"}`)); err == nil {
+		t.Error("a bad key must be refused")
+	}
+}

@@ -13,12 +13,15 @@
 package privacy
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -224,4 +227,84 @@ func SaveRetention(ctx context.Context, q db.Querier, r Retention) error {
 		return errors.New("privacy: retention days cannot be negative")
 	}
 	return db.SetSetting(ctx, q, RetentionKey, r)
+}
+
+// Entry is one suppression-list row as copied for safekeeping: the kind,
+// the keyed hash (hex) and when it was added or lifted. It holds no
+// personal data.
+type Entry struct {
+	Kind       string     `json:"kind"`
+	Key        string     `json:"key"`
+	Reason     string     `json:"reason"`
+	CreatedAt  time.Time  `json:"created_at"`
+	OverrideAt *time.Time `json:"override_at,omitempty"`
+}
+
+// ExportList writes the suppression list as JSON lines. Database backups
+// run once a day; this copy is made every hour, so a restored backup can
+// get back the erasures made after it (ImportList), before the privacy
+// audit erases their data again.
+func ExportList(ctx context.Context, q db.Querier, w io.Writer) (int, error) {
+	rows, err := q.Query(ctx, `SELECT kind, key, reason, created_at, override_at FROM suppression_list ORDER BY created_at, kind`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	enc := json.NewEncoder(w)
+	n := 0
+	for rows.Next() {
+		var e Entry
+		var key []byte
+		if err := rows.Scan(&e.Kind, &key, &e.Reason, &e.CreatedAt, &e.OverrideAt); err != nil {
+			return n, err
+		}
+		e.Key = hex.EncodeToString(key)
+		if e.Reason != "erasure request" {
+			e.Reason = "suppressed" // free text stays in the database
+		}
+		if err := enc.Encode(e); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, rows.Err()
+}
+
+// ImportList adds the entries of an exported list that the database lacks
+// (and records lifts made after a backup). It returns how many it added.
+func ImportList(ctx context.Context, q db.Querier, r io.Reader) (int, error) {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	added := 0
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var e Entry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			return added, fmt.Errorf("privacy: a line of the list is not JSON: %w", err)
+		}
+		key, err := hex.DecodeString(e.Key)
+		if err != nil || len(key) != sha256.Size || !ValidKind(e.Kind) {
+			return added, errors.New("privacy: a line of the list has a bad kind or key")
+		}
+		reason := e.Reason
+		if reason == "" {
+			reason = "suppressed"
+		}
+		tag, err := q.Exec(ctx, `INSERT INTO suppression_list (kind, key, reason, created_at, override_at)
+			VALUES ($1, $2, $3, $4, $5) ON CONFLICT (kind, key) DO NOTHING`, e.Kind, key, reason, e.CreatedAt, e.OverrideAt)
+		if err != nil {
+			return added, err
+		}
+		added += int(tag.RowsAffected())
+		if e.OverrideAt != nil {
+			if _, err := q.Exec(ctx, `UPDATE suppression_list SET override_at = $3, override_reason = COALESCE(override_reason, 'restored from the list copy')
+				WHERE kind = $1 AND key = $2 AND override_at IS NULL AND created_at <= $3`, e.Kind, key, *e.OverrideAt); err != nil {
+				return added, err
+			}
+		}
+	}
+	return added, sc.Err()
 }

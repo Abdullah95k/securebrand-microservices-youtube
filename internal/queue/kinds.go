@@ -17,4 +17,5 @@ const (
 	KindPostComments = "post_comments" // comments of a community post
 	KindEnrich       = "enrich"        // a commenter's public channel page
 	KindCandidate    = "candidate"     // a channel discovery found: is it Iraq-relevant?
+	KindSearch       = "search"        // one search term on the website (and the official API for priority keywords)
 )

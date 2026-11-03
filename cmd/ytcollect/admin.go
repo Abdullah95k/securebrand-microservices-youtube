@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/discovery"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
@@ -186,37 +187,69 @@ func switchCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer, args []st
 	return nil
 }
 
-// schedulerCmd runs the maintenance loop: partitions ahead of time (daily)
-// and missing recurring jobs (hourly).
+// schedulerCmd runs the maintenance loop: partitions ahead of time and the
+// official-API hit purge (daily), missing recurring jobs and the search
+// rotation (hourly), the commenter graph (daily) and tier recompute
+// (weekly).
 func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {
-	partitions := time.NewTicker(24 * time.Hour)
-	rearm := time.NewTicker(time.Hour)
-	defer partitions.Stop()
-	defer rearm.Stop()
-	run := func(name string, f func() error) {
-		if err := f(); err != nil && ctx.Err() == nil {
-			log.Warn("scheduler task failed", "task", name, "err", err)
-		}
+	type task struct {
+		name  string
+		every time.Duration
+		run   func() error
+		last  time.Time
 	}
-	doPartitions := func() error { return db.EnsurePartitions(ctx, pool, time.Now(), 3) }
-	doRearm := func() error {
-		n, err := registry.Rearm(ctx, pool)
-		if n > 0 {
-			log.Info("missing jobs re-added", "jobs", n)
-		}
-		return err
+	tasks := []*task{
+		{name: "partitions", every: 24 * time.Hour, run: func() error { return db.EnsurePartitions(ctx, pool, time.Now(), 3) }},
+		{name: "rearm", every: time.Hour, run: func() error {
+			n, err := registry.Rearm(ctx, pool)
+			if n > 0 {
+				log.Info("missing jobs re-added", "jobs", n)
+			}
+			return err
+		}},
+		{name: "search terms", every: time.Hour, run: func() error {
+			added, removed, err := discovery.SyncTerms(ctx, pool)
+			if added+removed > 0 {
+				log.Info("search rotation updated", "added", added, "removed", removed)
+			}
+			return err
+		}},
+		{name: "API hits purge", every: 24 * time.Hour, run: func() error {
+			n, err := discovery.PurgeAPIHits(ctx, pool, time.Now())
+			if n > 0 {
+				log.Info("official-API search hits older than 30 days deleted (YouTube's API rule)", "hits", n)
+			}
+			return err
+		}},
+		{name: "commenter graph", every: 24 * time.Hour, run: func() error {
+			_, err := discovery.CommenterGraph(ctx, pool)
+			return err
+		}},
+		{name: "tiers", every: 7 * 24 * time.Hour, run: func() error {
+			n, err := discovery.RecomputeTiers(ctx, pool, time.Now())
+			if n > 0 {
+				log.Info("channel tiers recomputed", "moved", n)
+			}
+			return err
+		}},
 	}
-	run("partitions", doPartitions)
-	run("rearm", doRearm)
 	log.Info("scheduler running")
+	tick := time.NewTicker(time.Minute)
+	defer tick.Stop()
 	for {
+		for _, t := range tasks {
+			if time.Since(t.last) < t.every {
+				continue
+			}
+			t.last = time.Now()
+			if err := t.run(); err != nil && ctx.Err() == nil {
+				log.Warn("scheduler task failed", "task", t.name, "err", err)
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-partitions.C:
-			run("partitions", doPartitions)
-		case <-rearm.C:
-			run("rearm", doRearm)
+		case <-tick.C:
 		}
 	}
 }

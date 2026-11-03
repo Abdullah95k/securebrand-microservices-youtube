@@ -16,6 +16,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/collect"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/comments"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/detect"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/discovery"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/feeds"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
@@ -26,6 +27,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/websub"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/writer"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytapi"
 )
 
 // More secret files and folders the worker uses.
@@ -34,6 +36,8 @@ const (
 	DefaultProxiesFile = "/etc/securebrand-youtube/proxies.txt"
 	EnvDebugDir        = "YT_DEBUG_DIR"
 	DefaultDebugDir    = "/var/lib/securebrand-youtube/debug"
+	EnvAPIKeyFile      = "YT_API_KEY_FILE"
+	DefaultAPIKeyFile  = "/etc/securebrand-youtube/youtube_api_key"
 	// Push notifications (off until a public subdomain exists, D23).
 	EnvWebSubCallback       = "YT_WEBSUB_CALLBACK" // e.g. https://push.example.com/websub
 	EnvWebSubSecretFile     = "YT_WEBSUB_SECRET_FILE"
@@ -106,6 +110,21 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	}
 	eng := &comments.Engine{Pool: pool, Client: fetch.Client, Sup: sup, Log: log, Cap: *commentCap}
 	for k, h := range eng.Handlers() {
+		handlers[k] = h
+	}
+	// Discovery: website search always; the official API when a key file
+	// exists (the quota ceiling is kept in the database).
+	var api *ytapi.Client
+	if keyPath := pathFromEnv(EnvAPIKeyFile, DefaultAPIKeyFile); fileExists(keyPath) {
+		key, err := secrets.ReadFile(keyPath)
+		if err != nil {
+			return fmt.Errorf("API key: %w", err)
+		}
+		ledger, _ := ytapi.NewLedger("", 1<<30) // the database ledger is the real ceiling
+		api = ytapi.New(key, "", ledger)
+	}
+	disc := &discovery.Runner{Pool: pool, Fetch: fetch, API: api, Write: wr, Sup: sup, Log: log}
+	for k, h := range disc.Handlers() {
 		handlers[k] = h
 	}
 	wsCfg, err := webSubConfig()
@@ -205,4 +224,9 @@ func websubCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 		return err
 	}
 	return nil
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }

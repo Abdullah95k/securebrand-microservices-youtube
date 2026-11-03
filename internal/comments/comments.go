@@ -28,6 +28,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fill"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
@@ -48,6 +49,7 @@ type Engine struct {
 	Now     func() time.Time
 	Cap     int            // 0 = DefaultCap
 	Stretch func() float64 // the capacity planner's stretch for C, D, M
+	Fill    *fill.Recorder // nil: fill rates not tracked
 }
 
 func (e *Engine) now() time.Time {
@@ -379,6 +381,9 @@ func (e *Engine) store(ctx context.Context, v video, cs []ytparse.Comment, known
 			continue
 		}
 		seen[c.ID] = true
+		e.Fill.Observe("comments", "author_id", c.AuthorChannelID != "")
+		e.Fill.Observe("comments", "text", c.Text != "")
+		e.Fill.Observe("comments", "published", c.Published.OK)
 		if e.Sup != nil && (e.Sup.Suppressed(privacy.Comment, c.ID) || e.Sup.Suppressed(privacy.Author, c.AuthorChannelID)) {
 			continue
 		}

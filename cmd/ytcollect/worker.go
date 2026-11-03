@@ -21,8 +21,11 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/enrich"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/erasure"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/feeds"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fill"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/metrics"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/monitor"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
@@ -75,6 +78,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	workers := fs.Int("workers", 10, "jobs at the same time")
 	noPlayer := fs.Bool("no-player", false, "skip the player endpoint (tags, category)")
 	commentCap := fs.Int("comment-cap", comments.DefaultCap, "most comments the first read of a video takes; capped videos are flagged partial")
+	metricsAddr := fs.String("metrics-addr", ":9101", "where Prometheus reads this worker's metrics (empty: off)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -104,7 +108,9 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	}
 	pp := proxypool.New(proxies, proxypool.Config{MinInterval: *interval}, time.Now().UnixNano())
 	fetch := &phase0.Collector{Client: innertube.New(innertube.Options{Pool: pp}), Store: debug, Now: time.Now, Log: log}
-	wr := &writer.Writer{Pool: pool, Sup: sup, KW: live}
+	rec := &fill.Recorder{}
+	reg := metrics.New()
+	wr := &writer.Writer{Pool: pool, Sup: sup, KW: live, Fill: rec}
 	stretch := &capacity.Stretcher{Q: pool}
 	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer, Write: wr, Stretch: stretch.Value}
 	handlers := svc.Handlers()
@@ -112,7 +118,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	for k, h := range rss.Handlers() {
 		handlers[k] = h
 	}
-	eng := &comments.Engine{Pool: pool, Client: fetch.Client, Sup: sup, Log: log, Cap: *commentCap, Stretch: stretch.Value}
+	eng := &comments.Engine{Pool: pool, Client: fetch.Client, Sup: sup, Log: log, Cap: *commentCap, Stretch: stretch.Value, Fill: rec}
 	for k, h := range eng.Handlers() {
 		handlers[k] = h
 	}
@@ -184,7 +190,43 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 			}
 		}
 	}()
-	w := &worker.Worker{Pool: pool, Owner: owner, Handlers: handlers,
+	serveMetrics(ctx, *metricsAddr, reg, log)
+	// Every minute: fill rates and proxy health; every 15 minutes: canaries;
+	// daily: the website client version.
+	go func() {
+		minute := time.NewTicker(time.Minute)
+		canary := time.NewTicker(15 * time.Minute)
+		daily := time.NewTicker(24 * time.Hour)
+		defer minute.Stop()
+		defer canary.Stop()
+		defer daily.Stop()
+		detect := func() {
+			if v, err := fetch.Client.DetectClientVersion(ctx); err != nil {
+				log.Warn("detecting the website client version failed; the last known one stays", "err", err)
+			} else {
+				log.Info("website client version", "version", v)
+			}
+		}
+		detect()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-minute.C:
+				if err := rec.Flush(ctx, pool, time.Now()); err != nil && ctx.Err() == nil {
+					log.Warn("saving fill rates failed", "err", err)
+				}
+				if err := monitor.Pool(ctx, pool, reg, owner, pp.Stats(), time.Now()); err != nil && ctx.Err() == nil {
+					log.Warn("saving proxy health failed", "err", err)
+				}
+			case <-canary.C:
+				monitor.Canary(ctx, pool, fetch, rec, reg, log)
+			case <-daily.C:
+				detect()
+			}
+		}
+	}()
+	w := &worker.Worker{Pool: pool, Owner: owner, Handlers: handlers, OnResult: monitor.Jobs(reg),
 		Concurrency: *workers, Lease: 15 * time.Minute, Log: log}
 	log.Info("worker running", "proxies", len(proxies), "interval", interval.String(), "workers", *workers, "push", wsCfg.Enabled())
 	return w.Run(ctx)
@@ -257,4 +299,23 @@ func websubCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+// serveMetrics serves /metrics on addr until ctx ends ("" = off).
+func serveMetrics(ctx context.Context, addr string, reg *metrics.Registry, log *slog.Logger) {
+	if addr == "" {
+		return
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", reg.Handler())
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Warn("metrics endpoint stopped", "addr", addr, "err", err)
+		}
+	}()
 }

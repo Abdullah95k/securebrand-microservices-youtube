@@ -149,6 +149,9 @@ func (s *Service) channel(ctx context.Context, j queue.Job) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
+	if res.Channel.Title == "" && len(res.Channel.Tabs) == 0 {
+		s.parseFailure(ctx, "browse:channel", "channel", j.EntityID, "channel page without a title or tabs")
+	}
 	if res.Channel.ID == "" {
 		res.Channel.ID = j.EntityID
 	}
@@ -308,6 +311,9 @@ func (s *Service) video(ctx context.Context, j queue.Job) (time.Time, error) {
 	if err != nil && !errors.Is(err, innertube.ErrNotFound) {
 		return time.Time{}, err
 	}
+	if err == nil && res.Watch.Title == "" && res.Player.Playability == "OK" {
+		s.parseFailure(ctx, "next:watch", "video", j.EntityID, "watch page without a title while the player plays")
+	}
 	if err != nil || res.Watch.Title == "" && res.Player.Title == "" {
 		removed, merr := s.Write.VideoMissing(ctx, j.EntityID)
 		if merr != nil {
@@ -365,4 +371,13 @@ func (s *Service) video(ctx context.Context, j queue.Job) (time.Time, error) {
 		return s.now().Add(policy.LiveViewers(ci.tier)), nil
 	}
 	return s.now().Add(s.stretch(policy.VideoStats(ci.tier, age), ci.tier)), nil
+}
+
+// parseFailure records a page the parsers could not read (its scrubbed
+// skeleton is in the debug folder); a rising rate raises an alert.
+func (s *Service) parseFailure(ctx context.Context, endpoint, kind, id, msg string) {
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO parse_failures (endpoint, entity_kind, entity_id, error) VALUES ($1, $2, $3, $4)`,
+		endpoint, kind, id, msg); err != nil && s.Log != nil {
+		s.Log.Warn("recording a parse failure failed", "err", err)
+	}
 }

@@ -32,6 +32,7 @@ type Worker struct {
 	Lease       time.Duration // how long a job may run before others may take it
 	Idle        time.Duration // wait when nothing is due
 	Log         *slog.Logger
+	OnResult    func(kind string, err error, took time.Duration) // metrics; nil = none
 
 	switches Switches
 	swAt     time.Time
@@ -159,6 +160,9 @@ func (w *Worker) run(ctx context.Context, j queue.Job) {
 	}()
 	next, err := safe(ctx, h, j)
 	stopHB()
+	if w.OnResult != nil {
+		w.OnResult(j.Kind, err, time.Since(start))
+	}
 	// Report with a fresh context: a shutdown must not lose the outcome.
 	rctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

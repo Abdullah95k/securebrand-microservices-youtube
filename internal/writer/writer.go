@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fill"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytparse"
@@ -30,6 +31,7 @@ type Writer struct {
 	Sup  *privacy.Suppressor // nil: no suppression list (tests only)
 	KW   *kwstore.Live       // nil: no keyword matching
 	Now  func() time.Time
+	Fill *fill.Recorder // nil: fill rates not tracked
 }
 
 func (w *Writer) now() time.Time {
@@ -110,6 +112,10 @@ func (w *Writer) Channel(ctx context.Context, c Channel) ([]string, error) {
 	if w.suppressed(privacy.Channel, c.ID) {
 		return nil, ErrSuppressed
 	}
+	w.Fill.Observe("channel", "title", c.Title != "")
+	w.Fill.Observe("channel", "handle", c.Handle != "")
+	w.Fill.Observe("channel", "subscribers", c.Subscribers.OK)
+	w.Fill.Observe("channel", "videos", c.Videos.OK)
 	now := w.now()
 	links, _ := json.Marshal(c.Links)
 	if c.Links == nil {
@@ -215,6 +221,10 @@ func (w *Writer) ListedVia(ctx context.Context, channelID string, it ytparse.Vid
 		return false, ErrSuppressed
 	}
 	kind, live := kindOf(it.Kind)
+	if source == "web" {
+		w.Fill.Observe("list", "title", it.Title != "")
+		w.Fill.Observe("list", "published", it.Published.OK || it.Kind == ytparse.KindShort)
+	}
 	relevant, kws := w.Match(it.Title)
 	var published *time.Time
 	var precision *int
@@ -294,6 +304,16 @@ func (w *Writer) Video(ctx context.Context, v Video) (VideoOutcome, error) {
 		return out, ErrSuppressed
 	}
 	now := w.now()
+	w.Fill.Observe("watch", "title", v.Watch.Title != "")
+	w.Fill.Observe("watch", "views", v.Watch.Views.OK)
+	w.Fill.Observe("watch", "likes", v.Watch.Likes.OK)
+	w.Fill.Observe("watch", "comment_count", v.Watch.CommentCount.OK || v.Watch.CommentsToken == "")
+	w.Fill.Observe("watch", "date_text", v.Watch.DateText != "")
+	if v.HasPlayer {
+		w.Fill.Observe("player", "publish_date", v.Player.PublishDate != "")
+		w.Fill.Observe("player", "length", v.Player.LengthSec > 0)
+		w.Fill.Observe("player", "category", v.Player.Category != "")
+	}
 	title, desc := v.Watch.Title, v.Watch.Description
 	if title == "" {
 		title = v.Player.Title

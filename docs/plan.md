@@ -635,7 +635,10 @@ older than 12 months in **ClickHouse** or **Parquet** files. Phase 0 and the fir
   - `published_at_est` + `published_at_precision_s`;
   - `like_count_min` + `like_count_text`;
   - `source` on every row (`web`, `web_search`, `rss`, `websub`, `api_search`).
-- **Large tables** (comments, snapshots, author profiles) are partitioned by month, so the archiver can move whole old partitions cheaply.
+- **Large tables** are partitioned by month (snapshots, comment versions, author profiles), so the archiver can move whole old
+  partitions cheaply. `comments` holds each comment's current state keyed by its YouTube ID (upserts stay simple); every text version
+  is in the partitioned `comment_versions`. Comments on videos and on posts share one table (`parent_kind`).
+- **Schema:** `internal/db/migrations`, applied by `ytcollect migrate`.
 
 ### 8.4 How each collection works
 

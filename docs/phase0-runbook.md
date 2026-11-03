@@ -8,7 +8,7 @@ This is how to run the Phase 0 measurements (plan §9) on your DigitalOcean drop
 - **When an IP gets a block signal**, that IP rests (30 min, then 2 h, 12 h, 24 h) and the work moves to another IP (D7). If the same request is blocked on 3 different IPs, ytprobe gives up on it for 6 hours.
 - It **never** logs in, never solves CAPTCHAs, and never generates YouTube's anti-bot tokens.
 - **Phase 0 keeps counts, not people.** It records numbers, sizes, timings and yes/no flags. For the 7-day re-check it keeps comment IDs and a fingerprint (hash) of each comment's text, **never the text or the author**.
-- Everything stays in `/var/lib/securebrand-youtube/phase0` on the droplet and is deleted automatically after 14 days.
+- Everything stays in `/var/lib/securebrand-youtube/phase0` on the droplet and is **kept** (D26). Only data that came from the official API (the accuracy check's official numbers and the API's search results) is removed after 30 days, because YouTube's API rules allow no longer; the same videos seen on the website are kept.
 - **The report contains aggregates only**: no channel IDs, no names, no comment text. It's safe to paste into our chat.
 
 ## What this version covers
@@ -257,10 +257,10 @@ docker stop ytprobe-detect
 docker rm ytprobe-detect
 ```
 
-Phase 0 data deletes itself after 14 days. To delete it all immediately:
+Phase 0 data is kept (D26). Before the droplet is shut down, copy the folder to the production server or to backup storage; I'll give you the commands then. Only official-API data is removed after 30 days, automatically when `accuracy`, `discover` or `label` runs, or by hand:
 
 ```bash
-sudo rm -rf /var/lib/securebrand-youtube/phase0
+docker run --rm -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe cleanup
 ```
 
 ## Checking the channel list

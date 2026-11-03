@@ -9,7 +9,7 @@
 //	YT_CHANNELS_FILE  channels to measure; default /etc/securebrand-youtube/phase0-channels.txt
 //	YT_KEYWORDS_FILE  your own search terms, optional; default /etc/securebrand-youtube/phase0-keywords.txt
 //	YT_ANTHROPIC_KEY_FILE  Anthropic API key for "label -ai" (chmod 600); default /etc/securebrand-youtube/anthropic_api_key
-//	YT_DATA_DIR       results, deleted after 14 days; default /var/lib/securebrand-youtube/phase0
+//	YT_DATA_DIR       results, kept (official-API data only for 30 days); default /var/lib/securebrand-youtube/phase0
 //
 // Commands: check, resolve, crawl, detect, resweep, accuracy, pace, discover,
 // census, label, transcripts, report, cleanup.
@@ -49,7 +49,7 @@ Usage: ytprobe <command> [flags]
              without -ai you answer in the terminal (a spot check of the AI with -limit 30)
   transcripts check whether transcripts come back without anti-bot tokens (E12)
   report     print the aggregate report (safe to share: no IDs, names or text)
-  cleanup    delete Phase 0 data older than 14 days
+  cleanup    remove official-API data older than 30 days (YouTube's API rule; everything else is kept)
 
 Run "ytprobe <command> -h" for the flags of a command.
 `
@@ -97,7 +97,6 @@ func main() {
 		o.Window = time.Duration(*days) * 24 * time.Hour
 		o.WithPlayer = !*noPlayer
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
-		cleanup(env, log)
 		go env.SavePoolStatsEvery(ctx, "crawl", 10*time.Minute)
 		err = phase0.Crawl(ctx, env.Collector, env.Channels, o, log)
 		env.SavePoolStats("crawl")
@@ -107,7 +106,6 @@ func main() {
 		fs.DurationVar(&o.TabEvery, "tab-every", 24*time.Hour, "channel tab check interval")
 		fs.Parse(args)
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
-		cleanup(env, log)
 		ids := resolveAll(ctx, env, log)
 		go env.SavePoolStatsEvery(ctx, "detect", 10*time.Minute)
 		err = phase0.Detect(ctx, env.Collector, env.Feeds, ids, o, log)
@@ -125,6 +123,7 @@ func main() {
 		maxVideos := fs.Int("max", 200, "videos to compare")
 		fs.Parse(args)
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+		pruneAPI(env, log)
 		if env.API == nil {
 			fmt.Fprintln(os.Stderr, "accuracy needs YT_API_KEY_FILE")
 			os.Exit(2)
@@ -166,6 +165,7 @@ func main() {
 		fs.Parse(args)
 		o.APIWithin = time.Duration(*days) * 24 * time.Hour
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+		pruneAPI(env, log)
 		o.Terms = append(append([]string{}, env.Keywords...), phase0.SeedTerms(*seed)...)
 		api := env.API
 		if o.APIUnits <= 0 {
@@ -193,6 +193,7 @@ func main() {
 		fs.Parse(args)
 		if *useAI {
 			env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+			pruneAPI(env, log)
 			key, kerr := secrets.ReadFile(phase0.PathFromEnv(phase0.EnvAIKeyFile, phase0.DefaultAIKeyFile))
 			if kerr != nil {
 				log.Error("Anthropic API key", "err", kerr)
@@ -213,6 +214,7 @@ func main() {
 			os.Exit(2)
 		}
 		env := mustSetup(proxypool.Config{MinInterval: *interval}, log)
+		pruneAPI(env, log)
 		err = phase0.Label(context.Background(), env.Store, os.Stdin, os.Stdout, phase0.LabelOptions{Size: *size, Terms: env.Keywords, Reset: *reset, Limit: *limit})
 	case "transcripts":
 		videos := fs.Int("videos", 30, "videos to check")
@@ -244,8 +246,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, serr)
 			os.Exit(2)
 		}
-		n, cerr := store.Cleanup(time.Now(), phase0.Retention)
-		fmt.Printf("removed %d file(s) older than 14 days\n", n)
+		n, cerr := phase0.PruneAPIData(store, time.Now())
+		fmt.Printf("removed %d record(s) of official-API data older than 30 days; everything else is kept\n", n)
 		err = cerr
 	case "-h", "--help", "help":
 		fmt.Print(usage)
@@ -269,9 +271,13 @@ func mustSetup(cfg proxypool.Config, log *slog.Logger) *phase0.Env {
 	return env
 }
 
-func cleanup(env *phase0.Env, log *slog.Logger) {
-	if n, err := env.Store.Cleanup(time.Now(), phase0.Retention); err == nil && n > 0 {
-		log.Info("old Phase 0 data removed", "files", n)
+// pruneAPI drops official-API data older than 30 days (YouTube's API
+// rule) before a command that reads or writes it. Everything else is kept.
+func pruneAPI(env *phase0.Env, log *slog.Logger) {
+	if n, err := phase0.PruneAPIData(env.Store, time.Now()); err != nil {
+		log.Warn("removing old official-API data failed", "err", err)
+	} else if n > 0 {
+		log.Info("official-API data older than 30 days removed", "records", n)
 	}
 }
 

@@ -4,8 +4,9 @@
 // Privacy: Phase 0 needs counts, not people. Records hold counts, sizes,
 // timings and yes/no flags. Comment snapshots for the re-sweep keep comment
 // IDs and a hash of the text, never the text or the author. Everything
-// lives in the data folder on the server (never in the repo) and is deleted
-// after 14 days.
+// lives in the data folder on the server (never in the repo) and is kept
+// (plan D26). The one exception is data from the official API, which
+// YouTube's API terms let us keep for at most 30 days: PruneAPIData drops it.
 package phase0
 
 import (
@@ -24,8 +25,9 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/skeleton"
 )
 
-// Retention is how long Phase 0 data is kept on the server.
-const Retention = 14 * 24 * time.Hour
+// APIDataMaxAge is how long data from the official API may be kept
+// (YouTube API Services policies). Everything else is kept.
+const APIDataMaxAge = 30 * 24 * time.Hour
 
 // Store writes JSON-lines records and helper files under one folder.
 type Store struct {
@@ -174,23 +176,87 @@ func (s *Store) SaveSkeleton(name string, body []byte) {
 	_ = os.WriteFile(filepath.Join(dir, name+".json"), sk, 0o600)
 }
 
-// Cleanup deletes files older than maxAge. It returns how many it removed.
-func (s *Store) Cleanup(now time.Time, maxAge time.Duration) (int, error) {
-	removed := 0
-	err := filepath.WalkDir(s.dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		info, err := d.Info()
+// rewrite replaces <kind>.jsonl with recs (atomically).
+func rewrite[T any](s *Store, kind string, recs []T) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var buf bytes.Buffer
+	for _, r := range recs {
+		data, err := json.Marshal(r)
 		if err != nil {
 			return err
 		}
-		if now.Sub(info.ModTime()) > maxAge {
-			if err := os.Remove(p); err == nil {
-				removed++
-			}
+		buf.Write(append(data, '\n'))
+	}
+	p := filepath.Join(s.dir, kind+".jsonl")
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
+}
+
+// PruneAPIData removes what came from the official API more than
+// APIDataMaxAge ago: the accuracy check's official numbers, the API's
+// search results, and the titles of label-sample videos that only the API
+// had found. The labels themselves (yes/no) and all scraped data stay. It
+// returns how many records it removed or blanked.
+func PruneAPIData(s *Store, now time.Time) (int, error) {
+	cut := now.Add(-APIDataMaxAge)
+	n := 0
+	acc, err := ReadAll[AccuracyRecord](s, "accuracy")
+	if err != nil {
+		return 0, err
+	}
+	keptAcc := acc[:0:0]
+	for _, r := range acc {
+		if r.At.Before(cut) {
+			n++
+			continue
 		}
-		return nil
-	})
-	return removed, err
+		keptAcc = append(keptAcc, r)
+	}
+	if len(keptAcc) < len(acc) {
+		if err := rewrite(s, "accuracy", keptAcc); err != nil {
+			return n, err
+		}
+	}
+	items, err := ReadAll[DiscoverItem](s, "discover_items")
+	if err != nil {
+		return n, err
+	}
+	keptItems := items[:0:0]
+	dropped, still := map[string]bool{}, map[string]bool{}
+	for _, it := range items {
+		if it.Engine == "api" && it.At.Before(cut) {
+			dropped[it.VideoID] = true
+			n++
+			continue
+		}
+		still[it.VideoID] = true
+		keptItems = append(keptItems, it)
+	}
+	if len(keptItems) < len(items) {
+		if err := rewrite(s, "discover_items", keptItems); err != nil {
+			return n, err
+		}
+	}
+	sample, err := ReadAll[LabelItem](s, "label_sample")
+	if err != nil {
+		return n, err
+	}
+	blanked := false
+	for i := range sample {
+		if id := sample[i].VideoID; id != "" && dropped[id] && !still[id] {
+			sample[i].VideoID, sample[i].Title = "", ""
+			blanked = true
+			n++
+		}
+	}
+	if blanked {
+		if err := rewrite(s, "label_sample", sample); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }

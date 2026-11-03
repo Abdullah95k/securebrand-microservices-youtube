@@ -49,7 +49,7 @@ func LabelAI(ctx context.Context, s *Store, ai TitleLabeler, o AILabelOptions, l
 	}
 	var pending []LabelItem
 	for _, it := range sample {
-		if !done[it.Index] {
+		if !done[it.Index] && it.Title != "" { // a blank title was official-API data, removed after 30 days
 			pending = append(pending, it)
 		}
 	}

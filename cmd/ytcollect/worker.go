@@ -13,10 +13,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/capacity"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/collect"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/comments"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/detect"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/discovery"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/enrich"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/erasure"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/feeds"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
@@ -103,13 +105,14 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	pp := proxypool.New(proxies, proxypool.Config{MinInterval: *interval}, time.Now().UnixNano())
 	fetch := &phase0.Collector{Client: innertube.New(innertube.Options{Pool: pp}), Store: debug, Now: time.Now, Log: log}
 	wr := &writer.Writer{Pool: pool, Sup: sup, KW: live}
-	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer, Write: wr}
+	stretch := &capacity.Stretcher{Q: pool}
+	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer, Write: wr, Stretch: stretch.Value}
 	handlers := svc.Handlers()
-	rss := &detect.RSS{Pool: pool, Feeds: feeds.NewFetcher(fetch.Client), Write: wr, Log: log}
+	rss := &detect.RSS{Pool: pool, Feeds: feeds.NewFetcher(fetch.Client), Write: wr, Log: log, Stretch: stretch.Value}
 	for k, h := range rss.Handlers() {
 		handlers[k] = h
 	}
-	eng := &comments.Engine{Pool: pool, Client: fetch.Client, Sup: sup, Log: log, Cap: *commentCap}
+	eng := &comments.Engine{Pool: pool, Client: fetch.Client, Sup: sup, Log: log, Cap: *commentCap, Stretch: stretch.Value}
 	for k, h := range eng.Handlers() {
 		handlers[k] = h
 	}
@@ -130,6 +133,10 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	}
 	er := &erasure.Service{Pool: pool, Keyer: keyer, Sup: sup, Fetch: fetch, Log: log}
 	for k, h := range er.Handlers() {
+		handlers[k] = h
+	}
+	en := &enrich.Enricher{Pool: pool, Fetch: fetch, Sup: sup, Log: log}
+	for k, h := range en.Handlers() {
 		handlers[k] = h
 	}
 	wsCfg, err := webSubConfig()
@@ -161,7 +168,23 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	go live.Run(ctx, pool, time.Minute, func(err error) { log.Warn("refreshing keywords failed", "err", err) })
 
 	host, _ := os.Hostname()
-	w := &worker.Worker{Pool: pool, Owner: fmt.Sprintf("%s/%d", host, os.Getpid()), Handlers: handlers,
+	owner := fmt.Sprintf("%s/%d", host, os.Getpid())
+	// Tell the capacity planner what this worker can do.
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			if err := capacity.Announce(ctx, pool, owner, capacity.Worker{Proxies: len(proxies), IntervalS: interval.Seconds(), At: time.Now()}); err != nil && ctx.Err() == nil {
+				log.Warn("announcing capacity failed", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	w := &worker.Worker{Pool: pool, Owner: owner, Handlers: handlers,
 		Concurrency: *workers, Lease: 15 * time.Minute, Log: log}
 	log.Info("worker running", "proxies", len(proxies), "interval", interval.String(), "workers", *workers, "push", wsCfg.Enabled())
 	return w.Run(ctx)

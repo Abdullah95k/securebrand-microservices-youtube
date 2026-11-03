@@ -9,6 +9,7 @@ const (
 	KindRSS          = "rss"           // the channel's feed: new uploads
 	KindWebSub       = "websub"        // (re)subscribe to the channel's push notifications
 	KindPosts        = "posts"         // the community Posts tab
+	KindPlaylists    = "playlists"     // the Playlists tab and the videos in each playlist
 	KindVideo        = "video"         // video details and stats
 	KindComments     = "comments"      // newest-first scan for new comments
 	KindSweep        = "sweep"         // full comment read: edits and deletions

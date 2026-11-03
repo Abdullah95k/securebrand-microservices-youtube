@@ -39,7 +39,7 @@ func TestAddListSetUnlist(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := scheduled(t, pool)
-	if want := "backfill channel posts resolve rss tabs"; got != want {
+	if want := "backfill channel playlists posts resolve rss tabs"; got != want {
 		t.Errorf("jobs %q; want %q", got, want)
 	}
 	c, err := registry.Get(ctx, pool, ch)
@@ -50,7 +50,7 @@ func TestAddListSetUnlist(t *testing.T) {
 	if err := registry.Set(ctx, pool, ch, registry.Mention, policy.M); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := scheduled(t, pool), "channel posts resolve rss"; got != want {
+	if got, want := scheduled(t, pool), "channel playlists posts resolve rss"; got != want {
 		t.Errorf("jobs %q; want %q", got, want)
 	}
 	// Unlisting keeps the row and removes its jobs.

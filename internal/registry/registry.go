@@ -155,6 +155,7 @@ func schedule(ctx context.Context, q db.Querier, channelID, kind string, tier po
 		{queue.KindChannel, queue.P2, now},
 		{queue.KindRSS, queue.P2, now},
 		{queue.KindPosts, queue.P2, now},
+		{queue.KindPlaylists, queue.P3, now},
 	}
 	if kind == Core {
 		var done *time.Time

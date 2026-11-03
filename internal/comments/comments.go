@@ -67,8 +67,9 @@ func (e *Engine) cap() int {
 // Handlers maps the comment job kinds to their handlers.
 func (e *Engine) Handlers() map[string]worker.Handler {
 	return map[string]worker.Handler{
-		queue.KindComments: e.scan,
-		queue.KindSweep:    e.sweep,
+		queue.KindComments:     e.scan,
+		queue.KindSweep:        e.sweep,
+		queue.KindPostComments: e.scanPost,
 	}
 }
 
@@ -81,7 +82,10 @@ type known struct {
 	precision  int
 }
 
+// video is the parent of a comment section: a video, or a community post
+// (kind "post").
 type video struct {
+	kind          string // "video" or "post"
 	id, channelID string
 	tier          policy.Tier
 	channelKind   string
@@ -89,10 +93,12 @@ type video struct {
 	published     time.Time
 	hasPublished  bool
 	everRead      bool // a first full read happened
+	detailParams  string
+	displayed     ytparse.Count
 }
 
 func (e *Engine) loadVideo(ctx context.Context, id string) (video, bool, error) {
-	v := video{id: id}
+	v := video{kind: "video", id: id}
 	var tier, status string
 	var published *time.Time
 	var complete *float32
@@ -113,9 +119,40 @@ func (e *Engine) loadVideo(ctx context.Context, id string) (video, bool, error) 
 	return v, status == "listed", nil
 }
 
-func (e *Engine) loadKnown(ctx context.Context, videoID string) (map[string]*known, error) {
+func (e *Engine) loadPost(ctx context.Context, id string) (video, bool, error) {
+	v := video{kind: "post", id: id}
+	var tier, status string
+	var published *time.Time
+	var params *string
+	var comments *int64
+	var read bool
+	err := e.Pool.QueryRow(ctx, `SELECT p.channel_id, c.tier, c.kind, c.status, p.relevant, p.published_at, p.detail_params,
+			p.comments_min, p.comments_read_at IS NOT NULL
+		FROM posts p JOIN channels c ON c.id = p.channel_id WHERE p.id = $1`, id).
+		Scan(&v.channelID, &tier, &v.channelKind, &status, &v.relevant, &published, &params, &comments, &read)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return v, false, nil
+	}
+	if err != nil {
+		return v, false, err
+	}
+	v.tier = policy.Tier(tier)
+	if published != nil {
+		v.published, v.hasPublished = *published, true
+	}
+	if params != nil {
+		v.detailParams = *params
+	}
+	if comments != nil {
+		v.displayed = ytparse.Count{Min: *comments, OK: true}
+	}
+	v.everRead = read
+	return v, status == "listed", nil
+}
+
+func (e *Engine) loadKnown(ctx context.Context, v video) (map[string]*known, error) {
 	rows, err := e.Pool.Query(ctx, `SELECT id, text_hash, version, COALESCE(reply_count, 0), published_at IS NOT NULL,
-		COALESCE(published_precision_s, 2147483647) FROM comments WHERE parent_kind = 'video' AND parent_id = $1`, videoID)
+		COALESCE(published_precision_s, 2147483647) FROM comments WHERE parent_kind = $1 AND parent_id = $2`, v.kind, v.id)
 	if err != nil {
 		return nil, err
 	}
@@ -150,18 +187,16 @@ type readResult struct {
 // sweep (stopEarly false) reads every reply again.
 func (e *Engine) read(ctx context.Context, v video, stopEarly bool) (readResult, error) {
 	res := readResult{seen: map[string]bool{}}
-	w, err := e.Client.Call(ctx, innertube.Next, map[string]any{"videoId": v.id})
+	sectionToken, displayed, prefer, err := e.open(ctx, v)
 	if err != nil {
 		return res, err
 	}
-	watch := ytparse.ParseWatch(w.Data)
-	if watch.CommentsToken == "" {
+	if sectionToken == "" {
 		res.complete = true // comments off, or none
-		res.displayed = watch.CommentCount
+		res.displayed = displayed
 		return res, nil
 	}
-	prefer := w.Proxy
-	first, err := e.Client.CallPrefer(ctx, innertube.Next, map[string]any{"continuation": watch.CommentsToken}, prefer)
+	first, err := e.Client.CallPrefer(ctx, innertube.Next, map[string]any{"continuation": sectionToken}, prefer)
 	if err != nil {
 		return res, err
 	}
@@ -169,9 +204,9 @@ func (e *Engine) read(ctx context.Context, v video, stopEarly bool) (readResult,
 	head := ytparse.ParseComments(first.Data, e.now())
 	res.displayed = head.Total
 	if !res.displayed.OK {
-		res.displayed = watch.CommentCount
+		res.displayed = displayed
 	}
-	knownIDs, err := e.loadKnown(ctx, v.id)
+	knownIDs, err := e.loadKnown(ctx, v)
 	if err != nil {
 		return res, err
 	}
@@ -221,6 +256,27 @@ func (e *Engine) read(ctx context.Context, v video, stopEarly bool) (readResult,
 		pages = append(pages, p)
 		token = p.NextToken
 	}
+}
+
+// open loads the page that holds the comment section (the watch page, or
+// the post's own page) and returns the token that opens it.
+func (e *Engine) open(ctx context.Context, v video) (token string, displayed ytparse.Count, prefer string, err error) {
+	if v.kind == "post" {
+		if v.detailParams == "" {
+			return "", v.displayed, "", nil
+		}
+		r, err := e.Client.Call(ctx, innertube.Browse, map[string]any{"browseId": "FEpost_detail", "params": v.detailParams})
+		if err != nil {
+			return "", v.displayed, "", err
+		}
+		return ytparse.CommentSectionToken(r.Data), v.displayed, r.Proxy, nil
+	}
+	w, err := e.Client.Call(ctx, innertube.Next, map[string]any{"videoId": v.id})
+	if err != nil {
+		return "", displayed, "", err
+	}
+	watch := ytparse.ParseWatch(w.Data)
+	return watch.CommentsToken, watch.CommentCount, w.Proxy, nil
 }
 
 // allTopKnown: every top-level comment on the page was known before this
@@ -348,11 +404,11 @@ func (e *Engine) store(ctx context.Context, v video, cs []ytparse.Comment, known
 			b.Queue(`INSERT INTO comments (id, parent_kind, parent_id, channel_id, thread_id, author_id, author_handle, author_name,
 					author_avatar_url, author_is_creator, author_badges, text, text_hash, published_at, published_precision_s,
 					likes_min, likes_text, reply_count, pinned, hearted, edited, version, first_seen, last_seen)
-				VALUES ($1, 'video', $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 1, $20, $20)
+				VALUES ($1, $21, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 1, $20, $20)
 				ON CONFLICT (id) DO NOTHING`,
 				c.ID, v.id, v.channelID, thread, nz(c.AuthorChannelID), nz(c.AuthorName), nz(c.AuthorAvatar),
 				c.AuthorIsCreator || c.AuthorChannelID != "" && c.AuthorChannelID == v.channelID, badges, c.Text, h,
-				published, precision, likes, likesText, c.ReplyCount, c.Pinned, c.Hearted, c.Edited, now)
+				published, precision, likes, likesText, c.ReplyCount, c.Pinned, c.Hearted, c.Edited, now, v.kind)
 			b.Queue(`INSERT INTO comment_versions (comment_id, version, seen_at, text, edited) VALUES ($1, 1, $2, $3, $4)
 				ON CONFLICT DO NOTHING`, c.ID, now, c.Text, c.Edited)
 		} else {
@@ -572,4 +628,30 @@ func (e *Engine) markMissing(ctx context.Context, videoID string, seen map[strin
 		deleted_at = CASE WHEN missed_sweeps + 1 >= 2 THEN $2::timestamptz ELSE NULL END
 		WHERE id = ANY($1)`, missing, e.now())
 	return err
+}
+
+// scanPost reads a community post's comments: everything the first time,
+// then newest-first scans at the post's age interval (posts get no sweeps).
+func (e *Engine) scanPost(ctx context.Context, j queue.Job) (time.Time, error) {
+	v, listed, err := e.loadPost(ctx, j.EntityID)
+	if err != nil || !listed {
+		return time.Time{}, err
+	}
+	if e.Sup != nil && (e.Sup.Suppressed(privacy.Post, v.id) || e.Sup.Suppressed(privacy.Channel, v.channelID)) {
+		return time.Time{}, nil
+	}
+	if _, err := e.read(ctx, v, v.everRead); err != nil {
+		return time.Time{}, err
+	}
+	if _, err := e.Pool.Exec(ctx, `UPDATE posts SET comments_read_at = $2 WHERE id = $1`, v.id, e.now()); err != nil {
+		return time.Time{}, err
+	}
+	d := policy.CommentScan(v.tier, e.age(v))
+	if d == 0 {
+		return time.Time{}, nil
+	}
+	if e.Stretch != nil {
+		d = policy.Stretch(d, v.tier, e.Stretch())
+	}
+	return e.now().Add(d), nil
 }

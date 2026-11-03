@@ -27,6 +27,25 @@ type FakeChannel struct {
 	Country     string
 	Subscribers string // display text, e.g. "1.2K subscribers"
 	Videos      []FakeVideo
+	Posts       []FakePost
+	Playlists   []FakePlaylist
+}
+
+// FakePost is a community post; its comments are served like a video's.
+type FakePost struct {
+	ID          string
+	Text        string
+	Ago         string
+	Likes       string
+	Comments    []FakeComment
+	CommentsTxt string
+}
+
+// FakePlaylist is a playlist and the IDs of its videos.
+type FakePlaylist struct {
+	ID       string
+	Title    string
+	VideoIDs []string
 }
 
 // FakeVideo describes a generated upload.
@@ -67,9 +86,60 @@ func ChannelBrowse(c FakeChannel) M {
 		"metadata": M{"channelMetadataRenderer": M{"externalId": c.ID, "title": c.Title, "description": "Generated channel",
 			"vanityChannelUrl": "http://www.youtube.com/" + c.Handle,
 			"avatar":           M{"thumbnails": A{M{"url": "https://img.example/" + c.ID, "width": 900}}}}},
-		"header":   channelHeader(c),
-		"contents": M{"twoColumnBrowseResultsRenderer": M{"tabs": A{tab("Videos", "videos"), tab("Shorts", "shorts"), tab("Posts", "posts")}}},
+		"header": channelHeader(c),
+		"contents": M{"twoColumnBrowseResultsRenderer": M{"tabs": A{tab("Videos", "videos"), tab("Shorts", "shorts"), tab("Posts", "posts"),
+			tab("Playlists", "playlists")}}},
 	}
+}
+
+// PostsTab is the Posts tab, in the 2026 layout (the reply button opens the
+// post's page through browseId FEpost_detail).
+func PostsTab(c FakeChannel) M {
+	var items A
+	for _, p := range c.Posts {
+		items = append(items, M{"backstagePostThreadRenderer": M{"post": M{"backstagePostRenderer": M{
+			"postId":            p.ID,
+			"authorEndpoint":    M{"browseEndpoint": M{"browseId": c.ID}},
+			"contentText":       M{"runs": A{M{"text": p.Text}}},
+			"publishedTimeText": M{"runs": A{M{"text": p.Ago}}},
+			"voteCount":         M{"simpleText": p.Likes},
+			"replyButton": M{"buttonRenderer": M{"text": M{"simpleText": p.CommentsTxt},
+				"navigationEndpoint": M{"browseEndpoint": M{"browseId": "FEpost_detail", "params": "POST_" + p.ID}}}},
+		}}}})
+	}
+	return M{"header": channelHeader(c), "contents": M{"twoColumnBrowseResultsRenderer": M{"tabs": A{M{"tabRenderer": M{
+		"content": M{"sectionListRenderer": M{"contents": A{M{"itemSectionRenderer": M{"contents": items}}}}}}}}}}}
+}
+
+// PostPage is a post's own page: the post and its comment section.
+func PostPage(p FakePost) M {
+	return M{"contents": M{"sectionListRenderer": M{"contents": A{
+		M{"itemSectionRenderer": M{"sectionIdentifier": "backstage-item-section", "contents": A{}}},
+		M{"itemSectionRenderer": M{"sectionIdentifier": "comment-item-section", "contents": A{Token("COMMENTS_" + p.ID)}}},
+	}}}}
+}
+
+// PlaylistsTab lists playlist cards (lockupViewModel, 2026 layout).
+func PlaylistsTab(c FakeChannel) M {
+	var items A
+	for _, pl := range c.Playlists {
+		items = append(items, M{"lockupViewModel": M{"contentId": pl.ID, "contentType": "LOCKUP_CONTENT_TYPE_PLAYLIST",
+			"contentImage": M{"collectionThumbnailViewModel": M{"primaryThumbnail": M{"thumbnailViewModel": M{"overlays": A{
+				M{"thumbnailOverlayBadgeViewModel": M{"thumbnailBadges": A{M{"thumbnailBadgeViewModel": M{"text": fmt.Sprintf("%d videos", len(pl.VideoIDs))}}}}}}}}}},
+			"metadata": M{"lockupMetadataViewModel": M{"title": M{"content": pl.Title}}}}})
+	}
+	return M{"header": channelHeader(c), "contents": M{"twoColumnBrowseResultsRenderer": M{"tabs": A{M{"tabRenderer": M{
+		"content": M{"richGridRenderer": M{"contents": items}}}}}}}}
+}
+
+// PlaylistPage is a playlist's page (browse "VL" + ID).
+func PlaylistPage(pl FakePlaylist) M {
+	var items A
+	for i, id := range pl.VideoIDs {
+		items = append(items, M{"playlistVideoRenderer": M{"videoId": id, "title": M{"runs": A{M{"text": "video " + id}}},
+			"index": M{"simpleText": fmt.Sprint(i + 1)}}})
+	}
+	return M{"contents": M{"playlistVideoListRenderer": M{"contents": items}}}
 }
 
 // channelHeader is the page header YouTube sends with the channel page and
@@ -305,9 +375,17 @@ func (s *Server) ServeChannels(chans []FakeChannel, tabPageSize, commentPageSize
 		c FakeChannel
 		v FakeVideo
 	}{}
+	posts := map[string]FakePost{}
+	playlists := map[string]FakePlaylist{}
 	for _, c := range chans {
 		byID[c.ID] = c
 		byHandle[c.Handle] = c
+		for _, p := range c.Posts {
+			posts[p.ID] = p
+		}
+		for _, pl := range c.Playlists {
+			playlists[pl.ID] = pl
+		}
 		// The channel page names its own ID, as YouTube's does.
 		s.SetPage("/"+c.Handle, fmt.Sprintf(`<html><head><link rel="canonical" href="https://www.youtube.com/channel/%s"></head>`+
 			`<body><script>var ytInitialData = {"metadata":{"channelMetadataRenderer":{"externalId":"%s"}}};</script></body></html>`, c.ID, c.ID))
@@ -316,6 +394,12 @@ func (s *Server) ServeChannels(chans []FakeChannel, tabPageSize, commentPageSize
 				c FakeChannel
 				v FakeVideo
 			}{c, v}
+		}
+		for _, p := range c.Posts { // a post's comments are served like a video's
+			videos[p.ID] = struct {
+				c FakeChannel
+				v FakeVideo
+			}{c, FakeVideo{ID: p.ID, Comments: p.Comments, CommentsTxt: p.CommentsTxt}}
 		}
 	}
 	notFound := func() (int, any) { return 404, M{"error": M{"code": 404}} }
@@ -350,6 +434,16 @@ func (s *Server) ServeChannels(chans []FakeChannel, tabPageSize, commentPageSize
 			return notFound()
 		}
 		id, _ := body["browseId"].(string)
+		if id == "FEpost_detail" {
+			params, _ := body["params"].(string)
+			if p, ok := posts[strings.TrimPrefix(params, "POST_")]; ok {
+				return 200, PostPage(p)
+			}
+			return notFound()
+		}
+		if pl, ok := playlists[strings.TrimPrefix(id, "VL")]; ok && strings.HasPrefix(id, "VL") {
+			return 200, PlaylistPage(pl)
+		}
 		c, ok := byID[id]
 		if !ok {
 			return notFound()
@@ -360,7 +454,9 @@ func (s *Server) ServeChannels(chans []FakeChannel, tabPageSize, commentPageSize
 		case "TAB_shorts":
 			return 200, Tab(c, true, 0, tabPageSize)
 		case "TAB_posts":
-			return 200, M{"header": channelHeader(c), "contents": A{}}
+			return 200, PostsTab(c)
+		case "TAB_playlists":
+			return 200, PlaylistsTab(c)
 		}
 		return 200, ChannelBrowse(c)
 	})

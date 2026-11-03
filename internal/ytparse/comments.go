@@ -219,6 +219,8 @@ type Post struct {
 	HasImage      bool
 	HasPoll       bool
 	HasVideo      bool
+	Comments      Count  // from the reply button
+	DetailParams  string // opens the post's page (and its comments)
 }
 
 // ParsePosts reads a Posts/Community tab or its continuation.
@@ -245,6 +247,8 @@ func ParsePosts(data any, now time.Time) ([]Post, string) {
 			p.HasPoll = jsonx.First(att, "pollRenderer") != nil
 			p.HasVideo = jsonx.First(att, "videoRenderer") != nil
 			p.Published = ParseRelativeTime(p.PublishedText, now)
+			p.Comments = ParseCount(firstNonEmpty(p.CommentsText, jsonx.String(jsonx.First(r, "replyButton"), "buttonRenderer", "text", "simpleText")))
+			p.DetailParams = PostDetailParams(r)
 			out = append(out, p)
 		}
 	}

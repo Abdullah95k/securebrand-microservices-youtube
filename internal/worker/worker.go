@@ -140,7 +140,25 @@ func (w *Worker) Run(ctx context.Context) error {
 func (w *Worker) run(ctx context.Context, j queue.Job) {
 	h := w.Handlers[j.Kind]
 	start := time.Now()
+	// Renew the lease while the job runs, so a long job (a busy channel's
+	// backfill) is not taken over by another worker.
+	hb, stopHB := context.WithCancel(ctx)
+	go func() {
+		t := time.NewTicker(w.Lease / 3)
+		defer t.Stop()
+		for {
+			select {
+			case <-hb.Done():
+				return
+			case <-t.C:
+				if err := queue.Extend(hb, w.Pool, j, w.Lease); err != nil && hb.Err() == nil {
+					w.Log.Warn("renewing a lease failed", "job", j.String(), "err", err)
+				}
+			}
+		}
+	}()
 	next, err := safe(ctx, h, j)
+	stopHB()
 	// Report with a fresh context: a shutdown must not lose the outcome.
 	rctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

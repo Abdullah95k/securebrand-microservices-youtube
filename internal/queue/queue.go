@@ -171,6 +171,14 @@ func Fail(ctx context.Context, q db.Querier, j Job, cause error) error {
 	return err
 }
 
+// Extend keeps a running job's lease alive (long backfills renew it while
+// they work).
+func Extend(ctx context.Context, q db.Querier, j Job, lease time.Duration) error {
+	_, err := q.Exec(ctx, `UPDATE schedule SET lease_until = now() + make_interval(secs => $3)
+		WHERE kind = $1 AND entity_id = $2 AND lease_until IS NOT NULL`, j.Kind, j.EntityID, lease.Seconds())
+	return err
+}
+
 // Release hands a job back unrun (the worker is shutting down): it is due
 // again at once and the attempt does not count.
 func Release(ctx context.Context, q db.Querier, j Job) error {

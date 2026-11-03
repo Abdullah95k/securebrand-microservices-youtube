@@ -2,21 +2,27 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/collect"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/detect"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/feeds"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/secrets"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/websub"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/writer"
 )
@@ -27,7 +33,30 @@ const (
 	DefaultProxiesFile = "/etc/securebrand-youtube/proxies.txt"
 	EnvDebugDir        = "YT_DEBUG_DIR"
 	DefaultDebugDir    = "/var/lib/securebrand-youtube/debug"
+	// Push notifications (off until a public subdomain exists, D23).
+	EnvWebSubCallback       = "YT_WEBSUB_CALLBACK" // e.g. https://push.example.com/websub
+	EnvWebSubSecretFile     = "YT_WEBSUB_SECRET_FILE"
+	DefaultWebSubSecretFile = "/etc/securebrand-youtube/websub_secret"
 )
+
+// webSubConfig reads the push settings; Enabled() is false when unset.
+func webSubConfig() (websub.Config, error) {
+	cb := strings.TrimSpace(os.Getenv(EnvWebSubCallback))
+	if cb == "" {
+		return websub.Config{}, nil
+	}
+	if !strings.HasPrefix(cb, "https://") {
+		return websub.Config{}, fmt.Errorf("%s must be an https:// URL", EnvWebSubCallback)
+	}
+	secret, err := secrets.ReadFile(pathFromEnv(EnvWebSubSecretFile, DefaultWebSubSecretFile))
+	if err != nil {
+		return websub.Config{}, fmt.Errorf("websub secret: %w", err)
+	}
+	if len(secret) < 32 {
+		return websub.Config{}, errors.New("websub secret: at least 32 characters (openssl rand -hex 32)")
+	}
+	return websub.Config{Callback: cb, Secret: []byte(secret)}, nil
+}
 
 // workerCmd runs the collector: it leases jobs and reads YouTube through
 // the proxies. Each worker process owns the proxies in its file; two
@@ -66,8 +95,23 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	}
 	pp := proxypool.New(proxies, proxypool.Config{MinInterval: *interval}, time.Now().UnixNano())
 	fetch := &phase0.Collector{Client: innertube.New(innertube.Options{Pool: pp}), Store: debug, Now: time.Now, Log: log}
-	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer,
-		Write: &writer.Writer{Pool: pool, Sup: sup, KW: live}}
+	wr := &writer.Writer{Pool: pool, Sup: sup, KW: live}
+	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer, Write: wr}
+	handlers := svc.Handlers()
+	rss := &detect.RSS{Pool: pool, Feeds: feeds.NewFetcher(fetch.Client), Write: wr, Log: log}
+	for k, h := range rss.Handlers() {
+		handlers[k] = h
+	}
+	wsCfg, err := webSubConfig()
+	if err != nil {
+		return err
+	}
+	if wsCfg.Enabled() {
+		sub := &websub.Subscriber{Pool: pool, Cfg: wsCfg, Log: log}
+		for k, h := range sub.Handlers() {
+			handlers[k] = h
+		}
+	}
 
 	// Keep the suppression list and the keywords current.
 	go func() {
@@ -87,8 +131,72 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	go live.Run(ctx, pool, time.Minute, func(err error) { log.Warn("refreshing keywords failed", "err", err) })
 
 	host, _ := os.Hostname()
-	w := &worker.Worker{Pool: pool, Owner: fmt.Sprintf("%s/%d", host, os.Getpid()), Handlers: svc.Handlers(),
+	w := &worker.Worker{Pool: pool, Owner: fmt.Sprintf("%s/%d", host, os.Getpid()), Handlers: handlers,
 		Concurrency: *workers, Lease: 15 * time.Minute, Log: log}
-	log.Info("worker running", "proxies", len(proxies), "interval", interval.String(), "workers", *workers)
+	log.Info("worker running", "proxies", len(proxies), "interval", interval.String(), "workers", *workers, "push", wsCfg.Enabled())
 	return w.Run(ctx)
+}
+
+// websubCmd runs the push receiver (behind your HTTPS reverse proxy) and
+// keeps every listed channel subscribed.
+func websubCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []string) error {
+	fs := flag.NewFlagSet("websub", flag.ContinueOnError)
+	addr := fs.String("addr", ":8080", "address the receiver listens on (put HTTPS in front of it)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := webSubConfig()
+	if err != nil {
+		return err
+	}
+	if !cfg.Enabled() {
+		return fmt.Errorf("push is off: set %s (and the secret file) once the subdomain exists (D23)", EnvWebSubCallback)
+	}
+	keyer, err := privacy.LoadKeyer(pathFromEnv(EnvPrivacyKeyFile, DefaultPrivacyKeyFile))
+	if err != nil {
+		return fmt.Errorf("privacy key: %w", err)
+	}
+	sup := privacy.NewSuppressor(keyer)
+	if err := sup.Refresh(ctx, pool); err != nil {
+		return err
+	}
+	live := &kwstore.Live{}
+	if _, err := live.Refresh(ctx, pool); err != nil {
+		return err
+	}
+	go live.Run(ctx, pool, time.Minute, func(err error) { log.Warn("refreshing keywords failed", "err", err) })
+	rc := &websub.Receiver{Pool: pool, Cfg: cfg, Log: log,
+		RSS: &detect.RSS{Pool: pool, Write: &writer.Writer{Pool: pool, Sup: sup, KW: live}, Log: log}}
+	sub := &websub.Subscriber{Pool: pool, Cfg: cfg, Log: log}
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			if n, err := sub.Ensure(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("adding push subscriptions failed", "err", err)
+			} else if n > 0 {
+				log.Info("push subscriptions queued", "channels", n)
+			}
+			if err := sup.Refresh(ctx, pool); err != nil && ctx.Err() == nil {
+				log.Warn("refreshing the suppression list failed", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	srv := &http.Server{Addr: *addr, Handler: rc, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second}
+	go func() {
+		<-ctx.Done()
+		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sctx)
+	}()
+	log.Info("push receiver listening", "addr", *addr)
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }

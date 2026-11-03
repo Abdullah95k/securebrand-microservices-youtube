@@ -7,6 +7,7 @@ const (
 	KindTabs         = "tabs"          // Videos, Shorts and Live tabs: uploads the feed missed
 	KindBackfill     = "backfill"      // the last 365 days of uploads
 	KindRSS          = "rss"           // the channel's feed: new uploads
+	KindWebSub       = "websub"        // (re)subscribe to the channel's push notifications
 	KindPosts        = "posts"         // the community Posts tab
 	KindVideo        = "video"         // video details and stats
 	KindComments     = "comments"      // newest-first scan for new comments

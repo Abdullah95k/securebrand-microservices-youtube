@@ -202,6 +202,12 @@ func kindOf(k ytparse.Kind) (kind, live string) {
 // Listed stores a video seen in a channel tab, if it is new. Existing
 // videos are left to their own checks. It reports whether it was new.
 func (w *Writer) Listed(ctx context.Context, channelID string, it ytparse.VideoItem) (bool, error) {
+	return w.ListedVia(ctx, channelID, it, "web")
+}
+
+// ListedVia is Listed with the source that saw the video first (web, rss,
+// websub); detection delay is measured per source.
+func (w *Writer) ListedVia(ctx context.Context, channelID string, it ytparse.VideoItem, source string) (bool, error) {
 	if it.VideoID == "" {
 		return false, errors.New("writer: video without an ID")
 	}
@@ -223,10 +229,10 @@ func (w *Writer) Listed(ctx context.Context, channelID string, it ytparse.VideoI
 	}
 	tag, err := w.Pool.Exec(ctx, `INSERT INTO videos (id, channel_id, kind, title, published_at, published_precision_s, published_text,
 			duration_s, views, live_status, relevant, matched_keywords, first_seen, source)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'web')
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (id) DO NOTHING`,
 		it.VideoID, channelID, kind, str(it.Title), published, precision, str(it.PublishedText), dur,
-		nullCount(it.Views), live, relevant, nonNil(kws), w.now())
+		nullCount(it.Views), live, relevant, nonNil(kws), w.now(), source)
 	if err != nil {
 		return false, err
 	}

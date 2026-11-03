@@ -54,11 +54,17 @@ func ImportSeed(ctx context.Context, q db.Querier) (int, error) {
 	}
 	for _, k := range seed {
 		var id int64
-		err := q.QueryRow(ctx, `INSERT INTO keywords (label, kind, ambiguous, source, seed_id, grp)
-			VALUES ($1, $2, $3, 'seed', $1, $4)
+		// Iraq and Iraqi themselves are the top-priority group: the API
+		// sweeps them every 3 hours.
+		prio := 0
+		if k.Group == "iraq" {
+			prio = 1
+		}
+		err := q.QueryRow(ctx, `INSERT INTO keywords (label, kind, ambiguous, source, seed_id, grp, priority)
+			VALUES ($1, $2, $3, 'seed', $1, $4, $5)
 			ON CONFLICT (seed_id) DO UPDATE SET kind = EXCLUDED.kind, ambiguous = EXCLUDED.ambiguous, grp = EXCLUDED.grp,
 				updated_at = now()
-			RETURNING id`, k.ID, k.Kind, k.Ambiguous, k.Group).Scan(&id)
+			RETURNING id`, k.ID, k.Kind, k.Ambiguous, k.Group, prio).Scan(&id)
 		if err != nil {
 			return 0, fmt.Errorf("kwstore: seed %s: %w", k.ID, err)
 		}
@@ -327,24 +333,26 @@ func (l *Live) Run(ctx context.Context, q db.Querier, every time.Duration, onErr
 
 // SearchTerm is one term the search runner searches.
 type SearchTerm struct {
-	KeywordID int64
-	Term      string
+	KeywordID  int64
+	Term       string // as searched
+	Normalized string
+	Priority   int
 }
 
 // SearchTerms lists the spellings of active, searched keywords, each
 // normalized form once; the search runner rotates through them. Ambiguous
 // keywords are left out: alone they would mostly find unrelated videos.
 func SearchTerms(ctx context.Context, q db.Querier) ([]SearchTerm, error) {
-	rows, err := q.Query(ctx, `SELECT DISTINCT ON (v.normalized) k.id, v.variant
+	rows, err := q.Query(ctx, `SELECT DISTINCT ON (v.normalized) k.id, v.variant, v.normalized, k.priority
 		FROM keywords k JOIN keyword_variants v ON v.keyword_id = k.id
-		WHERE k.active AND k.searched AND NOT k.ambiguous
-		ORDER BY v.normalized, k.id`)
+		WHERE k.active AND k.searched AND NOT k.ambiguous AND (k.expires_at IS NULL OR k.expires_at > now())
+		ORDER BY v.normalized, k.priority DESC, k.id`)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (SearchTerm, error) {
 		var t SearchTerm
-		err := r.Scan(&t.KeywordID, &t.Term)
+		err := r.Scan(&t.KeywordID, &t.Term, &t.Normalized, &t.Priority)
 		return t, err
 	})
 }

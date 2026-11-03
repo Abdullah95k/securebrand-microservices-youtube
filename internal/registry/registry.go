@@ -234,7 +234,8 @@ func Set(ctx context.Context, q db.Querier, id, kind string, tier policy.Tier) e
 	if err := in.check(); err != nil {
 		return err
 	}
-	tag, err := q.Exec(ctx, `UPDATE channels SET kind = $2, tier = $3 WHERE id = $1 AND status = 'listed'`, id, in.Kind, string(in.Tier))
+	tag, err := q.Exec(ctx, `UPDATE channels SET kind = $2, tier = $3, tier_manual = true WHERE id = $1 AND status = 'listed'`,
+		id, in.Kind, string(in.Tier))
 	if err != nil {
 		return err
 	}

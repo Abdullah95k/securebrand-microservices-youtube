@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/keywords"
 )
 
 // Keyword-matching quality (E11): a sample of found videos is labelled
@@ -247,6 +249,9 @@ func (d *discoveryMatcher) matches(text string) (bool, []string) {
 	for _, h := range d.m.Match(text) {
 		ids[h.KeywordID] = true
 	}
+	if keywords.Kurdish(text) {
+		ids[keywords.KurdishID] = true
+	}
 	out := make([]string, 0, len(ids))
 	for id := range ids {
 		out = append(out, id)
@@ -370,6 +375,10 @@ func reportLabels(p func(string, ...any), sample []LabelItem, answers []LabelAns
 	p("| Rejected videos that %s relevant | %s (%d of %d) |", who, pctStr(missRate), fn, fn+tn)
 	p("| Share of all found videos the matcher accepts | %s |", pctStr(pAcc))
 	p("| Estimated recall: relevant videos the matcher catches | %s |", pctStr(recall))
+	if kp, kr, changed := withKurdishRule(sample, last, items); changed > 0 {
+		p("| With the Kurdish-language rule (D28): precision / estimated recall (%d sample titles in Kurdish) | %s / %s |",
+			changed, pctStr(kp), pctStr(kr))
+	}
 	p("")
 	if byAI > 0 {
 		p("The AI judged each title alone, against the same question you would answer. Its labels measure agreement with its judgment, not the truth: the spot-check row shows how far to trust them. Where you answered, your answer counts.")
@@ -400,4 +409,54 @@ func reportLabels(p func(string, ...any), sample []LabelItem, answers []LabelAns
 		p("Keywords behind wrongly accepted videos: %s.", strings.Join(parts, ", "))
 		p("")
 	}
+}
+
+// withKurdishRule re-judges the sample with the Kurdish-language rule (D28,
+// 5 November 2026), for samples drawn before it. changed is the number of
+// rejected sample titles it would accept.
+func withKurdishRule(sample []LabelItem, last map[int]LabelAnswer, items []DiscoverItem) (precision, recall float64, changed int) {
+	var tp, fp, fn, tn int
+	for _, it := range sample {
+		q := it.Qualifies
+		if !q && keywords.Kurdish(it.Title) {
+			q = true
+			changed++
+		}
+		a, ok := last[it.Index]
+		if !ok || a.Skipped {
+			continue
+		}
+		switch {
+		case q && a.Relevant:
+			tp++
+		case q:
+			fp++
+		case a.Relevant:
+			fn++
+		default:
+			tn++
+		}
+	}
+	if changed == 0 {
+		return 0, 0, 0
+	}
+	seen := map[string]bool{}
+	acc, all := 0, 0
+	for _, it := range items {
+		if seen[it.VideoID] {
+			continue
+		}
+		seen[it.VideoID] = true
+		all++
+		if it.Qualifies || keywords.Kurdish(it.Title) {
+			acc++
+		}
+	}
+	precision = share(tp, tp+fp)
+	missRate := share(fn, fn+tn)
+	pAcc := share(acc, all)
+	if d := pAcc*precision + (1-pAcc)*missRate; d > 0 {
+		recall = pAcc * precision / d
+	}
+	return precision, recall, changed
 }

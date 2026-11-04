@@ -59,7 +59,7 @@ erbil	erbil	place	ar,ckb,kmr,en,tr	0	أربيل|هولير|هەولێر|Hewlêr|
 # Sulaymaniyah. Arabic "السليمانية" is also a district of Riyadh and the Süleymaniye
 # Mosque; after normalization Sorani "سلێمانی" and Kurmanji "Silêmanî" equal the
 # surname Soleimani; Turkish "Süleymaniye" is usually the Istanbul mosque.
-sulaymaniyah	sulaymaniyah	place	ar,ckb,en	0	محافظة السليمانية|پارێزگای سلێمانی|شاری سلێمانی|Sulaymaniyah|Sulaymaniya|Sulaymaniyya|Sulaimaniyah|Sulaimaniya|Suleimaniyah|Suleimaniya|Slemani|Sulaimani
+sulaymaniyah	sulaymaniyah	place	ar,ckb,en	0	محافظة السليمانية|محافظة سليمانية|پارێزگای سلێمانی|شاری سلێمانی|Sulaymaniyah|Sulaymaniya|Sulaymaniyya|Sulaimaniyah|Sulaimaniya|Suleimaniyah|Suleimaniya|Slemani|Sulaimani
 sulaymaniyah-ambiguous	sulaymaniyah	place	ar,ckb,kmr,tr	1	السليمانية|سلێمانی|Silêmanî|Silêmaniyê|Süleymaniye
 
 # Duhok

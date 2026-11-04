@@ -97,6 +97,9 @@ func newDiscoveryMatcher(terms []string) *discoveryMatcher {
 // qualifies applies the seed list's rule: a match on an ambiguous keyword
 // needs a second, different keyword before it counts.
 func (d *discoveryMatcher) qualifies(text string) bool {
+	if keywords.Kurdish(text) {
+		return true // Kurdish-language content counts on its own (D28)
+	}
 	hits := d.m.Match(text)
 	ids := map[string]bool{}
 	for _, h := range hits {

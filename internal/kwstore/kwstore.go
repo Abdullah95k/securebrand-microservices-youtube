@@ -233,7 +233,7 @@ func MatchID(k Keyword) string {
 
 // Matcher is a keyword matcher with the seed list's rule for ambiguous
 // keywords: a match on an ambiguous keyword needs a second, different
-// keyword before it counts.
+// keyword before it counts. Text written in Kurdish counts on its own (D28).
 type Matcher struct {
 	m         *keywords.Matcher
 	ambiguous map[string]bool
@@ -269,6 +269,12 @@ func (mt *Matcher) Match(text string) (relevant bool, ids []string) {
 			seen[h.KeywordID] = true
 			ids = append(ids, h.KeywordID)
 		}
+	}
+	// Kurdish-language text (Sorani, Badini) is relevant on its own (D28).
+	if keywords.Kurdish(text) {
+		ids = append(ids, keywords.KurdishID)
+		sort.Strings(ids)
+		return true, ids
 	}
 	sort.Strings(ids)
 	for _, id := range ids {

@@ -763,7 +763,9 @@ func reportCensus(p func(string, ...any), recs []CensusRecord) {
 	found := map[string]int{}
 	var reqs []float64
 	for _, r := range recs {
-		reqs = append(reqs, float64(r.Requests))
+		if r.Requests > 0 { // records written before 5 November 2026 have no count
+			reqs = append(reqs, float64(r.Requests))
+		}
 	}
 	for _, r := range ok {
 		if r.Core {
@@ -785,7 +787,9 @@ func reportCensus(p func(string, ...any), recs []CensusRecord) {
 	p("| Iraq channels (core) / mention only | %s / %s |", pctStr(share(core, len(ok))), pctStr(share(len(ok)-core, len(ok))))
 	p("| Core signals: About country is Iraq / own title, description or keywords match | %s / %s |", pctStr(share(byCountry, len(ok))), pctStr(share(byMeta, len(ok))))
 	p("| Found by: website only / API only / both | %s / %s / %s |", pctStr(share(found["web"], len(ok))), pctStr(share(found["api"], len(ok))), pctStr(share(found["both"], len(ok))))
-	p("| Requests per channel profiled (median) | %s |", f1(pct(reqs, 50)))
+	if len(reqs) > 0 {
+		p("| Requests per channel profiled (median) | %s |", f1(pct(reqs, 50)))
+	}
 	p("")
 	buckets := []struct {
 		name string

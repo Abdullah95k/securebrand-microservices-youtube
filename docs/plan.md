@@ -657,7 +657,9 @@ older than 12 months as compressed JSON-lines files in object storage (D27).
 
 1. **WebSub push** for every listed channel, core and mention. The video is fetched immediately. For mention channels the title and
    description are matched first, and only relevant items get full collection.
-2. **RSS** at tier intervals (30 min for A, then 2 h, 6 h, 24 h, 24 h).
+2. **RSS** at tier intervals (30 min for A, then 2 h, 6 h, 24 h, 24 h). Phase 0 found the feed service answering "not found" for
+   every channel at once, for about 9 hours at a time (up to 22 hours) and about 40% of the time. While it does, each feed read is
+   replaced by a read of the first page of the channel's Videos, Shorts and Live tabs, at the same interval.
 3. **Channel tab check** daily for A/B, weekly for C, monthly for D. It catches misses, premieres, and videos made public later.
 
 We measure detection delay per layer. WebSub at 100,000+ subscriptions has not been tested at that scale [verify the hub's limits]. If the
@@ -741,7 +743,11 @@ hub limits us, RSS intervals are tightened automatically.
   | Parse errors | Raw response kept 3 days, job moved to `parse_failures`, alert on a rising rate |
   | Video/channel gone | Re-checked once; if still gone, marked removed with the time; stored content kept (D18) |
 
-- **Circuit breakers** per endpoint and for RSS (if more than 20% of feeds fail at once, RSS pauses and tab checks take over).
+- **Circuit breakers** per endpoint and for RSS (if more than 20% of feeds fail at once, RSS pauses and each channel's tabs are read in
+  its place, §8.5).
+- **The player endpoint is asked sparingly:** Phase 0 saw blocks even at one request per 10 s per IP. It is used on a video's first
+  check (exact publish time, category, tags), for streams that are or may be live, and to retry in the first week; the watch page
+  gives the numbers on every other check.
 - **Kill switches** per endpoint and per feature (comments, posts, scraped search, discovery).
 - **Safe re-runs:** all writes are upserts keyed by YouTube IDs.
 

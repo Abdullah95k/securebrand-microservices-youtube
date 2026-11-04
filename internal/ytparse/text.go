@@ -39,6 +39,10 @@ var (
 	// Screen-reader labels spell the unit out ("12 thousand views").
 	numberRe = regexp.MustCompile(`(\d[\d,]*(?:\.\d+)?)\s*((?:[KMBkmb](?:[^A-Za-z]|$))|(?i:thousand|million|billion)|ألف|آلاف|الف|مليون|ملايين|مليار|مليارات)?`)
 	noneRe   = regexp.MustCompile(`(?i)\bno\b|لا توجد|لا يوجد|بلا`)
+	// Arabic writes 1 and 2 as words, without a digit: "تعليق واحد"
+	// (one comment), "تعليقان" (two comments), "مشاهدة واحدة" (one view).
+	oneRe = regexp.MustCompile(`واحد|واحدة`)
+	twoRe = regexp.MustCompile(`تعليقان|تعليقين|مشاهدتان|مشاهدتين|مشتركان|إعجابان|إعجابين|ردّان|ردان|ردّين|ردين|فيديوهان|فيديوان|فيديوين`)
 )
 
 func foldDigits(s string) string { return digitFolder.Replace(s) }
@@ -54,8 +58,13 @@ func ParseCount(text string) Count {
 	s := foldDigits(text)
 	m := numberRe.FindStringSubmatch(s)
 	if m == nil {
-		if noneRe.MatchString(s) {
+		switch {
+		case noneRe.MatchString(s):
 			return Count{Min: 0, Max: 1, Exact: true, OK: true, Text: text}
+		case twoRe.MatchString(s):
+			return Count{Min: 2, Max: 3, Exact: true, OK: true, Text: text}
+		case oneRe.MatchString(s):
+			return Count{Min: 1, Max: 2, Exact: true, OK: true, Text: text}
 		}
 		return c
 	}

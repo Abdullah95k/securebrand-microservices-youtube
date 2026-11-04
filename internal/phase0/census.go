@@ -125,8 +125,8 @@ func Census(ctx context.Context, col *Collector, o CensusOptions, log *slog.Logg
 	return nil
 }
 
-func (c *Collector) profileChannel(ctx context.Context, cand censusCandidate, match *discoveryMatcher) CensusRecord {
-	rec := CensusRecord{At: c.Now(), ChannelHash: shortHash(cand.id)}
+func (c *Collector) profileChannel(ctx context.Context, cand censusCandidate, match *discoveryMatcher) (rec CensusRecord) {
+	rec = CensusRecord{At: c.Now(), ChannelHash: shortHash(cand.id)}
 	switch {
 	case cand.engines["web"] && cand.engines["api"]:
 		rec.FoundBy = "both"

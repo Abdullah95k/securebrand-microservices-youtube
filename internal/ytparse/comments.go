@@ -145,8 +145,17 @@ func ParseComments(data any, now time.Time) CommentsPage {
 
 	page.NextToken = pageContinuation(data)
 	if h := jsonx.First(data, "commentsHeaderRenderer"); h != nil {
-		page.TotalText = jsonx.TextAt(h, "countText")
-		page.Total = ParseCount(page.TotalText)
+		// Newer headers carry the bare number in commentsCount next to the
+		// sentence in countText (Phase 0: 30% of videos had only the
+		// former readable).
+		for _, key := range []string{"commentsCount", "countText"} {
+			if t := jsonx.TextAt(h, key); t != "" {
+				page.TotalText, page.Total = t, ParseCount(t)
+				if page.Total.OK {
+					break
+				}
+			}
+		}
 	}
 	page.NewestFirstToken = newestFirstToken(data)
 	return page

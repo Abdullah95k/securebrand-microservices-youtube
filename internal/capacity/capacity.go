@@ -29,7 +29,9 @@ const Efficiency = 0.8
 
 // Cost is the estimated YouTube requests per run of each job kind.
 var Cost = map[string]float64{
-	queue.KindResolve: 2, queue.KindChannel: 2, queue.KindTabs: 4, queue.KindBackfill: 40, queue.KindRSS: 1,
+	// RSS: 1 request, or up to 3 tab pages while the feed service is down
+	// (Phase 0: about 40% of the time).
+	queue.KindResolve: 2, queue.KindChannel: 2, queue.KindTabs: 4, queue.KindBackfill: 40, queue.KindRSS: 2,
 	queue.KindPosts: 2, queue.KindPlaylists: 4, queue.KindVideo: 2, queue.KindComments: 4, queue.KindSweep: 15,
 	queue.KindPostComments: 3, queue.KindEnrich: 2, queue.KindCandidate: 3, queue.KindSearch: 4,
 	queue.KindLive: 1, queue.KindWebSub: 0, "erasure": 0,

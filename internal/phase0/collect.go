@@ -361,8 +361,9 @@ func (c *Collector) Tab(ctx context.Context, channelID, params string, since tim
 		// Shorts carry no date on the tab. When a page with more to come
 		// holds no dated item, the player gives its last item's publish
 		// date (one request per page), so the window still ends the list.
-		// The page that crosses the window is kept whole.
-		if !old && dated == 0 && len(l.Videos) > 0 && l.NextToken != "" {
+		// The page that crosses the window is kept whole. No probe on the
+		// last page allowed (the player is the endpoint guarded hardest).
+		if !old && dated == 0 && len(l.Videos) > 0 && l.NextToken != "" && res.Pages < maxPages {
 			if at, ok := c.publishedAt(ctx, l.Videos[len(l.Videos)-1].VideoID, cost); ok {
 				res.DateProbes++
 				old = at.Before(since)

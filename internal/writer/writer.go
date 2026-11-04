@@ -288,13 +288,16 @@ func nonNil(s []string) []string {
 
 // Video is what a video check read.
 type Video struct {
-	ID           string
-	ChannelID    string
-	Watch        ytparse.WatchInfo
-	Player       ytparse.PlayerInfo
-	HasPlayer    bool
-	ListingKind  ytparse.Kind // from the tab, when known
-	PublishedEst ytparse.TimeEstimate
+	ID        string
+	ChannelID string
+	Watch     ytparse.WatchInfo
+	Player    ytparse.PlayerInfo
+	HasPlayer bool
+	// SkippedPlayer: the player was not asked this time (it is used
+	// sparingly, Phase 0 E1); what it reported before is kept.
+	SkippedPlayer bool
+	ListingKind   ytparse.Kind // from the tab, when known
+	PublishedEst  ytparse.TimeEstimate
 }
 
 // VideoOutcome says what the check found.
@@ -464,7 +467,8 @@ func (w *Writer) Video(ctx context.Context, v Video) (VideoOutcome, error) {
 				comments_text = COALESCE(EXCLUDED.comments_text, videos.comments_text),
 				comments_disabled = EXCLUDED.comments_disabled,
 				tags = COALESCE(EXCLUDED.tags, videos.tags), category = COALESCE(EXCLUDED.category, videos.category),
-				player_unavailable = EXCLUDED.player_unavailable, live_status = EXCLUDED.live_status,
+				player_unavailable = CASE WHEN $26 THEN videos.player_unavailable ELSE EXCLUDED.player_unavailable END,
+				live_status = EXCLUDED.live_status,
 				relevant = EXCLUDED.relevant, matched_keywords = EXCLUDED.matched_keywords,
 				family_safe = COALESCE(EXCLUDED.family_safe, videos.family_safe),
 				caption_langs = COALESCE(EXCLUDED.caption_langs, videos.caption_langs),
@@ -472,7 +476,8 @@ func (w *Writer) Video(ctx context.Context, v Video) (VideoOutcome, error) {
 				last_checked = EXCLUDED.last_checked, missed_checks = 0, removed_at = NULL`,
 			v.ID, v.ChannelID, kind, str(title), str(desc), published, precision, str(v.Watch.DateText), dur, views,
 			likes, likesText, comments, commentsText, out.CommentsOff, tagsOrNil(v.HasPlayer, tags), category, !v.HasPlayer,
-			live, out.Relevant, nonNil(out.Keywords), familySafe(v), captionsOrNil(v.HasPlayer, captions), chapters, now); err != nil {
+			live, out.Relevant, nonNil(out.Keywords), familySafe(v), captionsOrNil(v.HasPlayer, captions), chapters, now,
+			v.SkippedPlayer); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO video_snapshots (video_id, taken_at, views, likes_min, comments_min, live_viewers)

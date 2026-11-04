@@ -42,6 +42,8 @@ type Service struct {
 	Window     time.Duration  // backfill depth (default 365 days)
 	MaxPages   int            // safety limit per tab (default 400)
 	Stretch    func() float64 // the capacity planner's stretch for C, D, M; nil = 1
+
+	recentTabs tabCache // tab parameters for RecentUploads
 }
 
 func (s *Service) now() time.Time {
@@ -290,10 +292,13 @@ func (s *Service) tabs(ctx context.Context, j queue.Job) (time.Time, error) {
 // snapshot, and schedules its next check and its comments.
 func (s *Service) video(ctx context.Context, j queue.Job) (time.Time, error) {
 	var channelID, kind, live string
-	var published *time.Time
+	var published, lastChecked *time.Time
 	var precision *int
-	err := s.Pool.QueryRow(ctx, `SELECT channel_id, kind, COALESCE(live_status, 'none'), published_at, published_precision_s
-		FROM videos WHERE id = $1`, j.EntityID).Scan(&channelID, &kind, &live, &published, &precision)
+	var category *string
+	firstSeen := s.now()
+	err := s.Pool.QueryRow(ctx, `SELECT channel_id, kind, COALESCE(live_status, 'none'), published_at, published_precision_s,
+			last_checked, category, first_seen
+		FROM videos WHERE id = $1`, j.EntityID).Scan(&channelID, &kind, &live, &published, &precision, &lastChecked, &category, &firstSeen)
 	if errors.Is(err, pgx.ErrNoRows) {
 		channelID = j.ChannelID // first seen in a feed: the job names the channel
 	} else if err != nil {
@@ -306,8 +311,15 @@ func (s *Service) video(ctx context.Context, j queue.Job) (time.Time, error) {
 	if !listed {
 		return time.Time{}, nil
 	}
+	// The player is guarded hardest (Phase 0 E1: blocked even at one
+	// request per 10 s, IPs back after ~2 hours), and the watch page has
+	// the numbers. Ask it only when it adds something: a video's first
+	// check (exact publish time, category, tags), a stream that is or may
+	// be live, and a first week's retry when it has not answered yet.
+	usePlayer := s.WithPlayer && (lastChecked == nil || kind == "live" && (live == "live" || live == "upcoming") ||
+		category == nil && s.now().Sub(firstSeen) < 7*24*time.Hour)
 	var cost phase0.Cost
-	res, err := s.Fetch.Video(ctx, j.EntityID, s.WithPlayer, &cost)
+	res, err := s.Fetch.Video(ctx, j.EntityID, usePlayer, &cost)
 	if err != nil && !errors.Is(err, innertube.ErrNotFound) {
 		return time.Time{}, err
 	}
@@ -325,7 +337,7 @@ func (s *Service) video(ctx context.Context, j queue.Job) (time.Time, error) {
 		return s.now().Add(time.Hour), nil
 	}
 	v := writer.Video{ID: j.EntityID, ChannelID: channelID, Watch: res.Watch, Player: res.Player,
-		HasPlayer: res.PlayerErr == "" && res.Player.VideoID != "", ListingKind: ytparse.KindVideo}
+		HasPlayer: res.PlayerErr == "" && res.Player.VideoID != "", SkippedPlayer: !usePlayer, ListingKind: ytparse.KindVideo}
 	switch {
 	case kind == "short":
 		v.ListingKind = ytparse.KindShort

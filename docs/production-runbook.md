@@ -158,9 +158,10 @@ echo '{"type": "dir", "dir": "/var/lib/securebrand-youtube/objects"}' > /etc/sec
 
 ## 5. Start the stack
 
-1. Set the worker's request gap from Phase 0 (E1). Open the Compose file and change `-interval` under `worker` (for example
-   `"6s"`). On a server with a different amount of memory, also set Postgres's `shared_buffers` to about 1/8 of memory and
-   `effective_cache_size` to about 5/8:
+1. Check the worker's request gap. The Compose file starts at `-interval "2s"` under `worker`: Phase 0 (E1) found every page type
+   clean down to 1 request per second per IP, except the player, which the collector asks only when it adds something. If the
+   alerts show blocks, raise it (for example to `"3s"`). On a server with a different amount of memory, also set Postgres's
+   `shared_buffers` to about 1/8 of memory and `effective_cache_size` to about 5/8:
 
 ```bash
 nano ~/securebrand-microservices-youtube/deploy/compose/docker-compose.yml

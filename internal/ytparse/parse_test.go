@@ -477,3 +477,30 @@ func TestCaptionsAndTranscriptHelpers(t *testing.T) {
 		}
 	}
 }
+
+// Phase 0 (4 November 2026): headers whose sentence has no digit (Arabic
+// writes 2 as a word) still carry the bare number in commentsCount.
+func TestParseCommentsHeaderCount(t *testing.T) {
+	header := func(fields M) any {
+		return doc(t, M{"onResponseReceivedEndpoints": A{M{"reloadContinuationItemsCommand": M{"continuationItems": A{
+			M{"commentsHeaderRenderer": fields}}}}}})
+	}
+	for name, tc := range map[string]struct {
+		fields M
+		want   int64
+	}{
+		"number field":       {M{"commentsCount": M{"simpleText": "٦٠٧"}, "countText": M{"runs": A{M{"text": "التعليقات"}}}}, 607},
+		"sentence only":      {M{"countText": M{"runs": A{M{"text": "١٬٢٣٤"}, M{"text": " تعليقًا"}}}}, 1234},
+		"two, as a word":     {M{"countText": M{"runs": A{M{"text": "تعليقان"}}}}, 2},
+		"one, in two words":  {M{"countText": M{"runs": A{M{"text": "تعليق واحد"}}}}, 1},
+		"number beats words": {M{"commentsCount": M{"simpleText": "12"}, "countText": M{"runs": A{M{"text": "12 Comments"}}}}, 12},
+	} {
+		p := ParseComments(header(tc.fields), now)
+		if !p.Total.OK || p.Total.Min != tc.want {
+			t.Errorf("%s: total %+v, want %d", name, p.Total, tc.want)
+		}
+	}
+	if p := ParseComments(header(M{"countText": M{"runs": A{M{"text": "التعليقات"}}}}), now); p.Total.OK {
+		t.Errorf("a header without a number has no total: %+v", p.Total)
+	}
+}

@@ -251,3 +251,86 @@ func TestPostsAndPlaylists(t *testing.T) {
 		t.Error("a video that left the playlist is marked removed")
 	}
 }
+
+func endpointCount(yt *fakeyt.Server, endpoint string) int {
+	n := 0
+	for _, r := range yt.Requests() {
+		if r.Endpoint == endpoint {
+			n++
+		}
+	}
+	return n
+}
+
+// While the feed service is down, a channel's new uploads come from its
+// tabs: new ones are queued at P0, known ones are left alone, and the
+// channel page is read only once a day for the tab parameters.
+func TestRecentUploadsStandInForTheFeed(t *testing.T) {
+	r := newRig(t, []fakeyt.FakeChannel{fakeChannel()})
+	ctx := context.Background()
+	if err := registry.List(ctx, r.pool, nil, chID, registry.Input{Input: chID, Tier: policy.A}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = r.pool.Exec(ctx, `DELETE FROM schedule`)
+	n, err := r.svc.RecentUploads(ctx, chID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// fakeCV1 is 2 hours old; Shorts show no date, so the Short counts too.
+	if n != 2 || r.count(t, `SELECT count(*) FROM schedule WHERE kind = 'video' AND priority = 0`) != 2 {
+		t.Errorf("%d new uploads; want the recent ones (fakeCV1, the Short)", n)
+	}
+	if r.count(t, `SELECT count(*) FROM videos WHERE id = 'fakeCV2'`) != 0 {
+		t.Error("an upload 3 days old is outside the 48-hour window")
+	}
+	if endpointCount(r.yt, "player") != 0 {
+		t.Error("reading the tabs must not ask the player")
+	}
+	if r.count(t, `SELECT count(*) FROM videos WHERE id = 'fakeCV3' AND kind = 'short' AND source = 'tab'`) != 1 {
+		t.Error("an upload from the Shorts tab is stored as a Short, with source 'tab'")
+	}
+	if r.count(t, `SELECT count(*) FROM videos WHERE id = 'fakeCVold'`) != 0 {
+		t.Error("only recent uploads are looked at")
+	}
+	pages := endpointCount(r.yt, "browse")
+	if n, err := r.svc.RecentUploads(ctx, chID); err != nil || n != 0 {
+		t.Fatalf("second read: %d %v", n, err)
+	}
+	if extra := endpointCount(r.yt, "browse") - pages; extra > 3 {
+		t.Errorf("second read sent %d requests; the channel page comes from the cache, so at most one per tab", extra)
+	}
+}
+
+// The player is asked on a video's first check and not on later ones.
+func TestPlayerOnlyOnFirstCheck(t *testing.T) {
+	r := newRig(t, []fakeyt.FakeChannel{fakeChannel()})
+	ctx := context.Background()
+	if err := registry.List(ctx, r.pool, nil, chID, registry.Input{Input: chID, Tier: policy.A}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = r.pool.Exec(ctx, `DELETE FROM schedule`)
+	_, _ = r.pool.Exec(ctx, `INSERT INTO videos (id, channel_id, kind, title) VALUES ('fakeCV1', $1, 'video', 'new')`, chID)
+	check := func() {
+		t.Helper()
+		if _, err := r.svc.Handlers()[queue.KindVideo](ctx, queue.Job{Kind: queue.KindVideo, EntityID: "fakeCV1", ChannelID: chID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check()
+	if endpointCount(r.yt, "player") != 1 {
+		t.Fatalf("first check: %d player requests, want 1", endpointCount(r.yt, "player"))
+	}
+	if r.count(t, `SELECT count(*) FROM videos WHERE id = 'fakeCV1' AND published_precision_s = 0 AND NOT player_unavailable`) != 1 {
+		t.Error("the first check takes the exact publish time from the player")
+	}
+	check()
+	if endpointCount(r.yt, "player") != 1 {
+		t.Errorf("a later check must not ask the player (%d requests)", endpointCount(r.yt, "player"))
+	}
+	if r.count(t, `SELECT count(*) FROM videos WHERE id = 'fakeCV1' AND NOT player_unavailable AND category IS NOT NULL`) != 1 {
+		t.Error("a check without the player keeps what the player reported before")
+	}
+	if r.count(t, `SELECT count(*) FROM video_snapshots WHERE video_id = 'fakeCV1'`) != 2 {
+		t.Error("each check still takes a snapshot of the numbers")
+	}
+}

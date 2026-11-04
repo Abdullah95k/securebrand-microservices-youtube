@@ -35,6 +35,12 @@ func TestParseCount(t *testing.T) {
 		{"3.4 million views", 3400000, 3500000, false},
 		{"2 billion views", 2000000000, 2100000000, false},
 		{"345 views", 345, 346, true},
+		// Arabic says 1 and 2 in words (hl=ar).
+		{"تعليق واحد", 1, 2, true},
+		{"تعليقان", 2, 3, true},
+		{"مشاهدة واحدة", 1, 2, true},
+		{"مشتركان", 2, 3, true},
+		{"٢ تعليقات", 2, 3, true},
 	}
 	for _, tc := range tests {
 		c := ParseCount(tc.in)

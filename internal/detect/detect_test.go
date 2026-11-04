@@ -137,3 +137,50 @@ func TestBreakerOpensWhenFeedsFailWidely(t *testing.T) {
 		t.Error("10% failures must not open it")
 	}
 }
+
+// While the feed service answers "not found", the channel's tabs stand in:
+// on a 404, and for every channel without a feed request while the breaker
+// is open. The next read is at the normal interval.
+func TestFeedOutageReadsTabs(t *testing.T) {
+	yt, pool, rss := Rig(t) // no feeds set: the fake answers 404
+	var calls []string
+	rss.Recent = func(_ context.Context, channelID string) (int, error) {
+		calls = append(calls, channelID)
+		return 1, nil
+	}
+	run(t, pool, rss.Handlers())
+	if len(calls) != 2 {
+		t.Fatalf("tabs read for %v; want both channels after their 404s", calls)
+	}
+	var due time.Time
+	_ = pool.QueryRow(context.Background(), `SELECT due_at FROM schedule WHERE kind = 'rss' AND entity_id = $1`, core).Scan(&due)
+	if d := time.Until(due); d < 25*time.Minute || d > 31*time.Minute {
+		t.Errorf("next read in %v; want tier A's 30 minutes, as with a working feed", d)
+	}
+
+	// Breaker open: no feed request at all, the tabs are read directly.
+	b := &detect.Breaker{}
+	now := time.Now()
+	for i := 0; i < 20; i++ {
+		b.Record(now, false)
+	}
+	rss.Breaker = b
+	feedsBefore := 0
+	for _, r := range yt.Requests() {
+		if r.Endpoint == "feed" {
+			feedsBefore++
+		}
+	}
+	calls = nil
+	_, _ = pool.Exec(context.Background(), `UPDATE schedule SET due_at = now() WHERE kind = 'rss'`)
+	run(t, pool, rss.Handlers())
+	feedsAfter := 0
+	for _, r := range yt.Requests() {
+		if r.Endpoint == "feed" {
+			feedsAfter++
+		}
+	}
+	if len(calls) != 2 || feedsAfter != feedsBefore {
+		t.Errorf("breaker open: tabs read %d times, %d feed requests; want 2 and none", len(calls), feedsAfter-feedsBefore)
+	}
+}

@@ -86,11 +86,13 @@ services:
     <<: *ytcollect
     command: ["scheduler"]
 
-  # The collector. -interval: the gap between requests on one proxy IP
-  # (Phase 0 measures the safe value); -workers: jobs at the same time.
+  # The collector. -interval: the gap between requests on one proxy IP.
+  # Phase 0 (E1) found every page type clean down to 1 s per IP except the
+  # player, which the collector now asks sparingly; 2 s leaves a margin.
+  # -workers: jobs at the same time.
   worker:
     <<: *ytcollect
-    command: ["worker", "-interval", "4s", "-workers", "10"]
+    command: ["worker", "-interval", "2s", "-workers", "10"]
 
   # Push notifications (D23: off until a public subdomain exists). Start
   # with: docker compose --profile websub up -d. Put HTTPS (Caddy, nginx) in

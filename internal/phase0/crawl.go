@@ -170,6 +170,12 @@ func crawlChannel(ctx context.Context, col *Collector, input string, o CrawlOpti
 		rec.PostsFound = countPosts(ctx, col, id, t.Params, &rec.ListCost)
 	}
 	rec.Elapsed = col.Now().Sub(start)
+	if ctx.Err() != nil {
+		rec.Error = "interrupted: " + ctx.Err().Error()
+		_ = col.Store.Append("crawl_channels", rec)
+		log.Warn("channel interrupted; not counted", "channel", rec.ChannelHash)
+		return
+	}
 	_ = col.Store.Append("crawl_channels", rec)
 	log.Info("channel crawled", "channel", rec.ChannelHash, "videos", rec.VideosInWindow, "shorts", rec.ShortsInWindow,
 		"live", rec.LiveInWindow, "pages", rec.TabPages, "capped", rec.TabLimitHit, "undated", rec.Undated,

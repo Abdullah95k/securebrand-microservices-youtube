@@ -35,7 +35,11 @@ type RSS struct {
 	Now     func() time.Time
 	Stretch func() float64
 	Breaker *Breaker // nil: a default one
-	once    sync.Once
+	// Recent reads a channel's newest uploads from its tabs
+	// (collect.Service.RecentUploads). It replaces the feed while the feed
+	// service answers "not found"; nil: wait for the feed to come back.
+	Recent func(ctx context.Context, channelID string) (int, error)
+	once   sync.Once
 }
 
 func (r *RSS) now() time.Time {
@@ -72,7 +76,8 @@ func (r *RSS) feed(ctx context.Context, j queue.Job) (time.Time, error) {
 	next := r.now().Add(policy.Stretch(policy.RSS(t), t, r.stretch()))
 	br := r.breaker()
 	if br.Open(r.now()) {
-		return r.now().Add(30 * time.Minute), nil // feeds failing widely: tab checks cover meanwhile
+		// Feeds failing widely: read the channel's tabs instead.
+		return r.fallback(ctx, j.EntityID, next, r.now().Add(30*time.Minute))
 	}
 	res, err := r.Feeds.Fetch(ctx, j.EntityID)
 	switch {
@@ -81,12 +86,15 @@ func (r *RSS) feed(ctx context.Context, j queue.Job) (time.Time, error) {
 		return next, nil
 	case errors.Is(err, innertube.ErrNotFound):
 		// The feed service answers 404 for valid channels for hours at a
-		// time (plan §3.4): try again at the normal interval.
-		br.Record(r.now(), false)
-		return next, nil
+		// time (plan §3.4; Phase 0: all channels at once, ~9 hours at a
+		// time, ~40% of the time). The tabs show the same new uploads.
+		if br.Record(r.now(), false) && r.Log != nil {
+			r.Log.Warn("feeds answer \"not found\" widely: new uploads are read from channel tabs for 30 minutes")
+		}
+		return r.fallback(ctx, j.EntityID, next, next)
 	case err != nil:
 		if br.Record(r.now(), false) && r.Log != nil {
-			r.Log.Warn("more than 20% of feeds failing: feed checks pause for 30 minutes; tab checks continue")
+			r.Log.Warn("more than 20% of feeds failing: new uploads are read from channel tabs for 30 minutes")
 		}
 		return time.Time{}, err
 	}
@@ -106,6 +114,22 @@ func (r *RSS) feed(ctx context.Context, j queue.Job) (time.Time, error) {
 	}
 	if newCount > 0 && r.Log != nil {
 		r.Log.Info("new uploads in feed", "channel", j.EntityID, "new", newCount)
+	}
+	return next, nil
+}
+
+// fallback reads the channel's tabs when Recent is set; without it, the
+// job waits until "without".
+func (r *RSS) fallback(ctx context.Context, channelID string, next, without time.Time) (time.Time, error) {
+	if r.Recent == nil {
+		return without, nil
+	}
+	n, err := r.Recent(ctx, channelID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if n > 0 && r.Log != nil {
+		r.Log.Info("new uploads found on channel tabs (feed unavailable)", "channel", channelID, "new", n)
 	}
 	return next, nil
 }

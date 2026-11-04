@@ -49,6 +49,7 @@ and YouTube's internal website endpoints are undocumented. Phase 0 (§9) confirm
 | D25 | 2 Nov 2026 | E11: the 300-title sample is labelled by AI (only the public titles are sent to the AI provider), with an optional hand spot check of about 30 titles to measure how far to trust the AI |
 | D26 | 3 Nov 2026 | **All data is kept forever**, Phase 0 included: no time limits. Two things still remove data: an erasure request (with its suppression entry), and YouTube's API rule that data from the official API may be kept at most 30 days (the same items scraped from the website are kept) |
 | D27 | 3 Nov 2026 | Archive format: **gzip JSON-lines files in object storage**, one line per row with the IDs whose erasure removes it. Searchable with `ytcollect archive search`, a month can be put back into Postgres for a while, and ClickHouse or DuckDB can query the files in place if reports ever need it. Media and the archive share one object store (a local folder until object storage is set up) |
+| D28 | 5 Nov 2026 | **Kurdish-language content counts as relevant on its own**: text in Kurdish written in Arabic script (Sorani and Badini, the forms used in Iraq; this also covers the same script in Iran's Kurdish region) is relevant even without an Iraq keyword. "السليمانية" alone still needs a second Iraq keyword (it is also the Süleymaniye mosques and a district of Riyadh), as the seed list already had it |
 
 Your non-negotiable rules still apply:
 

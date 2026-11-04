@@ -85,3 +85,34 @@ func TestSeedImportYourKeywordsAndLiveMatcher(t *testing.T) {
 		t.Errorf("search terms: %d, err %v", len(terms), err)
 	}
 }
+
+// D28 (5 November 2026): Kurdish-language text is relevant on its own;
+// "السليمانية" alone still needs a second Iraq keyword.
+func TestKurdishAndSulaymaniyah(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	if _, err := kwstore.ImportSeed(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	var live kwstore.Live
+	if _, err := live.Refresh(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	m := live.Matcher()
+	ok, ids := m.Match("ڕۆژی 3 هێلکە بخۆی چی ڕودەدات ..؟؟ زۆر گرنگە بیزانی ..!!")
+	if !ok || len(ids) != 1 || ids[0] != "lang-ckb" {
+		t.Errorf("a Kurdish title with no keyword: %v %v; want relevant, matched by language", ok, ids)
+	}
+	if ok, _ := m.Match("مسجد التكية السليمانية في دمشق يعود لفتح أبوابه"); ok {
+		t.Error("the Süleymaniye mosque in Damascus must not count")
+	}
+	if ok, _ := m.Match("محافظه سليمانيه"); !ok {
+		t.Error("the governorate written without the article must count")
+	}
+	if ok, _ := m.Match("كانون الثاني 2022 محافظة السليمانية عراق"); !ok {
+		t.Error("السليمانية with a second Iraq keyword counts")
+	}
+	if ok, _ := m.Match("وصفة الكبسة السعودية"); ok {
+		t.Error("an unrelated Arabic title must not count")
+	}
+}

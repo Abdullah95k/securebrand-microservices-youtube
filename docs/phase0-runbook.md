@@ -229,6 +229,10 @@ docker run --rm -v /etc/securebrand-youtube:/etc/securebrand-youtube:ro -v /var/
 docker run --rm -v /var/lib/securebrand-youtube:/var/lib/securebrand-youtube ytprobe report
 ```
 
+> **Phase 0 ended early, with the 5 November 2026 discovery and census (D30).** The Day 7 resweep and the later discovery and
+> census runs were dropped: production measures the same trends. Steps 22–24 (the final report and stopping detection) are
+> done after that census.
+
 ## Day 7
 
 21. Re-read the comments of the crawled videos to measure edits and deletions. If the crawl ran on 2 November 2026, run this on 9 November 2026:

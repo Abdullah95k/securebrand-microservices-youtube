@@ -51,7 +51,7 @@ and YouTube's internal website endpoints are undocumented. Phase 0 (§9) confirm
 | D27 | 3 Nov 2026 | Archive format: **gzip JSON-lines files in object storage**, one line per row with the IDs whose erasure removes it. Searchable with `ytcollect archive search`, a month can be put back into Postgres for a while, and ClickHouse or DuckDB can query the files in place if reports ever need it. Media and the archive share one object store (a local folder until object storage is set up) |
 | D28 | 5 Nov 2026 | **Kurdish-language content counts as relevant on its own**: text in Kurdish written in Arabic script (Sorani and Badini, the forms used in Iraq; this also covers the same script in Iran's Kurdish region) is relevant even without an Iraq keyword. "السليمانية" alone still needs a second Iraq keyword (it is also the Süleymaniye mosques and a district of Riyadh), as the seed list already had it |
 | D29 | 5 Nov 2026 | **Legal sign-off received** from the legal team for collecting comments and all their public data: text and edit history, replies, likes, pinned/hearted, deletions, commenter identities and badges, and commenters' public channel pages (enrichment, §8.7a). Kept forever (D26), with erasure requests and the suppression list as before |
-| D30 | 5 Nov 2026 | **Phase 0 ends after the 5 November discovery and census**; the runs planned for 9–12 November (repeat discovery and census, and the resweep of comment edits and deletions) are dropped. They only measured trends (how fast new channels appear, how often comments are edited or deleted), which production measures itself. The production test starts on a new production server with the Phase 0 proxies moved to it |
+| D30 | 5 Nov 2026 | **Phase 0 ends after the 5 November discovery and census**; the runs planned for 9–12 November (repeat discovery and census, and the resweep of comment edits and deletions) are dropped. They only measured trends (how fast new channels appear, how often comments are edited or deleted), which production measures itself. Next is a 48-hour pilot of the production collector. Where it runs and which proxies it uses are decided with the platform plan of the master session (the Phase 0 proxies are fbs's pilot proxies) |
 
 Your non-negotiable rules still apply:
 
@@ -1004,8 +1004,8 @@ These are small draft pull requests, each with unit and integration tests. I rev
 
 **Status (5 November 2026):** steps 1 and 3–20 are built and merged, and the production stack (Docker Compose, backups, monitoring)
 is in `deploy/`, set up with [production-runbook.md](production-runbook.md). Phase 0 (step 2) ends with the 5 November census
-(D30); its results set the request gap per IP and the go/no-go for transcripts. The legal sign-off is in (D29). Next: the
-production test on the production server, starting with the Phase 0 channel list.
+(D30); its results set the request gap per IP and the go/no-go for transcripts. The legal sign-off is in (D29). Next: a
+48-hour pilot of the production collector, where the platform plan puts it. The current status is in [status.md](status.md).
 
 1. Repo skeleton: Go module, CI (lint, tests, gitleaks, fixture scanner), Docker Compose, `.gitignore`, README.
 2. Phase 0 kit: `ytprobe`, seed keywords + normalization, minimal fake-youtube, `skeleton`. → **Run Phase 0, publish results, adjust

@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 00:10 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 02:15 (Iraq time)**.
 
 ## Where it stands
 
@@ -33,8 +33,17 @@ The current state of the YouTube collector, for the owner and the master session
 
 ## Reports for the master session (6 November)
 
-Given to the owner as files: `yts-field-inventory.md` and `.yaml`, `yts-operations.md`, `yts-contract-notes.md` and `yts-gaps.md` (gaps
-against the service standard, and plans).
+In [`docs/master/`](master/):
+
+| File | What |
+|---|---|
+| `yts-field-inventory.md`, `.yaml` | Every field yts collects |
+| `yts-operations.md` | Components, deployment, proxies, resources, reliability |
+| `yts-contract-notes.md` | The Kafka outbox plan, the archive and ClickHouse, the API terms. **REQ-004** answers at the end |
+| `yts-gaps.md` | Gaps against the service standard, and the plans |
+| `yts-contract-review.md` | **REQ-013**: the review of the contract draft v0.1 |
+
+Waiting: `ytprobe-detect`'s memory (REQ-004 §5), from the owner's `docker stats` readings.
 
 ## Standing rules (from the owner, 5 November)
 

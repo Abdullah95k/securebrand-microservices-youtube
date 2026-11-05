@@ -1,0 +1,1281 @@
+service: yts
+platform: yt
+repository: Abdullah95k/securebrand-microservices-youtube
+commit: 3db1415
+access: {method: "YouTube web endpoints (InnerTube: browse, next, player, search) and RSS over HTTP, plus the official Data API v3 for search only", logged_in: false}
+# origin: InnerTube (scraped web API) | Data API v3 (official) | collector (derived by yts)
+entities:
+  - name: "channel"
+    unified: account
+    fetched: "Channel page + About panel: tier A every 6 h, B daily, C every 3 days, D and M (mention) weekly. Discovery candidates once, at the candidate check."
+    fields:
+      - name: "channels.id"
+        meaning: "The channel's ID"
+        type: "text"
+        example: "UCfake0000000000000001"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "browse (channel page): metadata.channelMetadataRenderer.externalId"
+        stored_at: "channels.id"
+        published_at: "webhook channel.listed .channel_id; video.relevant .channel_id"
+        history: "key"
+        personal_data: "sometimes"
+        notes: "24 characters, starts with UC. Stable for the channel's life. Personal data when the channel is a person's."
+      - name: "handle"
+        meaning: "The @handle"
+        type: "text"
+        example: "@fake_channel_1"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "browse: metadata.vanityChannelUrl, else header metadata parts"
+        stored_at: "channels.handle (unique, case-insensitive)"
+        published_at: "webhook channel.listed .handle"
+        history: "versions"
+        personal_data: "sometimes"
+        notes: "Can change. Each check compares it; a change is logged in channel_changes."
+      - name: "title"
+        meaning: "Display name"
+        type: "text"
+        example: "Example Channel"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "browse: metadata.title"
+        stored_at: "channels.title"
+        published_at: "webhook channel.listed .title; video.relevant .channel_title"
+        history: "versions"
+        personal_data: "sometimes"
+        notes: "Changes logged in channel_changes."
+      - name: "description"
+        meaning: "The channel description (full)"
+        type: "text"
+        example: "example text"
+        present: often
+        present_pct: 92
+        origin: "InnerTube (scraped web API)"
+        source: "About panel: aboutChannelViewModel.description; else metadata.description"
+        stored_at: "channels.description"
+        published_at: "not published"
+        history: "versions"
+        personal_data: "sometimes"
+        notes: "Stored verbatim, so links typed into it are kept as text. They are not extracted into a list."
+      - name: "keywords"
+        meaning: "The channel's own keyword field"
+        type: "text"
+        example: "fake keyword list"
+        present: unknown
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "browse: metadata.keywords"
+        stored_at: "channels.keywords"
+        published_at: "not published"
+        history: "versions"
+        personal_data: false
+        notes: "Not measured in Phase 0."
+      - name: "country"
+        meaning: "The country the channel states"
+        type: "text"
+        example: "Iraq (in Arabic script)"
+        present: often
+        present_pct: 95
+        origin: "InnerTube (scraped web API)"
+        source: "About panel: country"
+        stored_at: "channels.country"
+        published_at: "not published"
+        history: "versions"
+        personal_data: false
+        notes: "A country name in the interface language (we request hl=ar, gl=IQ), not an ISO code."
+      - name: "joined_text"
+        meaning: "Creation date, as shown"
+        type: "text"
+        example: "Joined 1 Jan 2015 (in Arabic)"
+        present: often
+        present_pct: 97
+        origin: "InnerTube (scraped web API)"
+        source: "About panel: joinedDateText"
+        stored_at: "channels.joined_text"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Day precision, text in the interface language. The column channels.joined_at (date) exists but is never filled."
+      - name: "links"
+        meaning: "The About panel's external links"
+        type: "list of {title, url}"
+        example: "[{\"title\":\"Website\",\"url\":\"example.com/fake\"}]"
+        present: often
+        present_pct: 89
+        origin: "InnerTube (scraped web API)"
+        source: "About panel: channelExternalLinkViewModel (title, link)"
+        stored_at: "channels.links (jsonb)"
+        published_at: "not published"
+        history: "latest"
+        personal_data: "sometimes"
+        notes: "The link as the panel displays it (host and path), not YouTube's redirect URL. Replaced when a new non-empty list is read; old lists are not kept (gap)."
+      - name: "subscribers"
+        meaning: "Subscriber count"
+        type: "int64 (lower bound) + text"
+        example: "12000 / '12K subscribers'"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "browse header metadata parts; About panel subscriberCountText"
+        stored_at: "channels.subscribers_min, subscribers_text; channel_snapshots"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "Abbreviated (approximate): stored as the lower bound plus the text. Hidden counts are left empty."
+      - name: "videos"
+        meaning: "Video count"
+        type: "int64 (lower bound)"
+        example: "345"
+        present: unknown
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "browse header; About panel videoCountText"
+        stored_at: "channels.videos_min; channel_snapshots.videos_min"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "Can be abbreviated."
+      - name: "views"
+        meaning: "Total channel views"
+        type: "int64"
+        example: "12345678"
+        present: often
+        present_pct: 97
+        origin: "InnerTube (scraped web API)"
+        source: "About panel: viewCountText"
+        stored_at: "channels.views_min; channel_snapshots.views_min"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "Normally exact."
+      - name: "avatar_url"
+        meaning: "Profile picture URL"
+        type: "text (URL)"
+        example: "https://yt3.ggpht.example/fake-avatar"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "browse: metadata.avatar (largest)"
+        stored_at: "channels.avatar_url; the image in object storage (media kind avatar)"
+        published_at: "not published"
+        history: "versions"
+        personal_data: "sometimes"
+        notes: "No expiry in the URL; it changes when the picture changes. Images are saved only when storage is configured (off on the pilot)."
+      - name: "banner_url"
+        meaning: "Banner URL"
+        type: "text (URL)"
+        example: "https://yt3.ggpht.example/fake-banner"
+        present: often
+        present_pct: 95
+        origin: "InnerTube (scraped web API)"
+        source: "browse header (banner)"
+        stored_at: "channels.banner_url; media kind banner"
+        published_at: "not published"
+        history: "versions"
+        personal_data: false
+        notes: ""
+      - name: "family_safe"
+        meaning: "YouTube's family-safe flag"
+        type: "bool"
+        example: "true"
+        present: unknown
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "browse: metadata.isFamilySafe"
+        stored_at: "channels.family_safe"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: ""
+      - name: "tabs"
+        meaning: "Which tabs exist (Videos, Shorts, Live, Posts, Playlists) and how to open them"
+        type: "map"
+        example: "{videos, shorts, streams}"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "browse: tabRenderer"
+        stored_at: "not stored (kept in memory for 24 h)"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Dropped: used only to read the tabs."
+      - name: "canonical_url"
+        meaning: "The channel's canonical URL"
+        type: "text"
+        example: "https://www.youtube.com/@fake_channel_1"
+        present: often
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "About panel: canonicalChannelUrl"
+        stored_at: "not stored"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Dropped: rebuilt from the ID or handle."
+      - name: "verified"
+        meaning: "Verified badge on the channel"
+        type: "bool"
+        example: "true"
+        present: unknown
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "channel header badge"
+        stored_at: "not collected"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Gap: not parsed for channels (it is for commenters)."
+  - name: "channel_snapshot"
+    unified: account_snapshot
+    fetched: "Every channel check (see channel)."
+    fields:
+      - name: "channel_snapshots"
+        meaning: "One row per check: subscribers_min, subscribers_text, videos_min, views_min, taken_at"
+        type: "row"
+        example: "UCfake…, 2026-11-05T10:00:00Z, 12000, '12K', 345, 12345678"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "as for channel"
+        stored_at: "channel_snapshots (partitioned by month)"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "taken_at is UTC."
+      - name: "channel_changes"
+        meaning: "One row per changed field: field, old_value, new_value, changed_at"
+        type: "row"
+        example: "title: 'Old Name' → 'Example Channel'"
+        present: sometimes
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "comparison on each check"
+        stored_at: "channel_changes"
+        published_at: "not published"
+        history: "versions"
+        personal_data: "sometimes"
+        notes: "Fields tracked: handle, title, description, keywords, country, avatar_url, banner_url. Not links (gap)."
+  - name: "video"
+    unified: post
+    fetched: "Seen first in a listing (RSS feed, Videos/Shorts/Live tabs, search). Details (next + player) on the first check. Stats by age, e.g. tier A every 30 min under 2 days, 6 h under 30 days, weekly under a year, monthly after."
+    fields:
+      - name: "id"
+        meaning: "Video ID"
+        type: "text"
+        example: "fakeVid0001"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "every listing; next; player"
+        stored_at: "videos.id"
+        published_at: "webhook video.relevant .video_id"
+        history: "key"
+        personal_data: false
+        notes: "11 characters. Stable. Shorts and live streams use the same ID space."
+      - name: "channel_id"
+        meaning: "Owner channel"
+        type: "text"
+        example: "UCfake0000000000000001"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "next (owner); listing"
+        stored_at: "videos.channel_id"
+        published_at: "webhook video.relevant .channel_id"
+        history: "key"
+        personal_data: "sometimes"
+        notes: ""
+      - name: "kind"
+        meaning: "video, short or live"
+        type: "enum: video | short | live"
+        example: "short"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "listing (tab, overlay badge) + player isLive / isLiveContent + 'watching now'"
+        stored_at: "videos.kind"
+        published_at: "webhook video.relevant .kind"
+        history: "latest"
+        personal_data: false
+        notes: ""
+      - name: "live_status"
+        meaning: "Live state"
+        type: "enum: none | upcoming | live | was_live"
+        example: "was_live"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "listing badges, player isLive / isLiveContent, watch 'watching now'"
+        stored_at: "videos.live_status"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "A finished stream becomes was_live."
+      - name: "title"
+        meaning: "Title"
+        type: "text"
+        example: "example title"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "next: videoPrimaryInfoRenderer.title (else player videoDetails.title; listings and RSS on first sight)"
+        stored_at: "videos.title"
+        published_at: "webhook video.relevant .title"
+        history: "versions"
+        personal_data: false
+        notes: "Edits logged in video_changes."
+      - name: "description"
+        meaning: "Description (full)"
+        type: "text"
+        example: "example text"
+        present: often
+        present_pct: 87
+        origin: "InnerTube (scraped web API)"
+        source: "next: attributedDescription.content (else player shortDescription)"
+        stored_at: "videos.description"
+        published_at: "not published"
+        history: "versions"
+        personal_data: false
+        notes: "Full text, not the 'more' preview. Edits logged in video_changes. Links in it are kept as text, not extracted."
+      - name: "tags"
+        meaning: "The uploader's tags"
+        type: "list of text"
+        example: "[\"fake tag 1\",\"fake tag 2\"]"
+        present: sometimes
+        present_pct: 63
+        origin: "InnerTube (scraped web API)"
+        source: "player: videoDetails.keywords"
+        stored_at: "videos.tags"
+        published_at: "not published"
+        history: "versions"
+        personal_data: false
+        notes: "Only when the player answers (85% in Phase 0); some videos have none. Edits logged in video_changes."
+      - name: "category"
+        meaning: "YouTube category"
+        type: "text"
+        example: "News & Politics"
+        present: often
+        present_pct: 85
+        origin: "InnerTube (scraped web API)"
+        source: "player: microformat.category"
+        stored_at: "videos.category"
+        published_at: "not published"
+        history: "versions"
+        personal_data: false
+        notes: "Only from the player."
+      - name: "language"
+        meaning: "The video's stated language"
+        type: "—"
+        example: "—"
+        present: unknown
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "player (defaultAudioLanguage) not parsed"
+        stored_at: "not collected"
+        published_at: "not published"
+        history: "—"
+        personal_data: false
+        notes: "Not collected. Analysis detects language from the text."
+      - name: "duration_s"
+        meaning: "Length in seconds"
+        type: "int"
+        example: "754"
+        present: always
+        present_pct: 94
+        origin: "InnerTube (scraped web API)"
+        source: "player lengthSeconds (exact); listing lengthText"
+        stored_at: "videos.duration_s"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Seconds."
+      - name: "published_at"
+        meaning: "When it was published"
+        type: "timestamp + precision"
+        example: "2026-11-05T07:00:00Z, precision 0"
+        present: often
+        present_pct: 85
+        origin: "InnerTube (scraped web API)"
+        source: "player: microformat.publishDate (date-time, exact); else the listing's relative time ('3 hours ago')"
+        stored_at: "videos.published_at, published_precision_s"
+        published_at: "webhook video.relevant .published_at"
+        history: "latest"
+        personal_data: false
+        notes: "precision_s 0 = exact; 43200 = date only; larger = a relative-time estimate. Only replaced by a more precise value. UTC."
+      - name: "published_text"
+        meaning: "The date line as shown"
+        type: "text"
+        example: "'Premiered 5 Nov 2026' (in Arabic)"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "next: dateText"
+        stored_at: "videos.published_text"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Interface language (hl=ar)."
+      - name: "upload_date"
+        meaning: "Upload date (as opposed to publish date)"
+        type: "text"
+        example: "2026-11-05T06:00:00-08:00"
+        present: often
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "player: microformat.uploadDate"
+        stored_at: "not stored"
+        published_at: "not published"
+        history: "—"
+        personal_data: false
+        notes: "Dropped: publish date is used."
+      - name: "views"
+        meaning: "View count"
+        type: "int64"
+        example: "12345"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "player viewCount (exact); else next originalViewCount (exact); listing (abbreviated)"
+        stored_at: "videos.views; video_snapshots.views"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "Exact in 100% of Phase 0 checks; matched the official API (median difference 0%)."
+      - name: "likes"
+        meaning: "Like count"
+        type: "int64 (lower bound) + text"
+        example: "321 / '321 likes'"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "next: like button accessibility text (exact); else its title"
+        stored_at: "videos.likes_min, likes_text; video_snapshots.likes_min"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "Exact in 100% of Phase 0 checks. Hidden likes are left empty."
+      - name: "comment_count"
+        meaning: "Comment count"
+        type: "int64 (lower bound) + text"
+        example: "1200 / '1.2K'"
+        present: often
+        present_pct: 70
+        origin: "InnerTube (scraped web API)"
+        source: "next: comments header (commentsCount, then countText)"
+        stored_at: "videos.comments_min, comments_text; video_snapshots.comments_min"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "70% on 4 Nov, before the parser fix of 4 Nov (PR #39); not re-measured since. Can be abbreviated."
+      - name: "comments_disabled"
+        meaning: "Comments are off"
+        type: "bool"
+        example: "false"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "derived: no comment-section token and no count"
+        stored_at: "videos.comments_disabled"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "10 of 228 Phase 0 videos (4%) had no comment section."
+      - name: "family_safe"
+        meaning: "YouTube's family-safe flag"
+        type: "bool"
+        example: "true"
+        present: often
+        present_pct: 85
+        origin: "InnerTube (scraped web API)"
+        source: "player: microformat.isFamilySafe"
+        stored_at: "videos.family_safe"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "The nearest signal to an age restriction. An age-gated video's player answers 'login required': we can't read it, and the status itself is dropped (gap)."
+      - name: "members_only"
+        meaning: "Members-only video"
+        type: "—"
+        example: "—"
+        present: logged_in_only
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "listing badge not parsed"
+        stored_at: "not collected"
+        published_at: "not published"
+        history: "—"
+        personal_data: false
+        notes: "Members-only content is not viewable logged out. The badge in listings isn't parsed (gap)."
+      - name: "player_unavailable"
+        meaning: "Tags and category could not be read"
+        type: "bool"
+        example: "false"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "collector state"
+        stored_at: "videos.player_unavailable"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "The player is asked only on the first check, while live, and for a week while category is missing."
+      - name: "chapters"
+        meaning: "Chapters"
+        type: "list of {title, start_sec}"
+        example: "[{\"title\":\"Intro\",\"start_sec\":0}]"
+        present: rare
+        present_pct: 1
+        origin: "InnerTube (scraped web API)"
+        source: "next: chapterRenderer / macroMarkersListItemRenderer"
+        stored_at: "videos.chapters (jsonb)"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Seconds."
+      - name: "caption_langs"
+        meaning: "Caption languages listed"
+        type: "list of text"
+        example: "[\"ar\",\"ar (auto)\"]"
+        present: rare
+        present_pct: 0
+        origin: "InnerTube (scraped web API)"
+        source: "player: captionTracks"
+        stored_at: "videos.caption_langs"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "0% in Phase 0 (the player listed none). Caption file URLs are dropped: fetching them needs anti-bot tokens."
+      - name: "transcript"
+        meaning: "Transcript text"
+        type: "—"
+        example: "—"
+        present: unknown
+        present_pct: 0
+        origin: "InnerTube (scraped web API)"
+        source: "get_transcript"
+        stored_at: "not collected"
+        published_at: "not published"
+        history: "—"
+        personal_data: false
+        notes: "Phase 0 E12: 0 of 23 transcript requests returned text without an anti-bot token. Dropped (no-go)."
+      - name: "thumbnail"
+        meaning: "Thumbnail image"
+        type: "image (JPEG)"
+        example: "https://i.ytimg.example/vi/fakeVid0001/hqdefault.jpg"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "built from the ID: i.ytimg.com/vi/<id>/hqdefault.jpg (480×360)"
+        stored_at: "media (kind thumb) + object storage"
+        published_at: "not published"
+        history: "versions"
+        personal_data: false
+        notes: "Saved only when storage is configured (off on the pilot). Checked again after 7 days; a new image is a new row (by SHA-256)."
+      - name: "live_viewers"
+        meaning: "Viewers now, while live"
+        type: "int64"
+        example: "1500"
+        present: sometimes
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "next: 'N watching now'"
+        stored_at: "video_snapshots.live_viewers"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "Every 5 min (tiers A, B) or 15 min while live."
+      - name: "scheduled_start"
+        meaning: "Start time of an upcoming stream or premiere"
+        type: "timestamp"
+        example: "2026-11-06T18:00:00Z"
+        present: unknown
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "not parsed"
+        stored_at: "videos.scheduled_start (never filled)"
+        published_at: "not published"
+        history: "—"
+        personal_data: false
+        notes: "Gap: column exists, not filled."
+      - name: "rss_extras"
+        meaning: "RSS entry description, thumbnail, views, likes, updated time"
+        type: "various"
+        example: "—"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "feeds/videos.xml"
+        stored_at: "not stored"
+        published_at: "not published"
+        history: "—"
+        personal_data: false
+        notes: "Dropped: the watch page gives the same, fresher. The RSS published time IS used (exact)."
+      - name: "removed_at"
+        meaning: "When the video disappeared"
+        type: "timestamp"
+        example: "2026-11-05T12:00:00Z"
+        present: rare
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "derived: two missed checks in a row"
+        stored_at: "videos.removed_at, missed_checks"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Cleared if it comes back."
+      - name: "source"
+        meaning: "How we first saw it (provenance)"
+        type: "enum: web | tab | rss | websub | web_search | api_search"
+        example: "rss"
+        present: always
+        present_pct: null
+        origin: "collector"
+        source: "collector"
+        stored_at: "videos.source"
+        published_at: "not published"
+        history: "key"
+        personal_data: false
+        notes: "Set on first sight and never changed. An 'api_search' row starts with the Data API's title and publish time; the scraped read queued at once replaces them. If that read never succeeds, the API values stay (a gap against the API's 30-day rule)."
+      - name: "relevant, matched_keywords"
+        meaning: "Iraq relevance and why"
+        type: "bool, list of text"
+        example: "true, [\"place-baghdad\"]"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "collector (keyword matcher on title, description, tags)"
+        stored_at: "videos.relevant, matched_keywords"
+        published_at: "webhook video.relevant .matched_keywords"
+        history: "latest"
+        personal_data: false
+        notes: "Kurdish-language text counts on its own (lang-ckb, D28)."
+  - name: "video_snapshot"
+    unified: post_metrics
+    fetched: "Every video check (see video)."
+    fields:
+      - name: "video_snapshots"
+        meaning: "One row per check: views, likes_min, comments_min, live_viewers, taken_at"
+        type: "row"
+        example: "fakeVid0001, 2026-11-05T10:00:00Z, 12345, 321, 1200, null"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "as for video"
+        stored_at: "video_snapshots (partitioned by month)"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "Absent counts are NULL, never 0."
+      - name: "video_changes"
+        meaning: "One row per changed field: field, old_value, new_value, changed_at"
+        type: "row"
+        example: "title: 'old title' → 'example title'"
+        present: sometimes
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "comparison on each check"
+        stored_at: "video_changes"
+        published_at: "not published"
+        history: "versions"
+        personal_data: false
+        notes: "Fields tracked: title, description, category, tags."
+  - name: "comment"
+    unified: comment
+    fetched: "All comments on the first check (newest first, up to 20,000 per video); then newest-first scans by age (tier A hourly under 2 days … monthly up to a year); replies again when a reply count grows; full sweeps at 7 and 30 days (A, B, M) or 30 days (C, D) to catch edits and deletions."
+    fields:
+      - name: "id"
+        meaning: "Comment ID"
+        type: "text"
+        example: "UgzFAKE00000000000001 (reply: UgzFAKE00000000000001.FAKEreply01)"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "next (comments continuation): commentEntityPayload.properties.commentId"
+        stored_at: "comments.id"
+        published_at: "not published"
+        history: "key"
+        personal_data: false
+        notes: "Stable."
+      - name: "parent_kind, parent_id"
+        meaning: "The video or community post it is on"
+        type: "enum video | post, text"
+        example: "video, fakeVid0001"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "the request"
+        stored_at: "comments.parent_kind, parent_id"
+        published_at: "not published"
+        history: "key"
+        personal_data: false
+        notes: "Always has a post (video or community post)."
+      - name: "thread_id"
+        meaning: "For a reply: the top-level comment"
+        type: "text"
+        example: "UgzFAKE00000000000001"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "replyLevel and the thread the replies were read from"
+        stored_at: "comments.thread_id (NULL for top level)"
+        published_at: "not published"
+        history: "key"
+        personal_data: false
+        notes: "YouTube has one reply level; a reply to a reply is a reply to the thread, with an @mention in its text."
+      - name: "text"
+        meaning: "Comment text"
+        type: "text"
+        example: "example text"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "properties.content.content"
+        stored_at: "comments.text; every version in comment_versions"
+        published_at: "not published"
+        history: "versions"
+        personal_data: true
+        notes: "Full text. A changed text is a new version; all versions are kept."
+      - name: "author_id"
+        meaning: "The commenter's channel ID"
+        type: "text"
+        example: "UCfakeAuthor000000000001"
+        present: often
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "author.channelId"
+        stored_at: "comments.author_id; authors.id"
+        published_at: "not published"
+        history: "key"
+        personal_data: true
+        notes: ""
+      - name: "author_name"
+        meaning: "The commenter's name (today the @handle)"
+        type: "text"
+        example: "@fake_user_1"
+        present: often
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "author.displayName"
+        stored_at: "comments.author_name and author_handle (same value); authors.handle, display_name"
+        published_at: "not published"
+        history: "latest"
+        personal_data: true
+        notes: "A rename shows up on the next read (authors row updated; old comments keep the old name)."
+      - name: "author_avatar_url"
+        meaning: "Commenter picture URL"
+        type: "text (URL)"
+        example: "https://yt3.ggpht.example/fake-user"
+        present: often
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "author.avatarThumbnailUrl"
+        stored_at: "comments.author_avatar_url; authors.avatar_url; media kind author_avatar"
+        published_at: "not published"
+        history: "latest"
+        personal_data: true
+        notes: "Image saved only when storage is configured."
+      - name: "author_is_creator"
+        meaning: "Written by the video's channel"
+        type: "bool"
+        example: "false"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "author.isCreator, or the author is the video's channel"
+        stored_at: "comments.author_is_creator"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: ""
+      - name: "author_verified"
+        meaning: "Commenter has the verified badge"
+        type: "bool"
+        example: "false"
+        present: sometimes
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "author.isVerified"
+        stored_at: "comments.author_badges (jsonb); author_badges row 'verified'"
+        published_at: "not published"
+        history: "latest"
+        personal_data: true
+        notes: ""
+      - name: "author_member_badge"
+        meaning: "Channel-membership badge"
+        type: "text"
+        example: "Member (2 years)"
+        present: rare
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "author.sponsorBadgeA11y"
+        stored_at: "comments.author_badges; author_badges row 'member' (per channel)"
+        published_at: "not published"
+        history: "latest"
+        personal_data: true
+        notes: "Interface language."
+      - name: "likes"
+        meaning: "Comment likes"
+        type: "int64 (lower bound) + text"
+        example: "15 / '15'"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "toolbar.likeCountNotliked"
+        stored_at: "comments.likes_min, likes_text"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "YouTube shows no number at zero; we store 0 then. Overwritten on each read: no comment metrics history (gap). 0% abbreviated in Phase 0."
+      - name: "reply_count"
+        meaning: "Number of replies"
+        type: "int"
+        example: "3"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "toolbar.replyCount"
+        stored_at: "comments.reply_count"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Overwritten on each read."
+      - name: "published_at"
+        meaning: "When it was posted (estimated)"
+        type: "timestamp + precision"
+        example: "2026-11-02T10:00:00Z, precision 86400"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "properties.publishedTime ('3 days ago')"
+        stored_at: "comments.published_at, published_precision_s"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Relative time only. Phase 0 precision: hour 4%, day 5%, week 1%, month 28%, year 61% (backfill of old videos). A later read with better precision replaces it. The text itself is dropped."
+      - name: "edited"
+        meaning: "Marked '(edited)'"
+        type: "bool"
+        example: "false"
+        present: sometimes
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "publishedTime suffix"
+        stored_at: "comments.edited; comment_versions.edited"
+        published_at: "not published"
+        history: "versions"
+        personal_data: false
+        notes: "Once true, stays true."
+      - name: "pinned"
+        meaning: "Pinned by the creator"
+        type: "bool"
+        example: "false"
+        present: rare
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "pinnedText / pinnedCommentBadge"
+        stored_at: "comments.pinned"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "6 of 12,683 in Phase 0."
+      - name: "hearted"
+        meaning: "Hearted by the creator"
+        type: "bool"
+        example: "false"
+        present: rare
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "toolbar heartState / creatorHeartRenderer"
+        stored_at: "comments.hearted"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "74 of 12,683 in Phase 0."
+      - name: "deleted_at"
+        meaning: "When it disappeared"
+        type: "timestamp"
+        example: "2026-11-05T12:00:00Z"
+        present: rare
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "derived: missing from two complete sweeps in a row"
+        stored_at: "comments.deleted_at, missed_sweeps"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Text and author are kept (D18)."
+      - name: "version, first_seen, last_seen"
+        meaning: "Collector bookkeeping"
+        type: "int, timestamps"
+        example: "2, …"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "collector"
+        stored_at: "comments.version, first_seen, last_seen"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: ""
+  - name: "comment_version"
+    unified: comment
+    fetched: "Whenever a comment's text changes."
+    fields:
+      - name: "comment_versions"
+        meaning: "Every text we saw: comment_id, version, seen_at, text, edited"
+        type: "row"
+        example: "UgzFAKE…, 2, 2026-11-05T10:00:00Z, 'example text (edited)', true"
+        present: sometimes
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "comment reads"
+        stored_at: "comment_versions (partitioned by month)"
+        published_at: "not published"
+        history: "versions"
+        personal_data: true
+        notes: ""
+  - name: "author"
+    unified: author
+    fetched: "Updated from every comment read."
+    fields:
+      - name: "authors"
+        meaning: "One row per commenter: id, handle, display_name, avatar_url, first_seen, last_seen, comments_seen, relevant_comments, enriched_at"
+        type: "row"
+        example: "UCfakeAuthor…, @fake_user_1, …, 12, 3"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "comments"
+        stored_at: "authors"
+        published_at: "not published"
+        history: "latest"
+        personal_data: true
+        notes: "relevant_comments orders enrichment."
+      - name: "author_badges"
+        meaning: "Badges: author_id, badge (verified | member), detail, channel_id, first_seen, last_seen"
+        type: "row"
+        example: "UCfakeAuthor…, member, 'Member (2 years)', UCfake…"
+        present: sometimes
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "comments"
+        stored_at: "author_badges"
+        published_at: "not published"
+        history: "latest"
+        personal_data: true
+        notes: "Membership is per channel."
+  - name: "author_profile"
+    unified: account
+    fetched: "Commenters' own channel pages, with spare capacity only (lowest priority), most active commenters first; again every 6 months (active) or yearly."
+    fields:
+      - name: "author_profiles"
+        meaning: "One row per read: handle, display_name, description, country, links, subscribers_min, videos_min, avatar_url, banner_url, fetched_at"
+        type: "row"
+        example: "UCfakeAuthor…, @fake_user_1, 'example text', …"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "browse (channel page) + About panel, as for channels"
+        stored_at: "author_profiles (partitioned by month)"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: true
+        notes: "Join date, total views and keywords are read but dropped here. A commenter with uploads of their own becomes a discovery candidate."
+  - name: "community_post"
+    unified: post
+    fetched: "Posts tab: tier A daily, B every 3 days, C weekly, D monthly, M weekly; newest first until a page brings nothing new (at most 5 pages; the first read up to 50). Comments of new posts are read too."
+    fields:
+      - name: "id"
+        meaning: "Post ID"
+        type: "text"
+        example: "UgkxFAKE000000000000001"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "browse (Posts tab): backstagePostRenderer.postId"
+        stored_at: "posts.id"
+        published_at: "webhook post.relevant .post_id"
+        history: "key"
+        personal_data: false
+        notes: ""
+      - name: "channel_id"
+        meaning: "Owner channel"
+        type: "text"
+        example: "UCfake0000000000000001"
+        present: always
+        present_pct: 100
+        origin: "InnerTube (scraped web API)"
+        source: "the tab"
+        stored_at: "posts.channel_id"
+        published_at: "webhook post.relevant .channel_id"
+        history: "key"
+        personal_data: "sometimes"
+        notes: ""
+      - name: "text"
+        meaning: "Post text"
+        type: "text"
+        example: "example text"
+        present: often
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "contentText"
+        stored_at: "posts.text"
+        published_at: "webhook post.relevant .text (first 2,000 characters)"
+        history: "latest"
+        personal_data: false
+        notes: "Overwritten: edits are not versioned (gap). Unknown whether very long posts are cut on the tab."
+      - name: "published_at"
+        meaning: "When posted (estimated)"
+        type: "timestamp + precision + text"
+        example: "2026-11-03T00:00:00Z, 86400, '2 days ago'"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "publishedTimeText"
+        stored_at: "posts.published_at, published_precision_s, published_text"
+        published_at: "webhook post.relevant .published_at"
+        history: "latest"
+        personal_data: false
+        notes: "Relative time only."
+      - name: "likes"
+        meaning: "Likes"
+        type: "int64 (lower bound) + text"
+        example: "1200 / '1.2K'"
+        present: often
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "voteCount"
+        stored_at: "posts.likes_min, likes_text; post_snapshots.likes_min"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "Abbreviated. A missing number is stored as 0 (YouTube shows none at zero)."
+      - name: "comments"
+        meaning: "Comment count"
+        type: "int64 (lower bound) + text"
+        example: "45 / '45'"
+        present: often
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "reply button"
+        stored_at: "posts.comments_min, comments_text; post_snapshots.comments_min"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: ""
+      - name: "has_image, has_poll, has_video"
+        meaning: "What is attached"
+        type: "bool ×3"
+        example: "true, false, false"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "backstageAttachment"
+        stored_at: "posts.has_image, has_poll, has_video"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Only yes/no. The images, poll options and the linked video ID are dropped; posts.attachments exists but is never filled (gap)."
+  - name: "playlist"
+    unified: other
+    fetched: "Playlists tab and items: tiers A and B weekly, others monthly."
+    fields:
+      - name: "playlists"
+        meaning: "id, channel_id, title, video_count, relevant, first_seen, last_checked, removed_at"
+        type: "row"
+        example: "PLfake000000000000000001, UCfake…, 'example title', 6"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "browse (Playlists tab): lockupViewModel"
+        stored_at: "playlists"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "playlists.description exists but is never filled."
+      - name: "playlist_items"
+        meaning: "playlist_id, video_id, position, first_seen, last_seen, removed_at"
+        type: "row"
+        example: "PLfake…, fakeVid0001, 3"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "browse (playlist)"
+        stored_at: "playlist_items"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Removal is recorded, not deleted."
+  - name: "search_hit"
+    unified: discovery_candidate
+    fetched: "Website search: priority keywords hourly, others every 6 h. Data API: priority keywords every 3 h, within the daily cap."
+    fields:
+      - name: "api: id.videoId, snippet.channelId, snippet.title, snippet.publishedAt"
+        meaning: "A video the official search found"
+        type: "text, text, text, timestamp"
+        example: "fakeVid0001, UCfake…, 'example title', 2026-11-05T07:00:00Z"
+        present: always
+        present_pct: null
+        origin: "Data API v3 (official)"
+        source: "search.list (part=snippet, type=video, order=date, regionCode=IQ, relevanceLanguage=ar, publishedAfter, maxResults=50)"
+        stored_at: "search_hits (engine 'api') — deleted after 30 days; for a listed channel's upload also a videos row (source api_search); otherwise a candidates row"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "snippet.channelTitle is read and dropped. Exact publish time (written to videos with 1-day precision, so the scraped exact time replaces it)."
+      - name: "web: video ID, title, channel ID, views, relative time, duration, kind; channel results: ID, title, subscribers"
+        meaning: "A video or channel the website search found"
+        type: "various"
+        example: "fakeVid0001, 'example title', UCfake…"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "search (sorted by upload date)"
+        stored_at: "search_hits (engine 'web'), kept"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Channel name is dropped."
+      - name: "search_terms"
+        meaning: "Per spelling: query, keyword_id, last_web, last_api, web_hits, api_hits"
+        type: "row"
+        example: "…"
+        present: always
+        present_pct: null
+        origin: "collector"
+        source: "collector"
+        stored_at: "search_terms"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: ""
+  - name: "candidate"
+    unified: discovery_candidate
+    fetched: "Created by a search hit, a commenter with uploads, or the channel graph; checked once (re-checked after 90 days if no match)."
+    fields:
+      - name: "candidates"
+        meaning: "channel_id, first_found, last_found, hits, sources (api_search | web_search | graph | commenter), status (new | checked | listed | no_match), checked_at, decision"
+        type: "row"
+        example: "UCfake…, …, 3, {web_search,api_search}, listed, 'core: country'"
+        present: always
+        present_pct: null
+        origin: "collector"
+        source: "derived from search hits, comments and the graph"
+        stored_at: "candidates"
+        published_at: "not published"
+        history: "latest"
+        personal_data: "sometimes"
+        notes: "The check reads the channel by scraping and lists it as core (stated country Iraq, ≥ 30% of recent items match, or its own page matches) or mention. Listed channels get channels.added_by = 'discovery'."
+      - name: "channel_links_graph"
+        meaning: "from_channel, to_channel, relation (commenter today; featured, link, mention, collab reserved), weight, first_seen, last_seen"
+        type: "row"
+        example: "UCfakeAuthor…, UCfake…, commenter, 12"
+        present: often
+        present_pct: null
+        origin: "collector"
+        source: "derived from stored comments"
+        stored_at: "channel_links_graph"
+        published_at: "not published"
+        history: "latest"
+        personal_data: true
+        notes: "Only 'commenter' edges are filled today."
+  - name: "media"
+    unified: media
+    fetched: "Thumbnail of each new video, checked again after 7 days; avatars and banners when their URL changes; commenter avatars with enrichment. Only when object storage is configured (not on the pilot)."
+    fields:
+      - name: "media"
+        meaning: "kind (thumb | avatar | banner | author_avatar), entity_id, channel_id, sha256, object_key, source_url, content_type, bytes, first_seen, last_seen"
+        type: "row"
+        example: "thumb, fakeVid0001, UCfake…, 3f…, …, image/jpeg, 25000"
+        present: always
+        present_pct: null
+        origin: "InnerTube (scraped web API)"
+        source: "i.ytimg.com and yt3.ggpht.com"
+        stored_at: "media + object storage (keyed by SHA-256)"
+        published_at: "not published"
+        history: "versions"
+        personal_data: "sometimes"
+        notes: "Largest image kept: 8 MB. Video and audio files are never downloaded (they need anti-bot tokens)."
+  - name: "coverage"
+    unified: coverage
+    fetched: "Continuous."
+    fields:
+      - name: "comments_complete_pct, comments_partial"
+        meaning: "Per video: collected ÷ displayed comments; capped at 20,000"
+        type: "real, bool"
+        example: "98.5, false"
+        present: often
+        present_pct: null
+        origin: "collector"
+        source: "comment engine"
+        stored_at: "videos.comments_complete_pct, comments_partial"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Phase 0: median 100%, p10 100% on uncapped videos."
+      - name: "field_fill_rates"
+        meaning: "Per endpoint and field, per 3-hour window: seen, present"
+        type: "row"
+        example: "watch, likes, 120, 120"
+        present: always
+        present_pct: null
+        origin: "collector"
+        source: "collector"
+        stored_at: "field_fill_rates"
+        published_at: "not published"
+        history: "snapshots"
+        personal_data: false
+        notes: "Alerts on a drop (parser drift)."
+      - name: "parse_failures"
+        meaning: "endpoint, entity, error, raw_ref"
+        type: "row"
+        example: "watch, video, fakeVid0001, …"
+        present: rare
+        present_pct: null
+        origin: "collector"
+        source: "collector"
+        stored_at: "parse_failures; a scrubbed structure skeleton in the debug folder"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "Raw responses themselves are not kept (only skeletons: structure, no values)."
+      - name: "schedule"
+        meaning: "Per job: kind, entity, priority, due_at, attempts, last_ok, last_error"
+        type: "row"
+        example: "comments, fakeVid0001, 1, …"
+        present: always
+        present_pct: null
+        origin: "collector"
+        source: "collector"
+        stored_at: "schedule"
+        published_at: "not published"
+        history: "latest"
+        personal_data: false
+        notes: "No per-job coverage event yet (gap)."
+not_available_logged_out:
+  - "members-only videos and posts (need a member's login)"
+  - "age-restricted videos' player data: tags, category, exact publish time (the player asks for a login)"
+  - "transcripts and caption text (need anti-bot tokens; Phase 0 E12 no-go)"
+  - "video and audio streams (need anti-bot tokens; out of scope)"
+  - "live chat (also out of scope, D24)"
+  - "who liked a video or comment (never public)"
+  - "exact comment and community post times (only 'N days ago')"
+  - "subscriber counts the channel hides"
+dropped:
+  - {field: "player microformat.uploadDate", why: "publish date used instead"}
+  - {field: "player playabilityStatus (LOGIN_REQUIRED, UNPLAYABLE…)", why: "only used to mark player_unavailable (gap: keep it)"}
+  - {field: "caption track URLs", why: "fetching needs anti-bot tokens"}
+  - {field: "channel tabs and their parameters", why: "kept in memory 24 h to read the tabs"}
+  - {field: "About panel canonical URL", why: "rebuilt from ID or handle"}
+  - {field: "RSS entry description, thumbnail, views, likes, updated", why: "the watch page is fresher"}
+  - {field: "channel names in search results and watch pages", why: "the channel page is the source"}
+  - {field: "Data API snippet.channelTitle", why: "the channel page is the source"}
+  - {field: "comment publishedTime text", why: "converted to a time and precision"}
+  - {field: "commenter profile join date, total views, keywords", why: "not needed for enrichment so far"}
+planned:
+  - "Not collected yet, needed by the platform: channel verified badge; links extracted from descriptions; versions of the About-panel links and of community post text; comment likes over time (comment metrics); post attachments (image URLs, poll options, linked video ID); scheduled start of upcoming streams; the age-gate and members-only flags; the player's stated audio language."

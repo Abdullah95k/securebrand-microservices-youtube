@@ -50,6 +50,8 @@ and YouTube's internal website endpoints are undocumented. Phase 0 (§9) confirm
 | D26 | 3 Nov 2026 | **All data is kept forever**, Phase 0 included: no time limits. Two things still remove data: an erasure request (with its suppression entry), and YouTube's API rule that data from the official API may be kept at most 30 days (the same items scraped from the website are kept) |
 | D27 | 3 Nov 2026 | Archive format: **gzip JSON-lines files in object storage**, one line per row with the IDs whose erasure removes it. Searchable with `ytcollect archive search`, a month can be put back into Postgres for a while, and ClickHouse or DuckDB can query the files in place if reports ever need it. Media and the archive share one object store (a local folder until object storage is set up) |
 | D28 | 5 Nov 2026 | **Kurdish-language content counts as relevant on its own**: text in Kurdish written in Arabic script (Sorani and Badini, the forms used in Iraq; this also covers the same script in Iran's Kurdish region) is relevant even without an Iraq keyword. "السليمانية" alone still needs a second Iraq keyword (it is also the Süleymaniye mosques and a district of Riyadh), as the seed list already had it |
+| D29 | 5 Nov 2026 | **Legal sign-off received** from the legal team for collecting comments and all their public data: text and edit history, replies, likes, pinned/hearted, deletions, commenter identities and badges, and commenters' public channel pages (enrichment, §8.7a). Kept forever (D26), with erasure requests and the suppression list as before |
+| D30 | 5 Nov 2026 | **Phase 0 ends after the 5 November discovery and census**; the runs planned for 9–12 November (repeat discovery and census, and the resweep of comment edits and deletions) are dropped. They only measured trends (how fast new channels appear, how often comments are edited or deleted), which production measures itself. Next is a 48-hour pilot of the production collector. Where it runs and which proxies it uses are decided with the platform plan of the master session (the Phase 0 proxies are fbs's pilot proxies) |
 
 Your non-negotiable rules still apply:
 
@@ -103,7 +105,7 @@ D7 changes how "back off when blocked" works: it now means **the blocked IP back
   - comment times are relative ("3 days ago"); frequent checks make them precise for new comments;
   - large like counts are abbreviated;
   - video/audio files are out of scope, and transcripts probably are too.
-- **Legal risk, which I recommend a lawyer reviews before production (§4):**
+- **Legal risk, which I recommend a lawyer reviews before production (§4; the legal team signed off on 5 November 2026, D29):**
   - YouTube's Terms forbid automated access and collecting usernames;
   - switching IPs after a block (D7) reads as deliberate evasion;
   - keeping everything forever with full identities, including deleted comments (D18), is the highest-risk privacy setup under GDPR for
@@ -261,7 +263,8 @@ consequences:
 - a breach-of-contract claim or cease-and-desist letter;
 - loss of our Google Cloud project's API access.
 
-This is your business decision (D4, D7). **I recommend a lawyer reviews it before production.**
+This is your business decision (D4, D7). **I recommend a lawyer reviews it before production.** The legal team signed off on
+5 November 2026 (D29).
 
 ### 4.2 The official API (search)
 
@@ -485,7 +488,7 @@ You decide when to buy more; the system never stops covering.
 | 7 | **Object storage** | Thumbnails, avatars, archive files, debug samples | Hetzner Object Storage or DigitalOcean Spaces |
 | 8 | **Offsite backups** | Production | Hetzner Storage Box or Spaces, 30-day rolling |
 | 9 | **Webhook endpoint(s)** (later, D20) | Events and alerts | Your receiving URL + a shared secret, kept in a file |
-| 10 | **Legal review**, privacy notice, legitimate-interest assessment, DPIA | Before production | Legal work |
+| 10 | **Legal review**, privacy notice, legitimate-interest assessment, DPIA | Before production | Legal work. **Signed off 5 Nov 2026 (D29)** |
 | 11 | **Scraper maintenance time** | Ongoing | A few fixes a month (§8.11) |
 
 ### 7.2 Server recommendation (D19)
@@ -999,9 +1002,10 @@ password.
 
 These are small draft pull requests, each with unit and integration tests. I review each one and merge it when CI is green.
 
-**Status (3 November 2026):** steps 1 and 3–20 are built and merged, and the production stack (Docker Compose, backups, monitoring)
-is in `deploy/`, set up with [production-runbook.md](production-runbook.md). Phase 0 (step 2) is running. Its results set the
-request gap per IP, the number of proxy IPs, and the go/no-go for transcripts before production starts.
+**Status (5 November 2026):** steps 1 and 3–20 are built and merged, and the production stack (Docker Compose, backups, monitoring)
+is in `deploy/`, set up with [production-runbook.md](production-runbook.md). Phase 0 (step 2) ends with the 5 November census
+(D30); its results set the request gap per IP and the go/no-go for transcripts. The legal sign-off is in (D29). Next: a
+48-hour pilot of the production collector, where the platform plan puts it. The current status is in [status.md](status.md).
 
 1. Repo skeleton: Go module, CI (lint, tests, gitleaks, fixture scanner), Docker Compose, `.gitignore`, README.
 2. Phase 0 kit: `ytprobe`, seed keywords + normalization, minimal fake-youtube, `skeleton`. → **Run Phase 0, publish results, adjust

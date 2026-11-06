@@ -26,7 +26,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ailabel"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ailabel/claude"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/secrets"
@@ -186,7 +186,7 @@ func main() {
 		reset := fs.Bool("reset", false, "draw a new sample and drop earlier answers")
 		useAI := fs.Bool("ai", false, "let the AI label the sample (sends only the public titles to the AI provider)")
 		model := fs.String("model", "", "with -ai: the Claude model ID to use (required)")
-		effort := fs.String("effort", "high", "with -ai: effort level ("+strings.Join(ailabel.Efforts, ", ")+"; empty = the model's default)")
+		effort := fs.String("effort", "high", "with -ai: effort level ("+strings.Join(claude.Efforts, ", ")+"; empty = the model's default)")
 		batch := fs.Int("batch", 25, "with -ai: titles per request")
 		fallback := fs.Bool("fallback", true, "with -ai: if the model declines, let the API answer with a fallback model")
 		limit := fs.Int("limit", 0, "by hand: answer at most this many titles this time (0 = all)")
@@ -199,7 +199,7 @@ func main() {
 				log.Error("Anthropic API key", "err", kerr)
 				os.Exit(2)
 			}
-			client, cerr := ailabel.New(ailabel.Config{APIKey: key, Model: *model, Effort: *effort, Fallback: *fallback})
+			client, cerr := claude.New(claude.Config{APIKey: key, Model: *model, Effort: *effort, Fallback: *fallback})
 			if cerr != nil {
 				fmt.Fprintln(os.Stderr, cerr)
 				os.Exit(2)

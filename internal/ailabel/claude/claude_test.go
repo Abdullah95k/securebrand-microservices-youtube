@@ -1,9 +1,10 @@
-package ailabel
+package claude
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ailabel"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -57,7 +58,7 @@ func message(stop string, content ...any) string {
 
 func textBlock(s string) map[string]any { return map[string]any{"type": "text", "text": s} }
 
-func labels(v ...Verdict) string {
+func labels(v ...ailabel.Verdict) string {
 	b, _ := json.Marshal(map[string]any{"labels": v})
 	return string(b)
 }
@@ -75,16 +76,16 @@ func client(t *testing.T, f *fakeAPI, cfg Config) *Client {
 	return c
 }
 
-var titles = []Title{{ID: 1, Text: "أخبار بغداد اليوم"}, {ID: 2, Text: "zq recipe of the day"}, {ID: 3, Text: "زياد"}}
+var titles = []ailabel.Title{{ID: 1, Text: "أخبار بغداد اليوم"}, {ID: 2, Text: "zq recipe of the day"}, {ID: 3, Text: "زياد"}}
 
 func TestLabelSendsTitlesOnlyAndParsesVerdicts(t *testing.T) {
 	f := newFakeAPI(t, func(int, map[string]any) (int, string) {
 		return 200, message("end_turn", textBlock(labels(
-			Verdict{ID: 1, Answer: "yes", Reason: "Baghdad news"},
-			Verdict{ID: 2, Answer: "No", Reason: "generic recipe"},
-			Verdict{ID: 3, Answer: "unsure", Reason: "bare name"},
-			Verdict{ID: 3, Answer: "yes", Reason: "duplicate id, ignored"},
-			Verdict{ID: 9, Answer: "yes", Reason: "unknown id, ignored"},
+			ailabel.Verdict{ID: 1, Answer: "yes", Reason: "Baghdad news"},
+			ailabel.Verdict{ID: 2, Answer: "No", Reason: "generic recipe"},
+			ailabel.Verdict{ID: 3, Answer: "unsure", Reason: "bare name"},
+			ailabel.Verdict{ID: 3, Answer: "yes", Reason: "duplicate id, ignored"},
+			ailabel.Verdict{ID: 9, Answer: "yes", Reason: "unknown id, ignored"},
 		)))
 	})
 	c := client(t, f, Config{Effort: "high", Fallback: true})
@@ -92,7 +93,7 @@ func TestLabelSendsTitlesOnlyAndParsesVerdicts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Verdicts) != 3 || res.Verdicts[0].Answer != Yes || res.Verdicts[1].Answer != No || res.Verdicts[2].Answer != Unsure {
+	if len(res.Verdicts) != 3 || res.Verdicts[0].Answer != ailabel.Yes || res.Verdicts[1].Answer != ailabel.No || res.Verdicts[2].Answer != ailabel.Unsure {
 		t.Fatalf("verdicts %+v", res.Verdicts)
 	}
 	if res.Model != "test-model" || res.Refused || res.InputTokens != 120 || res.OutputTokens != 40 {
@@ -129,7 +130,7 @@ func TestLabelSendsTitlesOnlyAndParsesVerdicts(t *testing.T) {
 
 func TestLabelWithoutFallbackOrEffort(t *testing.T) {
 	f := newFakeAPI(t, func(int, map[string]any) (int, string) {
-		return 200, message("end_turn", textBlock(labels(Verdict{ID: 1, Answer: "yes", Reason: "r"})))
+		return 200, message("end_turn", textBlock(labels(ailabel.Verdict{ID: 1, Answer: "yes", Reason: "r"})))
 	})
 	c := client(t, f, Config{})
 	if _, err := c.Label(context.Background(), titles[:1]); err != nil {
@@ -152,13 +153,13 @@ func TestLabelAfterFallback(t *testing.T) {
 		return 200, message("end_turn",
 			textBlock(`{"labels":[{"id":1,"answer":"no"`),
 			map[string]any{"type": "fallback", "from": map[string]any{"model": "test-model"}, "to": map[string]any{"model": "fallback-model"}},
-			textBlock(labels(Verdict{ID: 1, Answer: "yes", Reason: "Baghdad"})))
+			textBlock(labels(ailabel.Verdict{ID: 1, Answer: "yes", Reason: "Baghdad"})))
 	})
 	res, err := client(t, f, Config{Fallback: true}).Label(context.Background(), titles[:1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Model != "fallback-model" || len(res.Verdicts) != 1 || res.Verdicts[0].Answer != Yes {
+	if res.Model != "fallback-model" || len(res.Verdicts) != 1 || res.Verdicts[0].Answer != ailabel.Yes {
 		t.Errorf("result %+v", res)
 	}
 }
@@ -177,7 +178,7 @@ func TestLabelRefusalAndUnusableAnswers(t *testing.T) {
 	for _, tc := range cases {
 		f := newFakeAPI(t, func(int, map[string]any) (int, string) { return 200, tc.reply })
 		res, err := client(t, f, Config{}).Label(context.Background(), titles)
-		if res.Refused != tc.refused || errors.Is(err, ErrAnswer) != tc.errAns || (err != nil) != tc.errAns {
+		if res.Refused != tc.refused || errors.Is(err, ailabel.ErrAnswer) != tc.errAns || (err != nil) != tc.errAns {
 			t.Errorf("%s: result %+v, err %v", tc.name, res, err)
 		}
 	}
@@ -188,7 +189,7 @@ func TestLabelRetriesRateLimitsAndExplainsErrors(t *testing.T) {
 		if n == 1 {
 			return 429, `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`
 		}
-		return 200, message("end_turn", textBlock(labels(Verdict{ID: 1, Answer: "yes", Reason: "r"})))
+		return 200, message("end_turn", textBlock(labels(ailabel.Verdict{ID: 1, Answer: "yes", Reason: "r"})))
 	})
 	if _, err := client(t, f, Config{}).Label(context.Background(), titles[:1]); err != nil || f.calls.Load() != 2 {
 		t.Fatalf("want one retry after a 429: calls %d, err %v", f.calls.Load(), err)

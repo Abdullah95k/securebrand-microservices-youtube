@@ -10,7 +10,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ailabel"
 )
 
-// TitleLabeler is the AI (ailabel.Client; a fake in tests).
+// TitleLabeler is the AI (claude.Client, built by ytprobe; a fake in tests).
 type TitleLabeler interface {
 	Label(ctx context.Context, titles []ailabel.Title) (ailabel.Result, error)
 }

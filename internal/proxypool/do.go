@@ -77,12 +77,12 @@ func (p *Pool) DoPrefer(ctx context.Context, c Class, prefer string, fn Func) (r
 			prefer = ""
 			res.ProxyFailures++
 			if res.ProxyFailures > p.cfg.MaxProxyFailures {
-				return res, fmt.Errorf("too many proxy failures: %w", errOrGeneric(ferr))
+				return res, fmt.Errorf("%w: %w", ErrProxyFailures, errOrGeneric(ferr))
 			}
 		case Transient:
 			res.Transient++
 			if res.Transient >= p.cfg.TransientAttempts {
-				return res, fmt.Errorf("gave up after %d transient errors: %w", res.Transient, errOrGeneric(ferr))
+				return res, fmt.Errorf("%w (%d): %w", ErrTransient, res.Transient, errOrGeneric(ferr))
 			}
 			backoff := p.cfg.TransientBackoff << (res.Transient - 1)
 			if err := p.sleep(ctx, p.jittered(backoff)); err != nil {

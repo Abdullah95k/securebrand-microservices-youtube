@@ -279,6 +279,27 @@ port (`:8080`).
 | `/readyz` | 200 when the database answers (and, for the worker, at least one proxy isn't quarantined). Otherwise 503, with the names of the failed checks. 503 `draining` once a shutdown has started |
 | `/metrics` | Prometheus (worker and scheduler) |
 
+**Dead jobs.** A job that fails ten times in a row for reasons of its own is marked dead and isn't retried. Examples: a page that
+won't parse, or an error YouTube gives for that one item. Image downloads and commenter profiles die after five failures,
+discovery checks after six. Blocks, a pool with no free IP, timeouts and a database that can't be reached never count, so an outage
+can't kill jobs. The alert `DeadJobs` fires while any are dead.
+
+1. See how many, by kind and reason (no IDs are shown):
+
+```bash
+docker compose exec worker ytcollect jobs dead
+```
+
+2. Once the cause is fixed (usually a parser update), bring them back. Replace `KIND` with the kind from step 1:
+
+```bash
+docker compose exec worker ytcollect jobs requeue -kind KIND
+```
+
+**Proxies.** `yt_proxy_bytes_total` counts the traffic each proxy IP carries. `yt_proxies_healthy` against `yt_proxies_total` shows
+how many IPs can serve pages now. The alert `ProxiesHealthyLow` fires when fewer than 3 (or under half) are usable for 15 minutes.
+Player rests don't count against an IP.
+
 **Stopping.** On a stop, the worker takes no new jobs, gives running jobs 20 seconds (`-drain`) to finish, then interrupts the rest
 and hands them back. They run again at once on another worker, and the attempt doesn't count. The Compose file gives the worker
 30 seconds before Docker kills it. On Kubernetes, keep the pod's termination grace period above `-drain` plus about 10 seconds.

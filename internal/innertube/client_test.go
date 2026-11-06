@@ -101,6 +101,26 @@ func TestCallSendsWebClientContext(t *testing.T) {
 	}
 }
 
+// Fix 4: every request's bytes are counted on the proxy that carried it.
+func TestProxyCountsBytes(t *testing.T) {
+	r := newRig(t, 1)
+	px := r.client.opt.Pool.Stats().Proxies
+	if len(px) != 1 || px[0].Bytes != 0 {
+		t.Fatalf("before: %+v", px)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := r.client.Call(context.Background(), Browse, map[string]any{"browseId": "UCfakeAAAAAAAAAAAAAAAAAA"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after := r.client.opt.Pool.Stats().Proxies[0].Bytes
+	// Each call sends a JSON body of a few hundred bytes and gets a small
+	// JSON answer back.
+	if after < 3*100 {
+		t.Errorf("bytes after 3 calls = %d; want the request and response bytes counted", after)
+	}
+}
+
 func TestBlockFailsOverToAnotherProxy(t *testing.T) {
 	for _, kind := range []fakeyt.Block{fakeyt.Block429, fakeyt.Block403, fakeyt.BlockSorryRedirect, fakeyt.BlockCaptchaPage} {
 		r := newRig(t, 2)

@@ -25,6 +25,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -49,9 +50,12 @@ type Proxy struct {
 	// gives it ("" when not given). It is no secret: it fills
 	// provenance.exit_country in the platform contract.
 	country string
-	url     *url.URL
-	host    string // host:port of the proxy, used only to scrub errors
-	client  *http.Client
+	// bytes counts the bytes this proxy carried for us (compressed, on the
+	// wire), for the proxy-traffic metric and the cost report.
+	bytes  atomic.Int64
+	url    *url.URL
+	host   string // host:port of the proxy, used only to scrub errors
+	client *http.Client
 }
 
 // ID is a short stable identifier derived from the proxy's host and port.
@@ -66,6 +70,17 @@ func (p *Proxy) Subnet() string { return p.subnet }
 // Country returns the exit's ISO 3166-1 alpha-2 country from the proxy
 // list, or "" when the list doesn't say.
 func (p *Proxy) Country() string { return p.country }
+
+// AddBytes records n bytes carried by this proxy (request and response, as
+// sent and received on the wire).
+func (p *Proxy) AddBytes(n int64) {
+	if n > 0 {
+		p.bytes.Add(n)
+	}
+}
+
+// Bytes returns the bytes this proxy has carried since start.
+func (p *Proxy) Bytes() int64 { return p.bytes.Load() }
 
 // Client returns the HTTP client that sends requests through this proxy. Each
 // proxy has its own cookie jar, so anonymous visitor IDs are never shared

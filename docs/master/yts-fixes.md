@@ -7,11 +7,11 @@ before the pilot (11), because the cluster can't run yts without them.
 |---|---|---|---|---|
 | 1 | `/healthz` and `/readyz` on the ops port (B1) | [#43](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/43) | Done, 6 Nov | `internal/ops` and its tests; the worker, scheduler and push receiver serve them; checked by hand against a local database |
 | 2 | Memory limits and small-server settings in Compose (B2) | | To do | |
-| 3 | Bounded job retries: `dead` state, metric, alert, `requeue` (C1, C3) | | To do | |
-| 4 | `yt_proxy_bytes_total` (F1) | | To do | |
+| 3 | Bounded job retries: `dead` state, metric, alert, `requeue` (C1, C3) | this PR | In review | Migration `0010_dead_jobs.sql`; `queue.Fail` counts item failures only (`worker.Systemic`), dead at `queue.MaxFailures`; `ytcollect jobs dead / requeue`; `yt_queue_dead`, `yt_jobs_dead_total`, alert `DeadJobs`; tests `TestDeadJobsAndRequeue`, `TestSystemic`, `deploy/prometheus/alerts_test.yml` |
+| 4 | `yt_proxy_bytes_total` (F1) | this PR | In review | `Proxy.AddBytes` on every request (wire bytes, both ways); test `TestProxyCountsBytes` |
 | 5 | `ytcollect report` (D5) | | To do | |
 | 6 | Hand back leases on SIGTERM, within the grace period (B4) | [#43](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/43) | Done, 6 Nov | `worker.Drain`, `queue.ReleaseOwner`; tests `TestWorkerDrainLetsRunningJobsFinish`, `TestWorkerDrainInterruptsAndHandsBack`, `TestReleaseOwner` |
-| 7 | Alert: too few healthy IPs (C5) | | To do | |
+| 7 | Alert: too few healthy IPs (C5) | this PR | In review | `yt_proxies_healthy`, `yt_proxies_total`; alert `ProxiesHealthyLow` with a promtool unit test |
 | 8 | Raw responses: failures and 1% kept forever, the rest 30 days (E8) | | To do | |
 | 9 | Move the AI labelling code out of `ytcollect` | | To do | |
 | 10 | The official-API 30-day job | | To do | |
@@ -33,7 +33,10 @@ before the pilot (11), because the cluster can't run yts without them.
 
 | Item | PR | Status | Evidence |
 |---|---|---|---|
-| `country=XX` on proxy lines, for `exit_country` (REQ-021 rule 7) | this PR | In review | `proxypool.ParseList`, `Proxy.Country`; test `TestParseListCountry` |
-| PostgreSQL 18 in CI and Compose (the cluster runs 18) | this PR | In review | `.github/workflows/ci.yml` and the Compose file use `postgres:18`; the whole test suite runs against it in CI |
+| `country=XX` on proxy lines, for `exit_country` (REQ-021 rule 7) | [#44](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/44) | Done, 6 Nov | `proxypool.ParseList`, `Proxy.Country`; test `TestParseListCountry` |
+| PostgreSQL 18 in CI and Compose (the cluster runs 18) | [#44](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/44) | Done, 6 Nov | `.github/workflows/ci.yml` and the Compose file use `postgres:18`; the whole test suite runs against it in CI |
+
+**Migration numbers:** fix 3 took `0010` (`0010_dead_jobs.sql`), so the outbox of fix 12 will be `0011`. The content is as planned;
+only the number moved.
 
 The contract adoption (REQ-021) is tracked in `yts-contract-adoption.md`, which starts with fix 12.

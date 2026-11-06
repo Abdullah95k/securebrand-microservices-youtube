@@ -13,6 +13,15 @@ groups:
         for: 15m
         annotations:
           summary: "{{ $value }} proxy IP(s) in quarantine"
+      # REQ-010 fix 7 (standard C5): the pool can't run dry unnoticed. Fewer
+      # than 3 usable IPs, or under half the pool, for 15 minutes. Player
+      # rests don't count: the player is blocked often by design.
+      - alert: ProxiesHealthyLow
+        expr: (yt_proxies_healthy < 3 and yt_proxies_total >= 3) or (yt_proxies_healthy < 0.5 * yt_proxies_total)
+        for: 15m
+        annotations:
+          summary: "Only {{ $value }} usable proxy IP(s) on {{ $labels.worker }}: collection slows to a crawl"
+          description: "Check yt_proxy_blocks_total for a block storm, and add or replace IPs (docs/production-runbook.md §7)."
       - alert: FillRateDrop
         expr: (yt_fill_rate < 0.7 * yt_fill_rate_baseline) and yt_fill_rate_baseline > 0.5
         for: 30m
@@ -91,3 +100,14 @@ groups:
         for: 15m
         annotations:
           summary: "Events for {{ $labels.endpoint }} have waited more than an hour: the receiver is failing or the scheduler is not running"
+  - name: queue
+    rules:
+      # REQ-010 fix 3 (standards C1, C3): a job that failed too often for
+      # reasons of its own stops being retried. It stays dead until someone
+      # fixes the cause and requeues it.
+      - alert: DeadJobs
+        expr: sum by (kind) (yt_queue_dead) > 0
+        for: 10m
+        annotations:
+          summary: "{{ $value }} dead {{ $labels.kind }} job(s): not retried until requeued"
+          description: "See the reasons with 'ytcollect jobs dead'; after the fix, 'ytcollect jobs requeue -kind {{ $labels.kind }}'."

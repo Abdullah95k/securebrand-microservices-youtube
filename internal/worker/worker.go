@@ -38,6 +38,8 @@ type Worker struct {
 	Drain    time.Duration
 	Log      *slog.Logger
 	OnResult func(kind string, err error, took time.Duration) // metrics; nil = none
+	// OnDead is called when a job reaches its failure limit; nil = none.
+	OnDead func(kind string)
 
 	switches Switches
 	swAt     time.Time
@@ -216,9 +218,18 @@ func (w *Worker) run(ctx context.Context, j queue.Job) {
 			_ = queue.Release(rctx, w.Pool, j)
 			return
 		}
-		w.Log.Warn("job failed", "job", j.String(), "attempt", j.Attempts, "took", time.Since(start).Round(time.Millisecond), "err", err)
-		if ferr := queue.Fail(rctx, w.Pool, j, err); ferr != nil {
+		item := !Systemic(err)
+		w.Log.Warn("job failed", "job", j.String(), "attempt", j.Attempts, "counts", item,
+			"took", time.Since(start).Round(time.Millisecond), "err", err)
+		dead, ferr := queue.Fail(rctx, w.Pool, j, err, item)
+		if ferr != nil {
 			w.Log.Error("recording a failure failed", "job", j.String(), "err", ferr)
+		}
+		if dead {
+			w.Log.Warn("job dead: too many failures; requeue it once fixed", "job", j.String(), "limit", queue.MaxFailures(j.Kind))
+			if w.OnDead != nil {
+				w.OnDead(j.Kind)
+			}
 		}
 		return
 	}

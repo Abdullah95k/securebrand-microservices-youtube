@@ -86,7 +86,7 @@ func Plan(ctx context.Context, q db.Querier, now time.Time) (Report, error) {
 	rows.Close()
 	// Demand: the next 24 hours of jobs, plus clearing today's backlog.
 	rows, err = q.Query(ctx, `SELECT kind, count(*) FILTER (WHERE due_at <= $1::timestamptz + interval '24 hours'),
-			count(*) FILTER (WHERE due_at <= $1::timestamptz) FROM schedule GROUP BY kind`, now)
+			count(*) FILTER (WHERE due_at <= $1::timestamptz) FROM schedule WHERE dead_at IS NULL GROUP BY kind`, now)
 	if err != nil {
 		return r, err
 	}
@@ -107,7 +107,7 @@ func Plan(ctx context.Context, q db.Querier, now time.Time) (Report, error) {
 	// Freshness debt: how far behind the overdue jobs are, per tier.
 	rows, err = q.Query(ctx, `SELECT COALESCE(c.tier, '-'), sum(EXTRACT(EPOCH FROM $1::timestamptz - s.due_at) / 3600)
 		FROM schedule s LEFT JOIN channels c ON c.id = s.channel_id
-		WHERE s.due_at < $1::timestamptz - interval '15 minutes' GROUP BY 1`, now)
+		WHERE s.due_at < $1::timestamptz - interval '15 minutes' AND s.dead_at IS NULL GROUP BY 1`, now)
 	if err != nil {
 		return r, err
 	}

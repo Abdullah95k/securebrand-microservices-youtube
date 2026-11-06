@@ -49,6 +49,7 @@ Usage: ytcollect <command> [flags]
   channels   add, import, list, set or unlist channels ("ytcollect channels" for details)
   keywords   import the seed list; add, list, set or remove keywords ("ytcollect keywords" for details)
   health     the job queue by kind and priority, and switched-off features
+  jobs       dead jobs (too many failures): list them, or requeue them once the cause is fixed
   erase      record an erasure request (author, channel, video, comment or post); a worker carries it out
   erasures   list erasure requests and their status
   privacy-audit  check that nothing erased is in the database (the scheduler runs it daily)
@@ -85,7 +86,7 @@ func main() {
 		if err == nil {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
 		}
-	case "channels", "keywords", "health", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
+	case "channels", "keywords", "health", "jobs", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
 		pool := mustDB(ctx, log)
 		defer pool.Close()
 		switch cmd {
@@ -95,6 +96,8 @@ func main() {
 			err = keywordsCmd(ctx, pool, os.Stdout, args)
 		case "health":
 			err = healthCmd(ctx, pool, os.Stdout)
+		case "jobs":
+			err = jobsCmd(ctx, pool, os.Stdout, args)
 		case "switch":
 			err = switchCmd(ctx, pool, os.Stdout, args)
 		case "scheduler":

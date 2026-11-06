@@ -152,14 +152,14 @@ func healthCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "PRIORITY\tKIND\tJOBS\tDUE NOW\tRUNNING\tFAILING\tOLDEST DUE\tSWITCH")
+	fmt.Fprintln(tw, "PRIORITY\tKIND\tJOBS\tDUE NOW\tRUNNING\tFAILING\tDEAD\tOLDEST DUE\tSWITCH")
 	for _, d := range st {
 		state := "on"
 		if sw["all"] || sw[d.Kind] {
 			state = "OFF"
 		}
-		fmt.Fprintf(tw, "P%d\t%s\t%d\t%d\t%d\t%d\t%s\t%s\n", d.Priority, d.Kind, d.Total, d.Due, d.Leased, d.Failing,
-			d.Oldest.Round(time.Minute), state)
+		fmt.Fprintf(tw, "P%d\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n", d.Priority, d.Kind, d.Total, d.Due, d.Leased, d.Failing,
+			d.Dead, d.Oldest.Round(time.Minute), state)
 	}
 	if err := tw.Flush(); err != nil {
 		return err

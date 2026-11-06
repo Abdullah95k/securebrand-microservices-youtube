@@ -241,10 +241,11 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			}
 			return err
 		}},
-		{name: "API hits purge", every: 24 * time.Hour, run: func() error {
-			n, err := discovery.PurgeAPIHits(ctx, pool, time.Now())
-			if n > 0 {
-				log.Info("official-API search hits older than 30 days deleted (YouTube's API rule)", "hits", n)
+		{name: "API data expiry", every: 24 * time.Hour, run: func() error {
+			e, err := discovery.ExpireAPIData(ctx, pool, time.Now())
+			if e != (discovery.APIExpiry{}) {
+				log.Info("official-API data past 30 days handled (YouTube's API rule)", "hits_deleted", e.Hits,
+					"video_api_fields_cleared", e.Videos, "candidates_removed", e.Candidates, "checks_moved_up", e.Prioritised)
 			}
 			return err
 		}},

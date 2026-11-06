@@ -13,8 +13,8 @@ before the pilot (11), because the cluster can't run yts without them.
 | 6 | Hand back leases on SIGTERM, within the grace period (B4) | [#43](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/43) | Done, 6 Nov | `worker.Drain`, `queue.ReleaseOwner`; tests `TestWorkerDrainLetsRunningJobsFinish`, `TestWorkerDrainInterruptsAndHandsBack`, `TestReleaseOwner` |
 | 7 | Alert: too few healthy IPs (C5) | [#45](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/45) | Done, 6 Nov | `yt_proxies_healthy`, `yt_proxies_total`; alert `ProxiesHealthyLow` with a promtool unit test |
 | 8 | Raw responses: failures and 1% kept forever, the rest 30 days (E8) | | To do | |
-| 9 | Move the AI labelling code out of `ytcollect` | this PR | In review | The API client moved to `internal/ailabel/claude`, imported only by `ytprobe`; `go list -deps ./cmd/ytcollect` lists no AI SDK package (it listed 25), checked in CI |
-| 10 | The official-API 30-day job | | To do | |
+| 9 | Move the AI labelling code out of `ytcollect` | [#47](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/47) | Done, 6 Nov | The API client moved to `internal/ailabel/claude`, imported only by `ytprobe`; `go list -deps ./cmd/ytcollect` lists no AI SDK package (it listed 25), checked in CI |
+| 10 | The official-API 30-day job | this PR | In review | `discovery.ExpireAPIData`, daily in the scheduler: API hits deleted after 30 days; the API title and time cleared from `api_search` videos never read by scraping; API-only candidate checks moved to the front at 20 days, removed (with their job) if still unchecked at 30. Test `TestExpireAPIData` |
 | 11 | The 48-hour pilot on the production cluster | | Waiting for 13, 14, 16, 17 and the cluster | |
 | 12 | Outbox and relay (E1–E5) | | To do | |
 | 13 | Non-root image, read-only root (A2) | | To do (before the pilot) | |

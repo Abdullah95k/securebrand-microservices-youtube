@@ -70,6 +70,10 @@ cd securebrand-microservices-youtube
 docker build -t ytprobe .
 ```
 
+> **Images built after 6 November 2026 run as user 65532, not root** (REQ-010 fix 13). The Phase 0 files on the shared server
+> belong to root, so such an image can't read them. Phase 0 has ended and the image already on the server still runs as root, so
+> nothing changes there. If you ever rebuild it for a Phase 0 command, add `--user 0:0` right after `docker run`.
+
 4. Create the channel list:
 
 ```bash

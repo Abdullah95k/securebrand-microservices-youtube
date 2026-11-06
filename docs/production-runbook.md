@@ -223,37 +223,45 @@ docker compose restart worker
 nano ~/securebrand-microservices-youtube/deploy/compose/docker-compose.yml
 ```
 
-2. Go to the Compose folder:
+2. Give the collector its files. Its containers run as user 65532, never as root (REQ-010 fix 13), so that user owns the secret
+   files and the data folder. Postgres keeps its own password file (user 999). Run this again after adding a file to
+   `/etc/securebrand-youtube`:
+
+```bash
+chown -R 65532:65532 /etc/securebrand-youtube /var/lib/securebrand-youtube && chown 999:999 /etc/securebrand-youtube/postgres_password
+```
+
+3. Go to the Compose folder:
 
 ```bash
 cd ~/securebrand-microservices-youtube/deploy/compose
 ```
 
-3. Build the image:
+4. Build the image:
 
 ```bash
 docker compose build
 ```
 
-4. Start everything:
+5. Start everything:
 
 ```bash
 docker compose up -d
 ```
 
-5. Check that the services are running. `migrate` shows `Exited (0)`, which is correct:
+6. Check that the services are running. `migrate` shows `Exited (0)`, which is correct:
 
 ```bash
 docker compose ps -a
 ```
 
-6. Look at the latest log lines:
+7. Look at the latest log lines:
 
 ```bash
 docker compose logs --tail 50 scheduler worker
 ```
 
-7. Add a shortcut for admin commands. `ytc` runs one `ytcollect` command in a fresh container:
+8. Add a shortcut for admin commands. `ytc` runs one `ytcollect` command in a fresh container:
 
 ```bash
 echo "alias ytc='docker compose -f $HOME/securebrand-microservices-youtube/deploy/compose/docker-compose.yml run --rm --no-deps scheduler'" >> ~/.bashrc
@@ -263,7 +271,7 @@ echo "alias ytc='docker compose -f $HOME/securebrand-microservices-youtube/deplo
 source ~/.bashrc
 ```
 
-8. Check the queue:
+9. Check the queue:
 
 ```bash
 ytc health
@@ -365,16 +373,11 @@ names, IDs or text.
 docker compose exec scheduler ytcollect report
 ```
 
-2. Whole days, Iraq time, saved as a file in the container. Change the dates to the ones you want:
+2. Whole days, Iraq time, saved as a file in the data folder, where the server sees it at the same path. Change the dates to the
+   ones you want:
 
 ```bash
-docker compose exec scheduler ytcollect report -from 2026-11-10 -to 2026-11-12 -o /tmp/report.md
-```
-
-3. Copy the file out of the container:
-
-```bash
-docker compose cp scheduler:/tmp/report.md ./report.md
+docker compose exec scheduler ytcollect report -from 2026-11-10 -to 2026-11-12 -o /var/lib/securebrand-youtube/report.md
 ```
 
 `-channels 1000,10000,50000` projects to other counts; `-json` gives the same report as JSON. Memory and CPU come from the

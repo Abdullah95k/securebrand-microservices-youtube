@@ -37,7 +37,8 @@ The production stack (`ytcollect` and the rest) **is not running anywhere**.
    - **Built where:** CI builds it on every change to check that it builds, but publishes nothing. On the pilot server the owner builds
      it locally (`docker build -t ytprobe .`).
    - **Tags:** no version tags and no registry. The Compose file names it `securebrand-youtube:latest`.
-   - **User:** it **runs as root**, so it can read owner-only secret files mounted from the host. Gaps A1 and A2.
+   - **User:** it **runs as root**, so it can read owner-only secret files mounted from the host. Gaps A1 and A2. *Since REQ-010
+     fix 13: user 65532, no capabilities, a read-only root filesystem; secrets readable through the pod's fsGroup on Kubernetes.*
 2. **Deployment:**
    - **Compose:** `deploy/compose/docker-compose.yml` runs postgres, migrate, scheduler, worker, backup, prometheus and alertmanager,
      plus websub as an optional profile. CI validates it with `docker compose config`, and the Prometheus and Alertmanager configs with

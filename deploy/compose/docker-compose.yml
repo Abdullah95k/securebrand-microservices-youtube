@@ -13,9 +13,9 @@
 # their limit, so they collect garbage before they hit it. For a bigger
 # machine, see docs/production-runbook.md step 5.
 #
-# Secrets are files in /etc/securebrand-youtube on the host (chmod 600),
-# mounted read-only; nothing secret is in this file, the image or the
-# environment. Data lives in /var/lib/securebrand-youtube and the Postgres
+# Secrets are files in /etc/securebrand-youtube on the host (chmod 600,
+# owned by the collector's user 65532), mounted read-only; nothing secret is
+# in this file, the image or the environment. Data lives in /var/lib/securebrand-youtube and the Postgres
 # volume. Monitoring ports listen on 127.0.0.1 only (reach them through an
 # SSH tunnel).
 name: securebrand-youtube
@@ -36,6 +36,17 @@ x-ytcollect: &ytcollect
   build:
     context: ../..
   entrypoint: ["/usr/local/bin/ytcollect"]
+  # Never root (REQ-010 fix 13, standard A2): user 65532, no capabilities,
+  # no privilege gain, a read-only root filesystem. The programs write only
+  # under /var/lib/securebrand-youtube and /tmp. The secret files and that
+  # folder belong to 65532 on the host (runbook step 5).
+  user: "65532:65532"
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
   restart: unless-stopped
   environment:
     # Push notifications (D23): set in .env next to this file; empty is off.

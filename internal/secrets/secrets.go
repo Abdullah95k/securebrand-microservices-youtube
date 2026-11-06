@@ -4,6 +4,12 @@
 // file path is given in an environment variable ending in _FILE, files must
 // be readable by their owner only, and secret values never appear in errors
 // or logs.
+//
+// One exception, for Kubernetes (REQ-010 fix 13): a secret volume with the
+// pod's fsGroup gives its files to root and that group, mode 0440, so a
+// non-root process reads them through the group. A file may therefore be
+// readable by its group when the group is one this process belongs to.
+// Group write and any access for others are always refused.
 package secrets
 
 import (
@@ -19,7 +25,8 @@ import (
 // maxSize caps how much we read: a secret file is small.
 const maxSize = 1 << 20
 
-// ErrTooOpen means the file can be read by users other than its owner.
+// ErrTooOpen means the file can be read by users other than its owner (or
+// this process's own group).
 var ErrTooOpen = errors.New("file permissions are too open; run: chmod 600 <file>")
 
 // FromEnv reads the secret whose file path is in the environment variable
@@ -88,10 +95,44 @@ func pathFromEnv(envVar string) (string, error) {
 	return path, nil
 }
 
+// private reports whether only the owner, and at most this process's own
+// group (read only), can read the file.
+func private(info os.FileInfo) bool {
+	perm := info.Mode().Perm()
+	switch {
+	case perm&0o007 != 0: // others
+		return false
+	case perm&0o070 == 0:
+		return true
+	case perm&0o030 != 0: // group write or execute
+		return false
+	}
+	gid, ok := fileGroup(info)
+	return ok && inGroup(gid)
+}
+
+// inGroup reports whether this process belongs to group gid (tests replace
+// it).
+var inGroup = func(gid int) bool {
+	if gid == os.Getegid() {
+		return true
+	}
+	groups, _ := os.Getgroups()
+	for _, g := range groups {
+		if g == gid {
+			return true
+		}
+	}
+	return false
+}
+
 func readChecked(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		// The error names the path, never the content.
+		if errors.Is(err, os.ErrPermission) {
+			return nil, fmt.Errorf("opening secret file: %w (the collector runs as user 65532: give it the file with chown, or on Kubernetes set the pod's fsGroup)", err)
+		}
 		return nil, fmt.Errorf("opening secret file: %w", err)
 	}
 	defer f.Close()
@@ -102,7 +143,7 @@ func readChecked(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("secret file %s is not a regular file", path)
 	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+	if runtime.GOOS != "windows" && !private(info) {
 		return nil, fmt.Errorf("secret file %s has mode %04o: %w", path, info.Mode().Perm(), ErrTooOpen)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxSize+1))

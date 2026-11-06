@@ -56,6 +56,31 @@ func TestParseList(t *testing.T) {
 	}
 }
 
+// The platform's proxy secret puts a country on each line (REQ-021).
+func TestParseListCountry(t *testing.T) {
+	ps, err := ParseList([]string{
+		proxyLine("192.0.2.30:8080", "type=isp", "subnet=lab-b", "country=IQ"),
+		proxyLine("192.0.2.31:8080", "country=de", "type=dc"),
+		proxyLine("192.0.2.32:8080"),
+		"direct country=IQ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{ps[0].Country(), ps[1].Country(), ps[2].Country(), ps[3].Country()}; got[0] != "IQ" || got[1] != "DE" ||
+		got[2] != "" || got[3] != "IQ" {
+		t.Errorf("countries = %q; want IQ, DE (upper case), empty when not given, IQ for direct", got)
+	}
+	if ps[0].Kind() != KindISP || ps[1].Kind() != KindDatacenter {
+		t.Errorf("kinds = %v %v; options may come in any order", ps[0].Kind(), ps[1].Kind())
+	}
+	for _, bad := range []string{"country=", "country=IRQ", "country=I1", "country=عر"} {
+		if _, err := ParseList([]string{proxyLine("192.0.2.33:8080", bad)}); err == nil {
+			t.Errorf("%q: want an error", bad)
+		}
+	}
+}
+
 func TestParseListErrorsNeverLeakURL(t *testing.T) {
 	secret := "hunter2xyz"
 	bad := []string{
@@ -64,6 +89,7 @@ func TestParseListErrorsNeverLeakURL(t *testing.T) {
 		"http://user:" + secret + "@192.0.2.1",      // no port
 		"http://user:" + secret + "@192.0.2.1:80 x", // bad option
 		"http://user:" + secret + "@192.0.2.1:80 type=mobile",
+		"http://user:" + secret + "@192.0.2.1:80 country=XYZ",
 	}
 	for _, line := range bad {
 		_, err := ParseList([]string{line})

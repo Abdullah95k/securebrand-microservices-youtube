@@ -11,6 +11,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fakeyt"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/jsonx"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
 )
 
 func fastPool(t *testing.T, lines []string) *proxypool.Pool {
@@ -118,6 +119,42 @@ func TestProxyCountsBytes(t *testing.T) {
 	// JSON answer back.
 	if after < 3*100 {
 		t.Errorf("bytes after 3 calls = %d; want the request and response bytes counted", after)
+	}
+}
+
+// The job's meter (REQ-010 fix 5) counts every attempt, a failover
+// included, the same bytes the proxy counts, and the block signal.
+func TestJobMeterCountsRequestsBytesAndBlocks(t *testing.T) {
+	r := newRig(t, 2)
+	if _, err := r.client.DetectClientVersion(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var before int64
+	for _, px := range r.client.opt.Pool.Stats().Proxies {
+		before += px.Bytes
+	}
+	r.yt.BlockNext("browse", 1, fakeyt.Block429)
+	sent := len(r.yt.Requests())
+	ctx, m := usage.With(context.Background())
+	if _, err := r.client.Call(ctx, Browse, map[string]any{"browseId": "UCfakeCCCCCCCCCCCCCCCCCC"}); err != nil {
+		t.Fatal(err)
+	}
+	var after int64
+	for _, px := range r.client.opt.Pool.Stats().Proxies {
+		after += px.Bytes
+	}
+	got := m.Totals()
+	// The blocked request, the retry on the other IP, and whatever that IP
+	// needed first (its visitor ID): every request YouTube received.
+	if want := int64(len(r.yt.Requests()) - sent); got.Requests != want || want < 2 || got.Blocks != 1 {
+		t.Errorf("meter = %+v; want %d requests (one blocked, then another IP) and 1 block", got, want)
+	}
+	if got.Bytes == 0 || got.Bytes != after-before {
+		t.Errorf("meter bytes = %d; want the proxies' count for this call, %d", got.Bytes, after-before)
+	}
+	// Outside a job there is no meter, and nothing breaks.
+	if _, err := r.client.Call(context.Background(), Browse, map[string]any{"browseId": "UCfakeCCCCCCCCCCCCCCCCCC"}); err != nil {
+		t.Fatal(err)
 	}
 }
 

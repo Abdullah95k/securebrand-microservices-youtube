@@ -39,9 +39,10 @@ var Cost = map[string]float64{
 
 // Worker is what a worker process announces about itself.
 type Worker struct {
-	Proxies   int       `json:"proxies"`
-	IntervalS float64   `json:"interval_s"`
-	At        time.Time `json:"at"`
+	Proxies      int       `json:"proxies"`
+	IntervalS    float64   `json:"interval_s"`
+	BackfillDays int       `json:"backfill_days,omitempty"` // for "ytcollect report"
+	At           time.Time `json:"at"`
 }
 
 // Announce records a worker's capacity (workers call it every few minutes).

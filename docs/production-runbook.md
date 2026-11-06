@@ -646,6 +646,16 @@ docker compose up -d
 docker image prune -f
 ```
 
+5. Check which build is running:
+
+```bash
+docker compose exec scheduler ytcollect version
+```
+
+**Releases** (REQ-010 fix 16). Pushing a tag such as `v0.1.0` builds the image with the release and commit stamped in, scans it
+and publishes it as `ghcr.io/<owner>/yts:v0.1.0`; the run's summary gives the digest and the Helm values. The base images are
+pinned by digest in the `Dockerfile`; to move to newer ones, change each tag and its digest together, and CI scans the result.
+
 ## 14. Turning things off
 
 Any job kind can be switched off at once, without a restart. For example, to pause comment collection:

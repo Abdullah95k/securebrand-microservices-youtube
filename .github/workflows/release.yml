@@ -1,0 +1,60 @@
+name: release
+
+# A release (REQ-010 fix 16, standard A1): pushing a tag such as v0.1.0
+# builds the image with the version and commit stamped in, scans it, and
+# publishes it to GitHub's registry as ghcr.io/<owner>/yts:<tag>. Nothing
+# runs until someone pushes a tag. The platform may build its own images
+# from the same Dockerfile and build arguments instead.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    name: build, scan and publish the image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: names
+        id: names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image=ghcr.io/${owner}/yts" >> "$GITHUB_OUTPUT"
+          echo "short=${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+      - name: build
+        run: |
+          docker build --build-arg VERSION="${GITHUB_REF_NAME}" --build-arg REVISION="${GITHUB_SHA}" \
+            -t "${{ steps.names.outputs.image }}:${GITHUB_REF_NAME}" -t "${{ steps.names.outputs.image }}:sha-${{ steps.names.outputs.short }}" .
+      - name: check it runs as non-root and knows its version
+        run: |
+          test "$(docker inspect -f '{{.Config.User}}' "${{ steps.names.outputs.image }}:${GITHUB_REF_NAME}")" = "65532:65532"
+          docker run --rm --read-only --cap-drop ALL --entrypoint /usr/local/bin/ytcollect "${{ steps.names.outputs.image }}:${GITHUB_REF_NAME}" version \
+            | grep -q "ytcollect ${GITHUB_REF_NAME} "
+      - name: scan (no fixable high or critical findings)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.58.1 image \
+            --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "${{ steps.names.outputs.image }}:${GITHUB_REF_NAME}"
+      - name: publish
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "${{ steps.names.outputs.image }}:${GITHUB_REF_NAME}"
+          docker push "${{ steps.names.outputs.image }}:sha-${{ steps.names.outputs.short }}"
+          digest="$(docker inspect -f '{{index .RepoDigests 0}}' "${{ steps.names.outputs.image }}:${GITHUB_REF_NAME}")"
+          {
+            echo "### yts ${GITHUB_REF_NAME}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Image | \`${{ steps.names.outputs.image }}:${GITHUB_REF_NAME}\` |"
+            echo "| Digest | \`${digest#*@}\` |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| Helm | \`--set image.repository=${{ steps.names.outputs.image }} --set image.digest=${digest#*@}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          docker logout ghcr.io

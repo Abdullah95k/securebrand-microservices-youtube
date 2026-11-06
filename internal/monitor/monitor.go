@@ -276,6 +276,17 @@ func Dead(reg *metrics.Registry) func(kind string) {
 	}
 }
 
+// Raw counts raw responses (REQ-010 fix 8) by class (keep, 30d) and result
+// (stored, failed, dropped), and the bytes stored.
+func Raw(reg *metrics.Registry) func(class, result string, n int) {
+	return func(class, result string, n int) {
+		reg.Add("yt_raw_objects_total", "Raw responses, by class and result.", map[string]string{"class": class, "result": result}, 1)
+		if result == "stored" {
+			reg.Add("yt_raw_bytes_total", "Bytes of raw responses stored (gzipped), by class.", map[string]string{"class": class}, float64(n))
+		}
+	}
+}
+
 // Jobs counts job outcomes (the worker's OnResult hook).
 func Jobs(reg *metrics.Registry) func(kind string, err error, took time.Duration) {
 	return func(kind string, err error, took time.Duration) {

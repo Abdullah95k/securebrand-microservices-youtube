@@ -17,6 +17,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/rawstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
 )
 
@@ -204,6 +205,7 @@ func (w *Worker) run(ctx context.Context, j queue.Job) {
 		}
 	}()
 	jctx, meter := usage.With(ctx)
+	jctx, _ = rawstore.WithJob(jctx) // a parse failure keeps the job's latest raw answers
 	next, err := safe(jctx, h, j)
 	stopHB()
 	took := time.Since(start)

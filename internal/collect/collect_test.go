@@ -34,6 +34,7 @@ type rig struct {
 	pool *pgxpool.Pool
 	svc  *collect.Service
 	sup  *privacy.Suppressor
+	pp   *proxypool.Pool
 }
 
 func newRig(t *testing.T, chans []fakeyt.FakeChannel) *rig {
@@ -68,7 +69,7 @@ func newRig(t *testing.T, chans []fakeyt.FakeChannel) *rig {
 	sup := privacy.NewSuppressor(k)
 	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: quiet, WithPlayer: true,
 		Write: &writer.Writer{Pool: pool, Sup: sup, KW: live}}
-	return &rig{yt: yt, pool: pool, svc: svc, sup: sup}
+	return &rig{yt: yt, pool: pool, svc: svc, sup: sup, pp: pp}
 }
 
 func (r *rig) work(t *testing.T, d time.Duration) {

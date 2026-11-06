@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 18:30 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 18:40 (Iraq time)**.
 
 ## Where it stands
 
@@ -12,9 +12,9 @@ The current state of the YouTube collector, for the owner and the master session
   server (D-026). The final numbers come from the 4 November report and the 5 November discovery, into `docs/phase0-results.md`.
 - **Now building:** the owner's fix list (REQ-010) and the contract adoption (REQ-021), approved on 6 November. Progress, one row per
   fix: [`master/yts-fixes.md`](master/yts-fixes.md).
-  - **Done:** fixes 1, 2, 3, 4, 6, 7, 9 and 10, plus the proxy `country=` tag and PostgreSQL 18.
-  - **In review:** fix 5, `ytcollect report` (measured cost per channel per day, projected to 1,000 and 10,000 channels).
-  - **Next, before the pilot:** fix 8 (raw responses), then fixes 13, 14, 16 and 17 for the cluster.
+  - **Done:** fixes 1, 2, 3, 4, 5, 6, 7, 9 and 10, plus the proxy `country=` tag and PostgreSQL 18.
+  - **In review:** fix 8, raw responses (failures and a 1% sample under `yts/keep/`, the rest under `yts/30d/`).
+  - **Next, before the pilot:** fixes 13, 14, 16 and 17 for the cluster.
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
 
 ## What runs where
@@ -42,7 +42,11 @@ The current state of the YouTube collector, for the owner and the master session
 - proxies arrive in the secret `proxies`, key `proxies.yaml`, one line per proxy with `country=`;
 - raw responses go under `yts/keep/` and `yts/30d/` in the raw bucket. The platform expires `yts/30d/`; yts never deletes.
 
-**Changes to report (additions only):** fix 5 adds three tables (`usage_hourly`, `usage_channel_daily`, `db_sizes`), the command
+**Changes to report (additions only):**
+- Fix 8 adds the worker settings `YT_RAW_STORAGE_FILE`, `-raw-sample` and `-raw-30d`, and the metrics `yt_raw_objects_total` and
+  `yt_raw_bytes_total`. `parse_failures.raw_ref` is now filled. Raw files hold what the page shows, personal data included, and
+  erasure doesn't reach them.
+- Fix 5 adds three tables (`usage_hourly`, `usage_channel_daily`, `db_sizes`), the command
 `ytcollect report`, the worker flag `-backfill-days`, and a `backfill_days` field in the workers' capacity record. Nothing was renamed
 or removed. The outbox migration moves to `0012`.
 

@@ -231,7 +231,7 @@ API. "Collector" means yts works it out.
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `comments_complete_pct, comments_partial` | Per video: collected ÷ displayed comments; capped at 20,000 | real, bool | 98.5, false | often | collector | comment engine | videos.comments_complete_pct, comments_partial | not published | latest | no | Phase 0: median 100%, p10 100% on uncapped videos. |
 | `field_fill_rates` | Per endpoint and field, per 3-hour window: seen, present | row | watch, likes, 120, 120 | always | collector | collector | field_fill_rates | not published | snapshots | no | Alerts on a drop (parser drift). |
-| `parse_failures` | endpoint, entity, error, raw_ref | row | watch, video, fakeVid0001, … | rare | collector | collector | parse_failures; a scrubbed structure skeleton in the debug folder | not published | latest | no | Raw responses themselves are not kept (only skeletons: structure, no values). |
+| `parse_failures` | endpoint, entity, error, raw_ref | row | watch, video, fakeVid0001, … | rare | collector | collector | parse_failures (raw_ref: the raw answers, kept under `yts/keep/`); a scrubbed structure skeleton in the debug folder | not published | latest | no | Since fix 8, the raw answers behind a failure are kept forever in the raw bucket; `raw_ref` points to them. |
 | `schedule` | Per job: kind, entity, priority, due_at, attempts, last_ok, last_error | row | comments, fakeVid0001, 1, … | always | collector | collector | schedule | not published | latest | no | No per-job coverage event yet (gap). |
 
 ### Not collected
@@ -336,11 +336,15 @@ API. "Collector" means yts works it out.
     - **Kept:** the full description and every About-panel link (title and displayed URL), from day one, for channels and for enriched
       commenters.
     - **Gaps:** links inside descriptions aren't extracted into a list, and old link lists aren't versioned.
-11. **Raw responses.**
-    - **Not kept.** On a parse failure, a scrubbed skeleton (the structure, no values) is saved in the debug folder, at most 5 per kind.
-      `parse_failures.raw_ref` exists but no raw file is written.
-    - **Why:** this was a deliberate privacy choice for a public repository and personal data.
-    - The platform standard (E8) asks for raw responses. See `yts-gaps.md`.
+11. **Raw responses** (updated 6 November, REQ-010 fix 8).
+    - **Kept,** in the raw bucket (`internal/rawstore`): every page and API answer the worker reads, images aside, gzipped, with the
+      parser version, endpoint, URL, status, block signal and the opaque proxy ID.
+    - **Failures and a 1% sample** go under `yts/keep/`, kept forever. A parse failure keeps the job's latest answers there and
+      records their `raw_ref` in `parse_failures`.
+    - **The rest** goes under `yts/30d/`, which the bucket may expire after 30 days. yts never deletes raw files.
+    - **Personal data:** a raw answer holds whatever the page shows, commenters' names and comments included. The bucket must be
+      private; erasure doesn't reach raw files (the privacy tools are off by the owner's decision).
+    - The scrubbed skeleton in the debug folder stays, for the parser developers.
 12. **Volumes** (measured in Phase 0 unless marked):
     - **Uploads:** median 3 per channel per month, p90 64–69 (500-channel census, 4–5 Nov).
     - **Comments:** on the newest video, median 10–13 and p90 188–433. 12,683 comments over 228 crawled videos (about 56 per video).

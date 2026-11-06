@@ -159,6 +159,36 @@ For DigitalOcean Spaces the endpoint is like `https://fra1.digitaloceanspaces.co
 echo '{"type": "dir", "dir": "/var/lib/securebrand-youtube/objects"}' > /etc/securebrand-youtube/storage.json
 ```
 
+**Raw responses** (REQ-010 fix 8, the owner's decision 3). With a second settings file, the worker keeps every page and API answer
+it reads, gzipped, with the parser version. Images are left out: they are media.
+
+- Under `yts/keep/`, kept forever: every failure (a block, an error page, an answer that isn't JSON, a page the parsers couldn't
+  read) and a random 1% of the rest (`-raw-sample`).
+- Under `yts/30d/`: everything else. Give the bucket a rule that deletes objects under `yts/30d/` after 30 days; yts itself never
+  deletes raw files. `-raw-30d=false` writes only the `keep/` part.
+- Each answer's reference (`raw_ref`, such as `s3://BUCKET/yts/keep/2026/11/06/browse/….json.gz`) goes into `parse_failures`, and
+  later into each event's provenance.
+- The traffic is about the same as the proxy traffic (`yt_raw_bytes_total` counts it).
+
+1. Create a private bucket for raw responses, separate from the media bucket, and give it the 30-day rule above.
+2. Create its settings file, in the same format as `storage.json` (your endpoint, region and bucket):
+
+```bash
+nano /etc/securebrand-youtube/raw_storage.json
+```
+
+```json
+{"type": "s3", "endpoint": "https://fsn1.your-objectstorage.com", "region": "fsn1", "bucket": "securebrand-youtube-raw",
+ "access_key_file": "/etc/securebrand-youtube/s3_access_key", "secret_key_file": "/etc/securebrand-youtube/s3_secret_key"}
+```
+
+3. Restart the worker. Its start-up log says `raw responses kept` with the bucket. Without the file it says
+   `no raw bucket configured`, and nothing raw is kept.
+
+```bash
+docker compose restart worker
+```
+
 ## 5. Start the stack
 
 1. Check the worker's request gap. The Compose file starts at `-interval "2s"` under `worker`: Phase 0 (E1) found every page type
@@ -385,6 +415,10 @@ What an erasure does:
 - it tells webhook receivers that take `erasure` events.
 
 The daily privacy audit erases again anything that comes back.
+
+**Not covered:** raw responses in the raw bucket (section 4). A raw file is the page as YouTube sent it, so it can hold the erased
+person's data. Erasure doesn't edit or delete raw files. Under the owner's decisions the privacy tools stay off; if erasure is ever
+switched on, raw files need their own step first.
 
 ## 9. Backups
 

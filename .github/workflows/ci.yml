@@ -42,6 +42,11 @@ jobs:
         run: go test -race -count=1 ./...
       - name: fixture scanner (no real data or secrets in the repo)
         run: go run ./cmd/fixturescan .
+      - name: the production collector doesn't link the AI SDK (REQ-010 fix 9)
+        run: |
+          if go list -deps ./cmd/ytcollect | grep -q anthropic; then
+            echo "ytcollect depends on the AI SDK; only ytprobe may (internal/ailabel/claude)"; exit 1
+          fi
 
   docker:
     name: docker (ytprobe image builds)

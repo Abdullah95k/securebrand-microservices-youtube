@@ -250,7 +250,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 			}
 		}
 	}()
-	w := &worker.Worker{Pool: pool, Owner: owner, Handlers: handlers, OnResult: monitor.Jobs(reg),
+	w := &worker.Worker{Pool: pool, Owner: owner, Handlers: handlers, OnResult: monitor.Jobs(reg), OnDead: monitor.Dead(reg),
 		Concurrency: *workers, Lease: 15 * time.Minute, Drain: *drain, Log: log}
 	log.Info("worker running", "proxies", len(proxies), "interval", interval.String(), "workers", *workers, "push", wsCfg.Enabled())
 	return w.Run(ctx)

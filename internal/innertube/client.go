@@ -262,6 +262,7 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 		}
 		wire, body, rerr := readBody(resp)
 		resp.Body.Close()
+		px.AddBytes(wire + max(req.ContentLength, 0))
 		if rerr != nil {
 			return proxypool.Transient, errors.New(px.ScrubError(rerr))
 		}

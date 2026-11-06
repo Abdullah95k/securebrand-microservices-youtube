@@ -80,8 +80,11 @@ func TestPoolMetricsAndProxyHealth(t *testing.T) {
 	now := time.Now()
 	st := proxypool.Stats{Speed: 0.5, Classes: map[proxypool.Class]proxypool.ClassStats{proxypool.ClassBrowse: {BlockedRequests: 3, FailoverOK: 2}},
 		Proxies: []proxypool.ProxyStats{
-			{ID: "px-aaaa", Subnet: "sn-1", Kind: "isp", Requests: 100, Blocks: 2, CoolUntil: map[proxypool.Class]time.Time{proxypool.ClassPlayer: now.Add(time.Hour)}},
+			{ID: "px-aaaa", Subnet: "sn-1", Kind: "isp", Requests: 100, Blocks: 2, Bytes: 5_000_000,
+				CoolUntil: map[proxypool.Class]time.Time{proxypool.ClassPlayer: now.Add(time.Hour)}},
 			{ID: "px-bbbb", Subnet: "sn-2", Kind: "isp", Requests: 50, Quarantined: true},
+			{ID: "px-cccc", Subnet: "sn-3", Kind: "isp", Requests: 10,
+				CoolUntil: map[proxypool.Class]time.Time{proxypool.ClassBrowse: now.Add(time.Hour)}},
 		}}
 	reg := metrics.New()
 	if err := monitor.Pool(ctx, pool, reg, "w1", st, now); err != nil {
@@ -89,7 +92,7 @@ func TestPoolMetricsAndProxyHealth(t *testing.T) {
 	}
 	var states string
 	_ = pool.QueryRow(ctx, `SELECT string_agg(proxy_key || '=' || state, ',' ORDER BY proxy_key) FROM proxy_health`).Scan(&states)
-	if states != "px-aaaa=cooling,px-bbbb=quarantined" {
+	if states != "px-aaaa=cooling,px-bbbb=quarantined,px-cccc=cooling" {
 		t.Errorf("proxy health %q", states)
 	}
 	var b strings.Builder
@@ -99,6 +102,23 @@ func TestPoolMetricsAndProxyHealth(t *testing.T) {
 	}
 	if strings.Contains(b.String(), "@") || strings.Contains(b.String(), "password") {
 		t.Error("metrics must carry no credentials")
+	}
+	// Fix 4: bytes per proxy. Fix 7: a player rest leaves an IP healthy;
+	// quarantine or a page-class rest doesn't.
+	for _, want := range []string{
+		`yt_proxy_bytes_total{proxy="px-aaaa",subnet="sn-1",worker="w1"} 5e+06`,
+		`yt_proxies_total{worker="w1"} 3`,
+		`yt_proxies_healthy{worker="w1"} 1`,
+	} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("missing %s in:\n%s", want, b.String())
+		}
+	}
+	monitor.Dead(reg)("media")
+	b.Reset()
+	_, _ = reg.WriteTo(&b)
+	if !strings.Contains(b.String(), `yt_jobs_dead_total{kind="media"} 1`) {
+		t.Error("dead jobs must be counted")
 	}
 	hook := monitor.Jobs(reg)
 	hook("video", nil, time.Second)

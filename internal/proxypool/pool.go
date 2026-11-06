@@ -50,6 +50,12 @@ var (
 	// ErrParked: the request was blocked on too many different IPs; the
 	// caller should retry it much later (the plan says 6 hours).
 	ErrParked = errors.New("proxypool: request blocked on several IPs; park it and retry later")
+	// ErrProxyFailures: too many proxies failed in a row (connection
+	// errors, consent pages): the proxies' problem, not the request's.
+	ErrProxyFailures = errors.New("proxypool: too many proxy failures")
+	// ErrTransient: the platform kept answering with temporary errors
+	// (5xx, timeouts).
+	ErrTransient = errors.New("proxypool: gave up after transient errors")
 )
 
 // Config holds the pacing and failover settings. Zero values take the
@@ -658,6 +664,8 @@ type ProxyStats struct {
 	Requests    int64
 	Blocks      int64
 	ProxyErrors int64
+	// Bytes the proxy carried (compressed, on the wire).
+	Bytes       int64
 	Quarantined bool
 	CoolUntil   map[Class]time.Time // only classes still cooling
 	// BlocksByClass splits Blocks by endpoint class (browse, player…).
@@ -706,7 +714,7 @@ func (p *Pool) Stats() Stats {
 	for _, st := range p.states {
 		ps := ProxyStats{
 			ID: st.p.id, Kind: st.p.kind, Subnet: st.p.subnet,
-			Requests: st.requests, Blocks: st.blocks, ProxyErrors: st.proxyErrors,
+			Requests: st.requests, Blocks: st.blocks, ProxyErrors: st.proxyErrors, Bytes: st.p.Bytes(),
 			Quarantined: st.quarantined, CoolUntil: map[Class]time.Time{}, BlocksByClass: map[Class]int64{},
 		}
 		for c, cs := range st.classes {

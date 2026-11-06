@@ -1,0 +1,35 @@
+# Unit tests for alert rules (promtool test rules), run in CI. Synthetic
+# series only.
+rule_files:
+  - alerts.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'yt_proxies_healthy{worker="w1"}'
+        values: '10x5 2x30'
+      - series: 'yt_proxies_total{worker="w1"}'
+        values: '10x35'
+      - series: 'yt_queue_dead{kind="media"}'
+        values: '0x5 4x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ProxiesHealthyLow
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ProxiesHealthyLow
+        exp_alerts:
+          - exp_labels: {worker: w1}
+            exp_annotations:
+              summary: "Only 2 usable proxy IP(s) on w1: collection slows to a crawl"
+              description: "Check yt_proxy_blocks_total for a block storm, and add or replace IPs (docs/production-runbook.md §7)."
+      - eval_time: 10m
+        alertname: DeadJobs
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: DeadJobs
+        exp_alerts:
+          - exp_labels: {kind: media}
+            exp_annotations:
+              summary: "4 dead media job(s): not retried until requeued"
+              description: "See the reasons with 'ytcollect jobs dead'; after the fix, 'ytcollect jobs requeue -kind media'."

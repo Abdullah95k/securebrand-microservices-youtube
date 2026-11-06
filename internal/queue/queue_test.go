@@ -136,8 +136,8 @@ func TestCheckNowDuringARunAndFailures(t *testing.T) {
 		t.Fatalf("the check-now during the run was lost: %+v", again)
 	}
 	// A failure retries after the backoff, not at once.
-	if err := queue.Fail(ctx, pool, again[0], errors.New("HTTP 503")); err != nil {
-		t.Fatal(err)
+	if dead, err := queue.Fail(ctx, pool, again[0], errors.New("HTTP 503"), true); err != nil || dead {
+		t.Fatal(dead, err)
 	}
 	if next, _ := queue.Lease(ctx, pool, "w", nil, 1, time.Minute); len(next) != 0 {
 		t.Fatalf("a failed job came back before its backoff: %+v", next)
@@ -185,5 +185,90 @@ func TestBackoff(t *testing.T) {
 		if got := queue.Backoff(attempts); got != want {
 			t.Errorf("Backoff(%d) = %v; want %v", attempts, got, want)
 		}
+	}
+}
+
+// Bounded retries (REQ-010 fix 3): item failures kill a job at its kind's
+// limit; systemic ones (blocks, no free IP) only delay it. A dead job keeps
+// its row and reason, is never leased, and comes back with Requeue.
+func TestDeadJobsAndRequeue(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	past := time.Now().Add(-time.Minute)
+	_ = queue.Put(ctx, pool, "media", "thumb:fakeVid0001", "", queue.P2, past)
+	_ = queue.Put(ctx, pool, "video", "fakeVid0002", "", queue.P2, past)
+	lease := func(kind string) queue.Job {
+		t.Helper()
+		_, _ = pool.Exec(ctx, `UPDATE schedule SET due_at = now() - interval '1 second' WHERE kind = $1`, kind)
+		js, err := queue.Lease(ctx, pool, "w", []string{kind}, 1, time.Minute)
+		if err != nil || len(js) != 1 {
+			t.Fatalf("lease %s: %v %v", kind, js, err)
+		}
+		return js[0]
+	}
+
+	// Systemic failures never kill: far more than the limit, still alive.
+	for i := 0; i < 3*queue.MaxFailures("video"); i++ {
+		if dead, err := queue.Fail(ctx, pool, lease("video"), errors.New("blocked"), false); err != nil || dead {
+			t.Fatalf("systemic failure %d: dead=%v err=%v", i, dead, err)
+		}
+	}
+
+	// Item failures: dead exactly at the limit (5 for media).
+	limit := queue.MaxFailures("media")
+	if limit != 5 || queue.MaxFailures("video") != queue.DefaultMaxFailures {
+		t.Fatalf("limits: media %d, video %d", limit, queue.MaxFailures("video"))
+	}
+	for i := 1; i <= limit; i++ {
+		dead, err := queue.Fail(ctx, pool, lease("media"), errors.New("image is not a JPEG"), true)
+		if err != nil || dead != (i == limit) {
+			t.Fatalf("item failure %d of %d: dead=%v err=%v", i, limit, dead, err)
+		}
+	}
+	_, _ = pool.Exec(ctx, `UPDATE schedule SET due_at = now() - interval '1 second'`)
+	if js, _ := queue.Lease(ctx, pool, "w", []string{"media"}, 5, time.Minute); len(js) != 0 {
+		t.Fatalf("a dead job was leased: %+v", js)
+	}
+	st, _ := queue.Stats(ctx, pool)
+	for _, d := range st {
+		if d.Kind == "media" && (d.Dead != 1 || d.Due != 0 || d.Failing != 0) {
+			t.Errorf("media stats %+v; want 1 dead, not due, not counted as failing", d)
+		}
+	}
+	dj, err := queue.DeadJobs(ctx, pool)
+	if err != nil || len(dj) != 1 || dj[0].Kind != "media" || dj[0].Reason != "image is not a JPEG" || dj[0].Count != 1 {
+		t.Fatalf("dead jobs %+v, %v", dj, err)
+	}
+	// A check-now doesn't revive it; only Requeue does.
+	_ = queue.Now(ctx, pool, "media", "thumb:fakeVid0001", "", queue.P0)
+	if js, _ := queue.Lease(ctx, pool, "w", []string{"media"}, 5, time.Minute); len(js) != 0 {
+		t.Fatal("a check-now revived a dead job")
+	}
+	if n, err := queue.Requeue(ctx, pool, "video", ""); err != nil || n != 0 {
+		t.Errorf("requeue of another kind brought back %d, %v", n, err)
+	}
+	if n, err := queue.Requeue(ctx, pool, "media", ""); err != nil || n != 1 {
+		t.Fatalf("requeue brought back %d, %v", n, err)
+	}
+	js, _ := queue.Lease(ctx, pool, "w", []string{"media"}, 5, time.Minute)
+	if len(js) != 1 || js[0].Attempts != 1 {
+		t.Fatalf("after requeue: %+v; want leasable again, counters reset", js)
+	}
+	// One more item failure after a requeue doesn't kill at once.
+	if dead, _ := queue.Fail(ctx, pool, js[0], errors.New("image is not a JPEG"), true); dead {
+		t.Error("the failure count wasn't reset by the requeue")
+	}
+	// A success resets the count too.
+	j := lease("video")
+	if dead, _ := queue.Fail(ctx, pool, j, errors.New("parse error"), true); dead {
+		t.Fatal("dead after one failure")
+	}
+	if err := queue.Done(ctx, pool, lease("video"), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var failures int
+	_ = pool.QueryRow(ctx, `SELECT failures FROM schedule WHERE kind = 'video'`).Scan(&failures)
+	if failures != 0 {
+		t.Errorf("failures after a success = %d", failures)
 	}
 }

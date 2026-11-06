@@ -46,11 +46,14 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 	gauges := []gauge{
 		{"yt_queue_jobs", "Jobs in the queue.", `SELECT kind, priority::text, count(*) FROM schedule GROUP BY 1, 2`, nil, []string{"kind", "priority"}},
 		{"yt_queue_due", "Jobs due now and not running.", `SELECT kind, priority::text, count(*) FROM schedule
-			WHERE due_at <= now() AND (lease_until IS NULL OR lease_until < now()) GROUP BY 1, 2`, nil, []string{"kind", "priority"}},
+			WHERE due_at <= now() AND dead_at IS NULL AND (lease_until IS NULL OR lease_until < now()) GROUP BY 1, 2`, nil, []string{"kind", "priority"}},
 		{"yt_queue_running", "Jobs running.", `SELECT kind, count(*) FROM schedule WHERE lease_until >= now() GROUP BY 1`, nil, []string{"kind"}},
-		{"yt_queue_failing", "Jobs whose last run failed.", `SELECT kind, count(*) FROM schedule WHERE last_error IS NOT NULL GROUP BY 1`, nil, []string{"kind"}},
+		{"yt_queue_failing", "Jobs whose last run failed (dead jobs not counted).", `SELECT kind, count(*) FROM schedule
+			WHERE last_error IS NOT NULL AND dead_at IS NULL GROUP BY 1`, nil, []string{"kind"}},
+		{"yt_queue_dead", "Jobs dead after too many failures: not retried until requeued.", `SELECT kind, count(*) FROM schedule
+			WHERE dead_at IS NOT NULL GROUP BY 1`, nil, []string{"kind"}},
 		{"yt_queue_oldest_due_seconds", "How long the oldest due job has waited.", `SELECT kind,
-			COALESCE(EXTRACT(EPOCH FROM now() - min(due_at)), 0) FROM schedule WHERE due_at <= now() GROUP BY 1`, nil, []string{"kind"}},
+			COALESCE(EXTRACT(EPOCH FROM now() - min(due_at)), 0) FROM schedule WHERE due_at <= now() AND dead_at IS NULL GROUP BY 1`, nil, []string{"kind"}},
 		{"yt_channels_listed", "Listed channels.", `SELECT kind, tier, count(*) FROM channels WHERE status = 'listed' GROUP BY 1, 2`, nil, []string{"kind", "tier"}},
 		{"yt_channels_by_status", "Channels by status.", `SELECT status, count(*) FROM channels GROUP BY 1`, nil, []string{"status"}},
 		{"yt_videos_new_24h", "Videos first seen in the last 24 hours.", `SELECT source, count(*) FROM videos WHERE first_seen >= $1 GROUP BY 1`, []any{day}, []string{"source"}},
@@ -73,7 +76,7 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 		{"yt_erasure_oldest_pending_seconds", "Age of the oldest pending erasure request.", `SELECT COALESCE(EXTRACT(EPOCH FROM now() - min(received_at)), 0)
 			FROM erasure_requests WHERE status = 'pending'`, nil, nil},
 		{"yt_suppression_entries", "Active suppression list entries.", `SELECT kind, count(*) FROM suppression_list WHERE override_at IS NULL GROUP BY 1`, nil, []string{"kind"}},
-		{"yt_enrichment_backlog", "Commenters waiting for enrichment.", `SELECT count(*) FROM schedule WHERE kind = 'enrich' AND due_at <= now()`, nil, nil},
+		{"yt_enrichment_backlog", "Commenters waiting for enrichment.", `SELECT count(*) FROM schedule WHERE kind = 'enrich' AND due_at <= now() AND dead_at IS NULL`, nil, nil},
 		{"yt_discovery_candidates", "Discovery candidates by status.", `SELECT status, count(*) FROM candidates GROUP BY 1`, nil, []string{"status"}},
 		{"yt_discovery_listed_24h", "Channels discovery listed in the last 24 hours.", `SELECT kind, count(*) FROM channels
 			WHERE added_by = 'discovery' AND first_seen >= $1 GROUP BY 1`, []any{day}, []string{"kind"}},
@@ -87,7 +90,7 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 			`SELECT dl.endpoint, EXTRACT(EPOCH FROM now() - min(ev.created_at)) FROM webhook_deliveries dl
 			JOIN webhook_events ev ON ev.id = dl.event_id WHERE dl.status = 'pending' GROUP BY 1`, nil, []string{"endpoint"}},
 		{"yt_media_bytes", "Stored images, by kind.", `SELECT kind, COALESCE(sum(bytes), 0) FROM media GROUP BY kind`, nil, []string{"kind"}},
-		{"yt_media_jobs_due", "Image downloads waiting.", `SELECT count(*) FROM schedule WHERE kind = 'media' AND due_at <= now()`, nil, nil},
+		{"yt_media_jobs_due", "Image downloads waiting.", `SELECT count(*) FROM schedule WHERE kind = 'media' AND due_at <= now() AND dead_at IS NULL`, nil, nil},
 		{"yt_archive_bytes", "Archive size (compressed), by table.", `SELECT table_name, COALESCE(sum(bytes), 0) FROM archive_index GROUP BY table_name`, nil, []string{"table"}},
 		{"yt_archive_rows", "Archived rows, by table.", `SELECT table_name, COALESCE(sum(rows), 0) FROM archive_months GROUP BY table_name`, nil, []string{"table"}},
 		{"yt_archive_unscrubbed_seconds", "Age of the oldest erasure not yet applied to the archive (0: none).",
@@ -203,10 +206,21 @@ func Pool(ctx context.Context, q db.Querier, reg *metrics.Registry, owner string
 		reg.Set("yt_pool_failover_ok_total", "Blocked requests that succeeded on another IP.", l, float64(cs.FailoverOK))
 		reg.Set("yt_pool_parked_total", "Requests given up after several IPs.", l, float64(cs.Parked))
 	}
+	healthy := 0
+	for _, p := range st.Proxies {
+		if Healthy(p) {
+			healthy++
+		}
+	}
+	wl := map[string]string{"worker": owner}
+	reg.Set("yt_proxies_total", "Proxy IPs in this worker's pool.", wl, float64(len(st.Proxies)))
+	reg.Set("yt_proxies_healthy", "Proxy IPs usable for page requests: not quarantined, not resting (player rests don't count).",
+		wl, float64(healthy))
 	for _, p := range st.Proxies {
 		l := map[string]string{"worker": owner, "proxy": p.ID, "subnet": p.Subnet}
 		reg.Set("yt_proxy_requests_total", "Requests per proxy IP.", l, float64(p.Requests))
 		reg.Set("yt_proxy_blocks_total", "Block signals per proxy IP.", l, float64(p.Blocks))
+		reg.Set("yt_proxy_bytes_total", "Bytes per proxy IP (requests and responses, compressed, on the wire).", l, float64(p.Bytes))
 		state := "ok"
 		var cool *time.Time
 		for _, until := range p.CoolUntil {
@@ -236,6 +250,30 @@ func Pool(ctx context.Context, q db.Querier, reg *metrics.Registry, owner string
 		}
 	}
 	return nil
+}
+
+// Healthy reports whether a proxy can serve page requests now: not
+// quarantined, and not resting for any class but the player. The player is
+// blocked often and asked sparingly (Phase 0 E1), so its rests don't make an
+// IP unhealthy.
+func Healthy(p proxypool.ProxyStats) bool {
+	if p.Quarantined {
+		return false
+	}
+	for c := range p.CoolUntil {
+		if c != proxypool.ClassPlayer {
+			return false
+		}
+	}
+	return true
+}
+
+// Dead counts jobs that reached their failure limit (the worker's OnDead
+// hook).
+func Dead(reg *metrics.Registry) func(kind string) {
+	return func(kind string) {
+		reg.Add("yt_jobs_dead_total", "Jobs that reached their failure limit, by kind.", map[string]string{"kind": kind}, 1)
+	}
 }
 
 // Jobs counts job outcomes (the worker's OnResult hook).

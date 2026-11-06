@@ -91,7 +91,7 @@ func Lease(ctx context.Context, pool *pgxpool.Pool, owner string, kinds []string
 		// transaction right now (its advisory lock), is skipped.
 		rows, err := tx.Query(ctx, `SELECT kind, entity_id, COALESCE(channel_id, ''), priority, due_at, attempts
 			FROM schedule s
-			WHERE due_at <= now()
+			WHERE due_at <= now() AND dead_at IS NULL
 			  AND (lease_until IS NULL OR lease_until < now())
 			  AND ($1::text[] IS NULL OR cardinality($1::text[]) = 0 OR kind = ANY($1))
 			  AND (channel_id IS NULL OR NOT EXISTS (
@@ -156,7 +156,7 @@ func Done(ctx context.Context, q db.Querier, j Job, next time.Time) error {
 		}
 		next = time.Now() // a check-now arrived: run once more
 	}
-	_, err := q.Exec(ctx, `UPDATE schedule SET lease_until = NULL, lease_owner = NULL, attempts = 0,
+	_, err := q.Exec(ctx, `UPDATE schedule SET lease_until = NULL, lease_owner = NULL, attempts = 0, failures = 0,
 		last_ok = now(), last_error = NULL, due_at = LEAST($3, COALESCE(rearm_at, $3)), rearm_at = NULL
 		WHERE kind = $1 AND entity_id = $2`, j.Kind, j.EntityID, next)
 	return err
@@ -164,11 +164,86 @@ func Done(ctx context.Context, q db.Querier, j Job, next time.Time) error {
 
 // Fail releases a job after an error and retries it later: 2, 4, 8 … minutes
 // by attempt, at most 6 hours. A check-now that arrived meanwhile wins.
-func Fail(ctx context.Context, q db.Querier, j Job, cause error) error {
-	_, err := q.Exec(ctx, `UPDATE schedule SET lease_until = NULL, lease_owner = NULL, last_error = left($3, 500),
+//
+// itemFailure says the item itself failed (a page that won't parse, an
+// error YouTube returns for this item), as opposed to a block or a pool
+// with no free IP. Only item failures count towards the job kind's limit
+// (MaxFailures); at the limit the job is dead: it keeps its row and reason,
+// and is never leased again until Requeue. It reports whether the job died.
+func Fail(ctx context.Context, q db.Querier, j Job, cause error, itemFailure bool) (dead bool, err error) {
+	add := 0
+	if itemFailure {
+		add = 1
+	}
+	err = q.QueryRow(ctx, `UPDATE schedule SET lease_until = NULL, lease_owner = NULL, last_error = left($3, 500),
+		failures = failures + $5,
+		dead_at = CASE WHEN failures + $5 >= $6 THEN now() ELSE NULL END,
+		dead_reason = CASE WHEN failures + $5 >= $6 THEN left($3, 500) ELSE NULL END,
 		due_at = LEAST(now() + make_interval(secs => $4), COALESCE(rearm_at, now() + make_interval(secs => $4))), rearm_at = NULL
-		WHERE kind = $1 AND entity_id = $2`, j.Kind, j.EntityID, cause.Error(), Backoff(j.Attempts).Seconds())
-	return err
+		WHERE kind = $1 AND entity_id = $2
+		RETURNING dead_at IS NOT NULL`, j.Kind, j.EntityID, cause.Error(), Backoff(j.Attempts).Seconds(), add,
+		MaxFailures(j.Kind)).Scan(&dead)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil // removed while it ran (an erasure, a channel taken off the list)
+	}
+	return dead, err
+}
+
+// DefaultMaxFailures is how many item failures in a row a job may have
+// before it is dead. With the backoff that is at least a day of retries.
+const DefaultMaxFailures = 10
+
+// maxFailures holds the kinds with a different limit: one-off work that is
+// cheap to lose and easy to redo.
+var maxFailures = map[string]int{
+	KindMedia:     5,
+	KindEnrich:    5,
+	KindCandidate: 6,
+	KindResolve:   6,
+}
+
+// MaxFailures is the limit for a job kind.
+func MaxFailures(kind string) int {
+	if n, ok := maxFailures[kind]; ok {
+		return n
+	}
+	return DefaultMaxFailures
+}
+
+// Dead is a summary of dead jobs: how many of a kind died with one reason.
+type Dead struct {
+	Kind   string
+	Reason string
+	Count  int64
+	Oldest time.Time
+}
+
+// DeadJobs summarises the dead jobs by kind and reason (no entity IDs).
+func DeadJobs(ctx context.Context, q db.Querier) ([]Dead, error) {
+	rows, err := q.Query(ctx, `SELECT kind, COALESCE(left(dead_reason, 120), ''), count(*), min(dead_at)
+		FROM schedule WHERE dead_at IS NOT NULL GROUP BY 1, 2 ORDER BY 3 DESC, 1, 2`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Dead
+	for rows.Next() {
+		var d Dead
+		if err := rows.Scan(&d.Kind, &d.Reason, &d.Count, &d.Oldest); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// Requeue brings dead jobs back: due now, with their counters reset. kind
+// and entityID narrow it ("" means any); it returns how many came back.
+func Requeue(ctx context.Context, q db.Querier, kind, entityID string) (int64, error) {
+	tag, err := q.Exec(ctx, `UPDATE schedule SET dead_at = NULL, dead_reason = NULL, failures = 0, attempts = 0,
+		last_error = NULL, due_at = now()
+		WHERE dead_at IS NOT NULL AND ($1 = '' OR kind = $1) AND ($2 = '' OR entity_id = $2)`, kind, entityID)
+	return tag.RowsAffected(), err
 }
 
 // Extend keeps a running job's lease alive (long backfills renew it while
@@ -232,17 +307,19 @@ type Depth struct {
 	Total    int64
 	Due      int64
 	Leased   int64
-	Failing  int64 // last run ended in an error
+	Failing  int64 // last run ended in an error (dead jobs not counted)
+	Dead     int64 // too many failures: not retried until requeued
 	Oldest   time.Duration
 }
 
 // Stats summarises the queue for the admin "health" command and metrics.
 func Stats(ctx context.Context, q db.Querier) ([]Depth, error) {
 	rows, err := q.Query(ctx, `SELECT kind, priority, count(*),
-			count(*) FILTER (WHERE due_at <= now() AND (lease_until IS NULL OR lease_until < now())),
+			count(*) FILTER (WHERE due_at <= now() AND dead_at IS NULL AND (lease_until IS NULL OR lease_until < now())),
 			count(*) FILTER (WHERE lease_until >= now()),
-			count(*) FILTER (WHERE last_error IS NOT NULL),
-			COALESCE(EXTRACT(EPOCH FROM now() - min(due_at) FILTER (WHERE due_at <= now())), 0)
+			count(*) FILTER (WHERE last_error IS NOT NULL AND dead_at IS NULL),
+			count(*) FILTER (WHERE dead_at IS NOT NULL),
+			COALESCE(EXTRACT(EPOCH FROM now() - min(due_at) FILTER (WHERE due_at <= now() AND dead_at IS NULL)), 0)
 		FROM schedule GROUP BY kind, priority ORDER BY priority, kind`)
 	if err != nil {
 		return nil, err
@@ -252,7 +329,7 @@ func Stats(ctx context.Context, q db.Querier) ([]Depth, error) {
 	for rows.Next() {
 		var d Depth
 		var secs float64
-		if err := rows.Scan(&d.Kind, &d.Priority, &d.Total, &d.Due, &d.Leased, &d.Failing, &secs); err != nil {
+		if err := rows.Scan(&d.Kind, &d.Priority, &d.Total, &d.Due, &d.Leased, &d.Failing, &d.Dead, &secs); err != nil {
 			return nil, err
 		}
 		d.Oldest = time.Duration(secs * float64(time.Second))

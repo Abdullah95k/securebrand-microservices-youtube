@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:12 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:20 (Iraq time)**.
 
 ## Where it stands
 
@@ -12,12 +12,26 @@ The current state of the YouTube collector, for the owner and the master session
   server (D-026). The final numbers come from the 4 November report and the 5 November discovery, into `docs/phase0-results.md`.
 - **Now building:** the owner's fix list (REQ-010) and the contract adoption (REQ-021), approved on 6 November. Progress, one row per
   fix: [`master/yts-fixes.md`](master/yts-fixes.md).
-  - **Done:** fixes 1 to 10, 13 (the non-root image), 14 (the Helm chart) and 17 (database TLS and roles), plus the proxy
-    `country=` tag and PostgreSQL 18.
-  - **In review:** fix 16, the last before the pilot: base images pinned by digest, an image scan, a release workflow, and the
-    version stamped into the build.
-  - **Then:** the pilot (fix 11), once the cluster, the storage values and the proxies are ready; the outbox (fix 12) alongside.
+  - **Done:** every fix before the pilot: 1 to 10, 13 (non-root image), 14 (Helm chart), 16 (pinned bases, image scan, releases)
+    and 17 (database TLS and roles), plus the proxy `country=` tag and PostgreSQL 18.
+  - **Next:** the pilot (fix 11) when the platform is ready (below); the outbox and relay (fix 12) alongside it.
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
+
+## Ready for the pilot (fix 11)
+
+yts's side is ready on `main` at `edab872` (6 November):
+
+| Item | Value |
+|---|---|
+| Chart | `deploy/helm/yts`, values `deploy/helm/yts/values-production.yaml` ([README](../deploy/helm/yts/README.md)) |
+| Image | Built from the repository's `Dockerfile` (bases pinned by digest) with `--build-arg VERSION=<tag> --build-arg REVISION=<commit>`, or published by pushing a `v*` tag (`ghcr.io/<owner>/yts:<tag>`) |
+| Helm image keys | `image.repository`, and `image.digest` (preferred) or `image.tag` |
+| Secrets it mounts | `platform-credentials` (`POSTGRES_*`), `proxies` (`proxies.yaml`), `yts` (`privacy_key`, made by the owner from the README) |
+| Pilot settings | One worker, 2 s per proxy IP, 10 jobs at once, a 7-day backfill; the cost report with `ytcollect report` |
+
+**Still needed before it starts:** the cluster and namespace; the storage values (endpoint, region, bucket names, credential keys);
+the proxies secret; the owner's `yts` secret; optionally the network ranges and the Prometheus selector labels. The owner starts and
+stops the pilot; I give the commands, one per step, and write `docs/master/yts-pilot-report.md`.
 
 ## What runs where
 

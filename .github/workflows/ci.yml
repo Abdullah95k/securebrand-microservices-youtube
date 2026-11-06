@@ -54,7 +54,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: build image
-        run: docker build -t ytprobe:ci .
+        run: docker build --build-arg VERSION=ci --build-arg REVISION=${{ github.sha }} -t ytprobe:ci .
+      - name: the base images are pinned by digest (standard I3)
+        run: |
+          bad="$(grep -E '^FROM ' Dockerfile | grep -v '@sha256:[0-9a-f]\{64\}' || true)"
+          if [ -n "$bad" ]; then echo "base image not pinned by digest: $bad"; exit 1; fi
+      - name: the image knows its version and commit
+        run: |
+          docker run --rm --entrypoint /usr/local/bin/ytcollect ytprobe:ci version | tee /dev/stderr | grep -q "ytcollect ci (${GITHUB_SHA:0:12})"
+          test "$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' ytprobe:ci)" = "$GITHUB_SHA"
+      - name: image scan (Trivy; fails on fixable high or critical findings)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.58.1 image \
+            --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress ytprobe:ci
       - name: image runs and prints its usage
         run: |
           docker run --rm ytprobe:ci help

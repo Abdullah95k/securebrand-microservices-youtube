@@ -33,6 +33,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/rawstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/secrets"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/version"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/websub"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/writer"
@@ -382,6 +383,9 @@ func fileExists(p string) bool {
 // /healthz keeps answering while the process drains. From the signal on,
 // /readyz answers "draining".
 func serveOps(ctx context.Context, addr string, reg *metrics.Registry, health *ops.Health, log *slog.Logger) {
+	// Which build is running (REQ-010 fix 16).
+	reg.Set("yt_build_info", "The running build: release and commit.",
+		map[string]string{"version": version.Version, "revision": version.Revision}, 1)
 	go func() {
 		<-ctx.Done()
 		health.Drain()

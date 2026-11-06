@@ -30,6 +30,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/secrets"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/version"
 )
 
 // Environment variables naming secret files, and their defaults.
@@ -67,6 +68,7 @@ Usage: ytcollect <command> [flags]
   scheduler  run the maintenance loop (partitions, missing jobs); a long-running service
   worker     run the collector: lease jobs and read YouTube through the proxies; a long-running service
   websub     run the push-notification receiver (needs YT_WEBSUB_CALLBACK, D23); a long-running service
+  version    the release and commit this program was built from
 
 Run "ytcollect <command> -h" for the flags of a command.
 `
@@ -94,6 +96,10 @@ func main() {
 			err = grantPlatformRoles(ctx, pool, log)
 		}
 	case "channels", "keywords", "health", "jobs", "report", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
+		switch cmd {
+		case "scheduler", "worker", "websub":
+			log.Info("starting", "command", cmd, "version", version.Version, "revision", version.Revision)
+		}
 		pool := mustDB(ctx, log, roleFor(cmd))
 		defer pool.Close()
 		switch cmd {
@@ -130,6 +136,8 @@ func main() {
 		case "suppression":
 			err = suppressionCmd(ctx, pool, os.Stdout, args)
 		}
+	case "version":
+		fmt.Printf("ytcollect %s\n", version.String())
 	case "-h", "--help", "help":
 		fmt.Print(mainUsage)
 	default:

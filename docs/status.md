@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:06 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:12 (Iraq time)**.
 
 ## Where it stands
 
@@ -12,10 +12,11 @@ The current state of the YouTube collector, for the owner and the master session
   server (D-026). The final numbers come from the 4 November report and the 5 November discovery, into `docs/phase0-results.md`.
 - **Now building:** the owner's fix list (REQ-010) and the contract adoption (REQ-021), approved on 6 November. Progress, one row per
   fix: [`master/yts-fixes.md`](master/yts-fixes.md).
-  - **Done:** fixes 1 to 10, 13 (the non-root image) and 17 (database TLS and roles), plus the proxy `country=` tag and
-    PostgreSQL 18.
-  - **In review:** fix 14, the Helm chart (`deploy/helm/yts`, `values-production.yaml`).
-  - **Next, before the pilot:** fix 16 (the base image pinned by digest, an image scan).
+  - **Done:** fixes 1 to 10, 13 (the non-root image), 14 (the Helm chart) and 17 (database TLS and roles), plus the proxy
+    `country=` tag and PostgreSQL 18.
+  - **In review:** fix 16, the last before the pilot: base images pinned by digest, an image scan, a release workflow, and the
+    version stamped into the build.
+  - **Then:** the pilot (fix 11), once the cluster, the storage values and the proxies are ready; the outbox (fix 12) alongside.
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
 
 ## What runs where
@@ -57,6 +58,8 @@ The current state of the YouTube collector, for the owner and the master session
 - Does `POSTGRES_USER` own the `yts` database's `public` schema? `migrate` creates the tables as that role.
 
 **Changes to report (additions only):**
+- Fix 16: `ytcollect version`, the metric `yt_build_info`, OCI labels on the image, and a release workflow that publishes
+  `ghcr.io/<owner>/yts` only when a `v*` tag is pushed.
 - Fix 14: the Helm chart; a storage `prefix` setting (media under `yts/`); a `runbook_url` on every alert.
 - Fix 17: `YT_POSTGRES_DIR` (the platform's credential files). Each command connects as the owner, app or read-only role; `migrate`
   grants the app and read-only roles. Without TLS, a connection to another machine is refused. Compose is unchanged.

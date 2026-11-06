@@ -73,8 +73,9 @@ value (`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`, `POSTGRES_SSLMODE`
 | Read-only (`POSTGRES_RO_USER`) | `report`, `health`, `erasures`, `export` (the app role if there is no read-only one) |
 
 `migrate` grants the app role row access (never the schema) and the read-only role `SELECT`, also for tables made later. The
-connection must use TLS (`require`, `verify-ca` or `verify-full`; `verify-full` by default when `POSTGRES_SSLROOTCERT`, the server's
-CA, is there); a plain connection to another machine is refused. The steps below are for one server with Docker Compose, which keeps
+connection must use TLS (`require`, `verify-ca` or `verify-full`). With the server's CA (`POSTGRES_CA_CERT`, the platform's key),
+`require` becomes `verify-full`: the certificate is checked against the CA and the name against `POSTGRES_HOST`. A plain connection
+to another machine is refused. The steps below are for one server with Docker Compose, which keeps
 the single `database_url` file.
 
 1. Create the folders:

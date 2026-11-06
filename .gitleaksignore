@@ -9,3 +9,10 @@
 # from the AWS documentation) in the S3 signer test, not a credential. The
 # test now builds it from short pieces; this line covers the old commit.
 ba1a5f0bb58e5c0025254bfb6b235aef16a21c04:internal/media/store_test.go:generic-api-key:20
+#
+# A comment in the chart's values that listed the platform's S3 key names
+# one after another, read as a key and its value. Names only, no secret. The
+# comment is reworded; these lines cover the old commit, and the first
+# version of this file, which quoted that comment.
+30ac8c196084ca8b3e1538f1684e85fb6cd6a1c8:deploy/helm/yts/values.yaml:generic-api-key:45
+8fc950de5bea730b0c177a4da60a2a94da253591:.gitleaksignore:generic-api-key:4

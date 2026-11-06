@@ -2,12 +2,19 @@ package db_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -110,16 +117,28 @@ func TestPlatformDSNTLS(t *testing.T) {
 			t.Errorf("an error must not show a password: %v", err)
 		}
 	}
-	// A CA file makes the default verify-full, checked against that CA.
-	files := base()
-	files["POSTGRES_SSLROOTCERT"] = "-----BEGIN CERTIFICATE-----\nnot a real certificate\n-----END CERTIFICATE-----"
-	dir := credentials(t, files)
-	dsn, err := db.PlatformDSN(dir, db.RoleApp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(dsn, "sslmode='verify-full'") || !strings.Contains(dsn, "sslrootcert='"+filepath.Join(dir, "POSTGRES_SSLROOTCERT")+"'") {
-		t.Error("with a CA file, the default must be verify-full against it")
+	// The platform's CA (POSTGRES_CA_CERT, the PEM itself) turns its
+	// "require" into verify-full against that CA; POSTGRES_SSLROOTCERT, the
+	// libpq name, works the same. An explicit verify-ca is kept.
+	for _, c := range []struct{ file, mode, want string }{
+		{"POSTGRES_CA_CERT", "require", "verify-full"},
+		{"POSTGRES_CA_CERT", "", "verify-full"},
+		{"POSTGRES_SSLROOTCERT", "require", "verify-full"},
+		{"POSTGRES_CA_CERT", "verify-ca", "verify-ca"},
+	} {
+		files := base()
+		files[c.file] = "-----BEGIN CERTIFICATE-----\nnot a real certificate\n-----END CERTIFICATE-----"
+		if c.mode != "" {
+			files["POSTGRES_SSLMODE"] = c.mode
+		}
+		dir := credentials(t, files)
+		dsn, err := db.PlatformDSN(dir, db.RoleApp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(dsn, "sslmode='"+c.want+"'") || !strings.Contains(dsn, "sslrootcert='"+filepath.Join(dir, c.file)+"'") {
+			t.Errorf("%s with %q: want %s against that CA", c.file, c.mode, c.want)
+		}
 	}
 }
 
@@ -213,5 +232,32 @@ func TestGrant(t *testing.T) {
 		if err := as(ro, q); err == nil {
 			t.Errorf("read-only must not write: %s", q)
 		}
+	}
+}
+
+// With a real CA, pgx gets a TLS config that checks the server's
+// certificate and its name: nothing is skipped.
+func TestPlatformDSNVerifiesTheServer(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "fake platform CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := base()
+	files["POSTGRES_SSLMODE"] = "require"
+	files["POSTGRES_CA_CERT"] = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	dsn, err := db.PlatformDSN(credentials(t, files), db.RoleApp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tlsCfg := parse(t, dsn).ConnConfig.TLSConfig
+	if tlsCfg == nil || tlsCfg.InsecureSkipVerify || tlsCfg.RootCAs == nil || tlsCfg.ServerName != "pg.fake.internal" {
+		t.Errorf("TLS = %+v; want the server verified against the CA, by name", tlsCfg)
 	}
 }

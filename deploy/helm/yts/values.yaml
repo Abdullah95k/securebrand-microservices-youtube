@@ -40,8 +40,9 @@ containerSecurityContext:
 
 secrets:
   # The platform's credentials, one file per key: POSTGRES_HOST, _PORT,
-  # _DATABASE, _SSLMODE, the owner, app and read-only users and passwords
-  # (REQ-010 fix 17), and the object-storage keys.
+  # _DATABASE, _SSLMODE, _CA_CERT, the owner, app and read-only users and
+  # passwords (REQ-010 fix 17), and the object storage's S3_* files (the
+  # endpoint, the region, the access key pair and the two buckets).
   platformCredentials: platform-credentials
   # The proxies, one per line: scheme://user:password@host:port type=… subnet=… country=XX
   proxies:
@@ -61,27 +62,34 @@ database:
   # database_url key of the yts secret.
   platformCredentials: true
 
-# Object storage. Off by default; values-production.yaml sets the buckets.
+# Object storage. Off by default; values-production.yaml switches it on.
+# fromPlatformCredentials: the endpoint, region and bucket come from the
+# platform's credentials (S3_ENDPOINT, S3_REGION and the bucketKey file),
+# like the access keys; false: from endpoint, region and bucket below.
 storage:
   # Thumbnails, community-post images and the archive.
   media:
     enabled: false
-    endpoint: ""          # https://…
+    fromPlatformCredentials: true
+    bucketKey: S3_BUCKET_MEDIA
+    endpoint: ""          # https://… (without fromPlatformCredentials)
     region: ""
     bucket: ""
     prefix: "yts/"        # the platform's shared media bucket
     virtualHost: false
-    accessKeyFile: /etc/platform-credentials/S3_ACCESS_KEY_ID
-    secretKeyFile: /etc/platform-credentials/S3_SECRET_ACCESS_KEY
+    accessKeyFile: /etc/platform-credentials/S3_ACCESS_KEY
+    secretKeyFile: /etc/platform-credentials/S3_SECRET_KEY
   # Raw responses (REQ-010 fix 8): yts/keep/ and yts/30d/ in the raw bucket.
   raw:
     enabled: false
+    fromPlatformCredentials: true
+    bucketKey: S3_BUCKET_RAW
     endpoint: ""
     region: ""
     bucket: ""
     virtualHost: false
-    accessKeyFile: /etc/platform-credentials/S3_ACCESS_KEY_ID
-    secretKeyFile: /etc/platform-credentials/S3_SECRET_ACCESS_KEY
+    accessKeyFile: /etc/platform-credentials/S3_ACCESS_KEY
+    secretKeyFile: /etc/platform-credentials/S3_SECRET_KEY
 
 # The collector. One replica only: each worker paces every proxy IP itself,
 # so two would double the rate on the same IPs (gap B6, fix 15). The pod is

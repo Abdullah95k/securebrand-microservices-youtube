@@ -27,6 +27,11 @@ type Config struct {
 	AccessKeyFile string `json:"access_key_file"`
 	SecretKeyFile string `json:"secret_key_file"`
 	VirtualHost   bool   `json:"virtual_host"` // bucket.endpoint URLs instead of endpoint/bucket
+	// Or each from a file (the platform's S3_ENDPOINT, S3_REGION and
+	// S3_BUCKET_* keys, mounted as files). A file wins over the value.
+	EndpointFile string `json:"endpoint_file"`
+	RegionFile   string `json:"region_file"`
+	BucketFile   string `json:"bucket_file"`
 	// Prefix goes in front of every key: "yts/" in the platform's shared
 	// media bucket. Raw-response settings need none (their keys start with
 	// yts/keep/ or yts/30d/).
@@ -87,6 +92,23 @@ func Open(c Config) (Store, error) {
 		}
 		return FileStore{Dir: c.Dir, Prefix: c.Prefix}, nil
 	case "s3":
+		for _, f := range []struct {
+			path, what string
+			to         *string
+		}{{c.EndpointFile, "endpoint", &c.Endpoint}, {c.RegionFile, "region", &c.Region}, {c.BucketFile, "bucket", &c.Bucket}} {
+			if f.path == "" {
+				continue
+			}
+			v, err := readKey(f.path, f.what)
+			if err != nil {
+				return nil, err
+			}
+			*f.to = v
+		}
+		// The platform's endpoint may be a bare host.
+		if c.Endpoint != "" && !strings.Contains(c.Endpoint, "://") {
+			c.Endpoint = "https://" + c.Endpoint
+		}
 		if c.Endpoint == "" || c.Bucket == "" || c.Region == "" {
 			return nil, errors.New("media: storage type s3 needs endpoint, region and bucket")
 		}

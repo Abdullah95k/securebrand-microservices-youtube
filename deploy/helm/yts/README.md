@@ -22,7 +22,7 @@ token. Probes: `/healthz` (alive) and `/readyz` (the database answers; for the w
 
 | Secret | Keys | From |
 |---|---|---|
-| `platform-credentials` | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`, `POSTGRES_SSLMODE`, `POSTGRES_USER`/`_PASSWORD` (owner), `POSTGRES_APP_USER`/`_PASSWORD`, `POSTGRES_RO_USER`/`_PASSWORD`, optionally `POSTGRES_SSLROOTCERT`; the object-storage keys | The platform |
+| `platform-credentials` | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`, `POSTGRES_SSLMODE`, `POSTGRES_CA_CERT`, `POSTGRES_USER`/`_PASSWORD` (owner), `POSTGRES_APP_USER`/`_PASSWORD`, `POSTGRES_RO_USER`/`_PASSWORD`; `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET_RAW`, `S3_BUCKET_MEDIA` | The platform |
 | `proxies` | `proxies.yaml`: one proxy per line, `scheme://user:password@host:port type=isp subnet=label country=XX` | The platform |
 | `yts` | `privacy_key` (required), `youtube_api_key` (optional), `websub_secret` (only with push) | The owner, below |
 
@@ -106,7 +106,7 @@ kubectl -n yts exec deploy/yts-scheduler -- ytcollect jobs dead
 | `worker.drain` | `20s` | On shutdown, running jobs get this long; the grace period is 40 s |
 | `worker.rawSample`, `worker.raw30d` | `0.01`, `true` | Raw responses kept forever, and the 30-day rest |
 | `worker.commentCap`, `worker.player` | `20000`, `true` | Comments per first read; the player endpoint |
-| `storage.media`, `storage.raw` | off until confirmed | Buckets, endpoint, region, the key files |
+| `storage.media`, `storage.raw` | on, `fromPlatformCredentials` | The endpoint, region, buckets and keys from `platform-credentials`; media under `yts/` |
 | `database.platformCredentials` | `true` | The platform's `POSTGRES_*` files, each command with its least role, over TLS |
 | `networkPolicy.egress` | open ranges until confirmed | The database's and the proxies' address ranges and ports |
 | `*.resources`, `*.goMemLimit` | as in `values.yaml` | Requests and limits; `GOMEMLIMIT` a little under the limit |
@@ -114,9 +114,10 @@ kubectl -n yts exec deploy/yts-scheduler -- ytcollect jobs dead
 The chart refuses to render with more than one worker, a store switched on with a value missing, push switched on without its
 address, or no image.
 
-## Waiting for the master
+The database connection verifies the server: with `POSTGRES_CA_CERT`, the platform's `require` becomes `verify-full` (the
+certificate against the CA, and the name against `POSTGRES_HOST`).
 
-- The object storage: endpoint, region, the media and raw bucket names, and the credential keys in `platform-credentials`.
-- Whether `platform-credentials` carries the database's CA (`POSTGRES_SSLROOTCERT`), and whether `POSTGRES_USER` owns `public`.
+## Waiting for the platform
+
 - The address ranges of the database and the proxy exits, to narrow the network policy.
 - The Prometheus Operator's selector labels, if it needs any (`serviceMonitor.labels`, `prometheusRule.labels`).

@@ -50,14 +50,24 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 {{- end -}}
 
-{{/* Storage settings must be complete when a store is on. */}}
+{{/* Storage settings must be complete when a store is on (unless they come
+from the platform's credentials). */}}
 {{- define "yts.checkStorage" -}}
 {{- range $name, $s := .Values.storage -}}
-{{- if $s.enabled -}}
+{{- if and $s.enabled (not $s.fromPlatformCredentials) -}}
 {{- $_ := required (printf "storage.%s.endpoint is required when storage.%s.enabled" $name $name) $s.endpoint -}}
 {{- $_ := required (printf "storage.%s.region is required when storage.%s.enabled" $name $name) $s.region -}}
 {{- $_ := required (printf "storage.%s.bucket is required when storage.%s.enabled" $name $name) $s.bucket -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Whether pods mount the platform's credentials: for the database, or for
+a store that takes its settings from them. Prints "true" or nothing. */}}
+{{- define "yts.platformCredentials" -}}
+{{- $s := .Values.storage -}}
+{{- if or .Values.database.platformCredentials (and $s.media.enabled $s.media.fromPlatformCredentials) (and $s.raw.enabled $s.raw.fromPlatformCredentials) -}}
+true
 {{- end -}}
 {{- end -}}
 
@@ -106,7 +116,7 @@ app.kubernetes.io/component: {{ .component }}
   secret:
     secretName: {{ .Values.secrets.yts }}
     defaultMode: {{ .Values.secrets.defaultMode }}
-{{- if .Values.database.platformCredentials }}
+{{- if include "yts.platformCredentials" . }}
 - name: platform-credentials
   secret:
     secretName: {{ .Values.secrets.platformCredentials }}
@@ -127,7 +137,7 @@ app.kubernetes.io/component: {{ .component }}
 - name: yts-secrets
   mountPath: /etc/yts-secrets
   readOnly: true
-{{- if .Values.database.platformCredentials }}
+{{- if include "yts.platformCredentials" . }}
 - name: platform-credentials
   mountPath: /etc/platform-credentials
   readOnly: true

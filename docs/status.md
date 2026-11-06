@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:32 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:37 (Iraq time)**.
 
 ## Where it stands
 
@@ -14,7 +14,8 @@ The current state of the YouTube collector, for the owner and the master session
   fix: [`master/yts-fixes.md`](master/yts-fixes.md).
   - **Done:** every fix before the pilot: 1 to 10, 13 (non-root image), 14 (Helm chart), 16 (pinned bases, image scan, releases)
     and 17 (database TLS and roles), plus the proxy `country=` tag and PostgreSQL 18.
-  - **Next:** the pilot (fix 11) when the platform is ready (below); the outbox and relay (fix 12) alongside it.
+  - **Next:** the pilot (fix 11) when the platform is ready (below); the outbox and relay (fix 12) alongside it, planned in
+    [`master/yts-contract-adoption.md`](master/yts-contract-adoption.md).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
 
 ## Ready for the pilot (fix 11)
@@ -97,6 +98,8 @@ In [`docs/master/`](master/):
 | `yts-contract-notes.md` | The Kafka outbox plan, the archive and ClickHouse, the API terms. **REQ-004** answers at the end |
 | `yts-gaps.md` | Gaps against the service standard, and the plans |
 | `yts-contract-review.md` | **REQ-013**: the review of the contract draft v0.1 |
+| `yts-contract-adoption.md` | **REQ-021 and fix 12**: the plan for the outbox, the relay and the `content.*` mapping on contract v1.2.0, with the topics, keys and retention, and three questions for the master |
+| `yts-fixes.md` | REQ-010 progress, one row per fix |
 
 Waiting: `ytprobe-detect`'s memory (REQ-004 §5), from the owner's `docker stats` readings.
 

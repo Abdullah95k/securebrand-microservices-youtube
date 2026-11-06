@@ -1,0 +1,58 @@
+# Production on the platform's cluster (REQ-010 fix 14). The platform's
+# pipeline adds the image:
+#   helm upgrade --install yts deploy/helm/yts -n yts \
+#     -f deploy/helm/yts/values-production.yaml \
+#     --set image.repository=REGISTRY/yts --set image.digest=sha256:…
+#
+# The values marked "confirm" wait for the master's answers (status.md).
+
+database:
+  platformCredentials: true
+
+# Object storage: on once the master confirms the endpoint, region, bucket
+# names and credential keys (status.md). The chart refuses to render a store
+# that is on with a value missing.
+storage:
+  media:
+    enabled: false
+    endpoint: ""
+    region: ""
+    bucket: ""                                  # the platform's S3_BUCKET_MEDIA
+    prefix: "yts/"
+    accessKeyFile: /etc/platform-credentials/S3_ACCESS_KEY_ID
+    secretKeyFile: /etc/platform-credentials/S3_SECRET_ACCESS_KEY
+  raw:
+    enabled: false
+    endpoint: ""
+    region: ""
+    bucket: ""                                  # the platform's S3_BUCKET_RAW
+    accessKeyFile: /etc/platform-credentials/S3_ACCESS_KEY_ID
+    secretKeyFile: /etc/platform-credentials/S3_SECRET_ACCESS_KEY
+
+worker:
+  replicas: 1
+  # Phase 0 (E1): every page type clean down to 1 s per IP except the
+  # player, which is asked sparingly; 2 s leaves a margin.
+  interval: 2s
+  workers: 10
+  drain: 20s
+  # The pilot starts with 7 days of past uploads per channel (REQ-010 fix
+  # 11); raise to 365 after it.
+  backfillDays: 7
+  rawSample: "0.01"
+  raw30d: true
+
+websub:
+  enabled: false
+
+networkPolicy:
+  enabled: true
+  monitoringNamespace: monitoring
+  egress:
+    httpsCIDRs: ["0.0.0.0/0"]
+    database:
+      cidrs: ["0.0.0.0/0"]                      # confirm: the database's address range
+      port: 5432
+    proxies:
+      cidrs: ["0.0.0.0/0"]                      # confirm: the proxy provider's ranges
+      ports: []

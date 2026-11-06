@@ -23,6 +23,7 @@ tests:
             exp_annotations:
               summary: "Only 2 usable proxy IP(s) on w1: collection slows to a crawl"
               description: "Check yt_proxy_blocks_total for a block storm, and add or replace IPs (docs/production-runbook.md §7)."
+              runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
       - eval_time: 10m
         alertname: DeadJobs
         exp_alerts: []
@@ -33,3 +34,4 @@ tests:
             exp_annotations:
               summary: "4 dead media job(s): not retried until requeued"
               description: "See the reasons with 'ytcollect jobs dead'; after the fix, 'ytcollect jobs requeue -kind media'."
+              runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"

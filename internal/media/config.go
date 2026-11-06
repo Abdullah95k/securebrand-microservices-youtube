@@ -27,6 +27,10 @@ type Config struct {
 	AccessKeyFile string `json:"access_key_file"`
 	SecretKeyFile string `json:"secret_key_file"`
 	VirtualHost   bool   `json:"virtual_host"` // bucket.endpoint URLs instead of endpoint/bucket
+	// Prefix goes in front of every key: "yts/" in the platform's shared
+	// media bucket. Raw-response settings need none (their keys start with
+	// yts/keep/ or yts/30d/).
+	Prefix string `json:"prefix"`
 }
 
 // ErrNotConfigured: there is no storage settings file (media and the
@@ -70,6 +74,9 @@ func readKey(path, what string) (string, error) {
 
 // Open opens the store a Config describes.
 func Open(c Config) (Store, error) {
+	if strings.HasPrefix(c.Prefix, "/") || strings.Contains(c.Prefix, "..") || strings.ContainsAny(c.Prefix, "\\\x00") {
+		return nil, fmt.Errorf("media: bad prefix %q", c.Prefix)
+	}
 	switch c.Type {
 	case "dir":
 		if c.Dir == "" {
@@ -78,7 +85,7 @@ func Open(c Config) (Store, error) {
 		if err := os.MkdirAll(c.Dir, 0o700); err != nil {
 			return nil, err
 		}
-		return FileStore{Dir: c.Dir}, nil
+		return FileStore{Dir: c.Dir, Prefix: c.Prefix}, nil
 	case "s3":
 		if c.Endpoint == "" || c.Bucket == "" || c.Region == "" {
 			return nil, errors.New("media: storage type s3 needs endpoint, region and bucket")
@@ -95,7 +102,8 @@ func Open(c Config) (Store, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &S3Store{Endpoint: c.Endpoint, Region: c.Region, Bucket: c.Bucket, AccessKey: ak, SecretKey: sk, VirtualHost: c.VirtualHost}, nil
+		return &S3Store{Endpoint: c.Endpoint, Region: c.Region, Bucket: c.Bucket, AccessKey: ak, SecretKey: sk, VirtualHost: c.VirtualHost,
+			Prefix: c.Prefix}, nil
 	default:
 		return nil, fmt.Errorf("media: storage type %q is not dir or s3", c.Type)
 	}

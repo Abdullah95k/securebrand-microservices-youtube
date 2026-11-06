@@ -1,0 +1,187 @@
+# Defaults for the yts chart. values-production.yaml holds the production
+# settings; the platform's pipeline sets the image.
+#
+# Nothing secret goes in these files: secrets are Kubernetes Secrets the
+# platform (or the owner, for yts's own) creates, mounted as files.
+
+image:
+  # Set by the platform's pipeline, for example
+  # --set image.repository=REGISTRY/yts --set image.tag=VERSION
+  repository: ""
+  # Default: the chart's appVersion.
+  tag: ""
+  # sha256:…; when set, it wins over the tag.
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Every pod: user and group 65532, never root, no privilege gain, a
+# read-only root filesystem, no capabilities (REQ-010 fix 13). fsGroup lets
+# the process read the secret files (mode 0440, group 65532).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+secrets:
+  # The platform's credentials, one file per key: POSTGRES_HOST, _PORT,
+  # _DATABASE, _SSLMODE, the owner, app and read-only users and passwords
+  # (REQ-010 fix 17), and the object-storage keys.
+  platformCredentials: platform-credentials
+  # The proxies, one per line: scheme://user:password@host:port type=… subnet=… country=XX
+  proxies:
+    name: proxies
+    key: proxies.yaml
+  # yts's own secret: privacy_key (required: openssl rand -hex 32, backed up
+  # off the cluster), youtube_api_key (optional: discovery's official API),
+  # websub_secret (only with websub), database_url (only without the
+  # platform's credentials).
+  yts: yts
+  # Mode of the secret files: group-readable, for fsGroup.
+  defaultMode: 0440
+
+database:
+  # true: connect with the platform's POSTGRES_* files, each command as the
+  # least role (owner, app, read-only), over TLS. false: one URL, the
+  # database_url key of the yts secret.
+  platformCredentials: true
+
+# Object storage. Off by default; values-production.yaml sets the buckets.
+storage:
+  # Thumbnails, community-post images and the archive.
+  media:
+    enabled: false
+    endpoint: ""          # https://…
+    region: ""
+    bucket: ""
+    prefix: "yts/"        # the platform's shared media bucket
+    virtualHost: false
+    accessKeyFile: /etc/platform-credentials/S3_ACCESS_KEY_ID
+    secretKeyFile: /etc/platform-credentials/S3_SECRET_ACCESS_KEY
+  # Raw responses (REQ-010 fix 8): yts/keep/ and yts/30d/ in the raw bucket.
+  raw:
+    enabled: false
+    endpoint: ""
+    region: ""
+    bucket: ""
+    virtualHost: false
+    accessKeyFile: /etc/platform-credentials/S3_ACCESS_KEY_ID
+    secretKeyFile: /etc/platform-credentials/S3_SECRET_ACCESS_KEY
+
+# The collector. One replica only: each worker paces every proxy IP itself,
+# so two would double the rate on the same IPs (gap B6, fix 15). The pod is
+# replaced, never doubled, on an update (Recreate).
+worker:
+  replicas: 1
+  interval: 4s            # gap between requests on one proxy IP
+  workers: 10             # jobs at the same time
+  player: true            # read the player endpoint (tags, category)
+  commentCap: 20000       # most comments the first read of a video takes
+  drain: 20s              # on shutdown, running jobs get this long
+  backfillDays: 365       # days of each channel's past uploads
+  rawSample: "0.01"       # share of ordinary raw responses kept forever
+  raw30d: true            # also write the rest under yts/30d/
+  opsPort: 9101           # /metrics, /healthz, /readyz
+  extraArgs: []
+  goMemLimit: 850MiB
+  resources:
+    requests: {cpu: 500m, memory: 512Mi}
+    limits: {cpu: 1500m, memory: 1Gi}
+  # Above -drain plus the time to hand jobs back.
+  terminationGracePeriodSeconds: 40
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Maintenance: partitions, missing jobs, metrics, capacity, archive,
+# webhooks. One replica (no leader election yet, fix 15).
+scheduler:
+  opsPort: 9102
+  extraArgs: []
+  goMemLimit: 850MiB
+  resources:
+    requests: {cpu: 200m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  terminationGracePeriodSeconds: 30
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Push notifications (D23): off until a public HTTPS address exists.
+websub:
+  enabled: false
+  callback: ""            # https://…/websub
+  port: 8080
+  goMemLimit: 200MiB
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# The migrations, as a Helm hook before every install and upgrade. It
+# connects as the owner role and grants the app and read-only roles.
+migrate:
+  enabled: true
+  backoffLimit: 2
+  activeDeadlineSeconds: 900
+  goMemLimit: 200MiB
+  resources:
+    requests: {cpu: 100m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+# Scratch space: the parser debug folder and the suppression-list copy.
+dataVolume:
+  sizeLimit: 1Gi
+tmpVolume:
+  sizeLimit: 64Mi
+
+# Prometheus Operator objects.
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  labels: {}
+prometheusRule:
+  enabled: true
+  labels: {}
+
+networkPolicy:
+  enabled: true
+  # Who may scrape the ops ports.
+  monitoringNamespace: monitoring
+  # Who may reach the push receiver (when on).
+  ingressNamespace: ingress-nginx
+  dns:
+    namespace: kube-system
+  egress:
+    # HTTPS: the official Data API (googleapis.com), object storage, the
+    # push hub and webhook receivers. Plain Kubernetes policies can't name
+    # hosts, so this is by address.
+    httpsCIDRs: ["0.0.0.0/0"]
+    database:
+      cidrs: ["0.0.0.0/0"]
+      port: 5432
+    # The proxy exits. Narrow these to the provider's addresses and ports
+    # when known; no ports means every port.
+    proxies:
+      cidrs: ["0.0.0.0/0"]
+      ports: []

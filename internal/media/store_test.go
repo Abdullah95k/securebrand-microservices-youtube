@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -94,5 +96,41 @@ func TestS3StoreAgainstAFakeBucket(t *testing.T) {
 	bad := &S3Store{Endpoint: srv.URL, Region: "test-1", Bucket: "media", AccessKey: "wrong", SecretKey: "x"}
 	if err := bad.Put(ctx, "k", "", nil); err == nil || strings.Contains(err.Error(), "x") && strings.Contains(err.Error(), "secret") {
 		t.Errorf("a refused upload must fail without showing secrets: %v", err)
+	}
+}
+
+// The platform's shared buckets: every key goes under a prefix (REQ-010
+// fix 14).
+func TestPrefix(t *testing.T) {
+	dir := t.TempDir()
+	f := FileStore{Dir: dir, Prefix: "yts/"}
+	ctx := context.Background()
+	if err := f.Put(ctx, "thumb/fakevid0001.jpg", "image/jpeg", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "yts", "thumb", "fakevid0001.jpg")); err != nil {
+		t.Errorf("not under the prefix: %v", err)
+	}
+	if b, err := f.Get(ctx, "thumb/fakevid0001.jpg"); err != nil || string(b) != "x" {
+		t.Errorf("get = %q, %v", b, err)
+	}
+	if err := f.Delete(ctx, "thumb/fakevid0001.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	s := &S3Store{Endpoint: "https://s3.fake.example", Region: "x", Bucket: "media", Prefix: "yts/"}
+	if u, err := s.url("thumb/a.jpg"); err != nil || u.Path != "/media/yts/thumb/a.jpg" {
+		t.Errorf("path-style URL = %v, %v", u, err)
+	}
+	s.VirtualHost = true
+	if u, err := s.url("thumb/a.jpg"); err != nil || u.Host != "media.s3.fake.example" || u.Path != "/yts/thumb/a.jpg" {
+		t.Errorf("virtual-host URL = %v, %v", u, err)
+	}
+	for _, bad := range []string{"/yts/", "../x/", "a\\b/"} {
+		if _, err := Open(Config{Type: "dir", Dir: dir, Prefix: bad}); err == nil {
+			t.Errorf("prefix %q must be refused", bad)
+		}
+	}
+	if st, err := Open(Config{Type: "dir", Dir: dir, Prefix: "yts/"}); err != nil || st.(FileStore).Prefix != "yts/" {
+		t.Errorf("Open with prefix: %v", err)
 	}
 }

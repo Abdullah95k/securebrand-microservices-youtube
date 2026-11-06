@@ -1,0 +1,9 @@
+yts {{ .Chart.AppVersion }} is installed in {{ .Release.Namespace }}.
+
+The worker runs as one replica with a {{ .Values.worker.interval }} gap per proxy IP and a {{ .Values.worker.backfillDays }}-day backfill.
+Raw responses: {{ if .Values.storage.raw.enabled }}kept in {{ .Values.storage.raw.bucket }}{{ else }}off (storage.raw){{ end }}.
+Images and the archive: {{ if .Values.storage.media.enabled }}{{ .Values.storage.media.bucket }}{{ else }}off (storage.media){{ end }}.
+Push notifications: {{ if .Values.websub.enabled }}on{{ else }}off{{ end }}.
+
+Admin commands run in the scheduler's container, for example the cost report:
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "yts.fullname" . }}-scheduler -- ytcollect report

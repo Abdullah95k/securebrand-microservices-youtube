@@ -1,0 +1,75 @@
+{{- if .Values.networkPolicy.enabled -}}
+{{- $np := .Values.networkPolicy -}}
+# Every yts pod: in, only the monitoring namespace on the ops ports (and the
+# ingress namespace on the push receiver when it is on); out, only DNS,
+# HTTPS, the database and the proxy exits (yts-operations.md §6).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "yts.fullname" . }}
+  labels:
+    {{- include "yts.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "yts.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.monitoringNamespace }}
+      ports:
+        - port: {{ .Values.worker.opsPort }}
+          protocol: TCP
+        - port: {{ .Values.scheduler.opsPort }}
+          protocol: TCP
+    {{- if .Values.websub.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.ingressNamespace }}
+      ports:
+        - port: {{ .Values.websub.port }}
+          protocol: TCP
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.dns.namespace }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        {{- range $np.egress.httpsCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: 443
+          protocol: TCP
+    - to:
+        {{- range $np.egress.database.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ $np.egress.database.port }}
+          protocol: TCP
+    - to:
+        {{- range $np.egress.proxies.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      {{- with $np.egress.proxies.ports }}
+      ports:
+        {{- range . }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      {{- end }}
+{{- end }}

@@ -292,8 +292,11 @@ func openRawStore(log *slog.Logger, sample float64, skipExpiring bool, onResult 
 		return nil, fmt.Errorf("raw bucket: %w", err)
 	}
 	base := "file:"
-	if s3, ok := objects.(*media.S3Store); ok {
-		base = "s3://" + s3.Bucket + "/"
+	switch o := objects.(type) {
+	case *media.S3Store:
+		base = "s3://" + o.Bucket + "/" + o.Prefix
+	case media.FileStore:
+		base += o.Prefix
 	}
 	log.Info("raw responses kept", "bucket", base, "sample", sample, "expiring_rest", !skipExpiring)
 	return rawstore.New(objects, rawstore.Options{Sample: sample, SkipExpiring: skipExpiring, RefBase: base,

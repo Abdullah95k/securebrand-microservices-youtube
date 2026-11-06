@@ -1,7 +1,8 @@
 # Production runbook
 
 How to set up and run the collector on a production server, and the everyday tasks: channels, keywords, erasure requests,
-backups, the archive, webhooks and updates. Phase 0 has its own runbook ([phase0-runbook.md](phase0-runbook.md)).
+backups, the archive, webhooks and updates. Phase 0 has its own runbook ([phase0-runbook.md](phase0-runbook.md)). On the platform's
+Kubernetes cluster, the Helm chart replaces Docker Compose: see [deploy/helm/yts/README.md](../deploy/helm/yts/README.md).
 
 Times on the server are UTC. Iraq time is UTC+3.
 

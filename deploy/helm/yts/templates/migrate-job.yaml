@@ -1,0 +1,82 @@
+{{- if .Values.migrate.enabled -}}
+# The migrations run before every install and upgrade, as the owner role,
+# and grant the app and read-only roles (REQ-010 fix 17). The services
+# start only after it succeeds.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "yts.fullname" . }}-migrate
+  labels:
+    {{- include "yts.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "yts.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      # A pre-install hook runs before the chart's ServiceAccount and
+      # ConfigMap exist: the namespace's default account, with no token,
+      # and only the secrets it needs.
+      serviceAccountName: default
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ include "yts.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/ytcollect"]
+          args: ["migrate"]
+          env:
+            {{- if .Values.database.platformCredentials }}
+            - name: YT_POSTGRES_DIR
+              value: /etc/platform-credentials
+            {{- else }}
+            - name: YT_DATABASE_URL_FILE
+              value: /etc/yts-secrets/database_url
+            {{- end }}
+            - name: GOMEMLIMIT
+              value: {{ .Values.migrate.goMemLimit | quote }}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: yts-secrets
+              mountPath: /etc/yts-secrets
+              readOnly: true
+            {{- if .Values.database.platformCredentials }}
+            - name: platform-credentials
+              mountPath: /etc/platform-credentials
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.tmpVolume.sizeLimit }}
+        - name: yts-secrets
+          secret:
+            secretName: {{ .Values.secrets.yts }}
+            defaultMode: {{ .Values.secrets.defaultMode }}
+        {{- if .Values.database.platformCredentials }}
+        - name: platform-credentials
+          secret:
+            secretName: {{ .Values.secrets.platformCredentials }}
+            defaultMode: {{ .Values.secrets.defaultMode }}
+        {{- end }}
+{{- end }}

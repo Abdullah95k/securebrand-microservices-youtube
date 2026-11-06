@@ -41,15 +41,26 @@ func checkKey(key string) error {
 	return nil
 }
 
-// FileStore keeps objects under a folder.
-type FileStore struct{ Dir string }
+// FileStore keeps objects under a folder. Prefix, if set, goes in front
+// of every key ("yts/" on the platform's shared buckets).
+type FileStore struct {
+	Dir    string
+	Prefix string
+}
+
+func (f FileStore) path(key string) (string, error) {
+	if err := checkKey(key); err != nil {
+		return "", err
+	}
+	return filepath.Join(f.Dir, filepath.FromSlash(f.Prefix+key)), nil
+}
 
 // Put writes the object atomically.
 func (f FileStore) Put(_ context.Context, key, _ string, data []byte) error {
-	if err := checkKey(key); err != nil {
+	p, err := f.path(key)
+	if err != nil {
 		return err
 	}
-	p := filepath.Join(f.Dir, filepath.FromSlash(key))
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
@@ -62,10 +73,11 @@ func (f FileStore) Put(_ context.Context, key, _ string, data []byte) error {
 
 // Get reads an object.
 func (f FileStore) Get(_ context.Context, key string) ([]byte, error) {
-	if err := checkKey(key); err != nil {
+	p, err := f.path(key)
+	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(filepath.Join(f.Dir, filepath.FromSlash(key)))
+	data, err := os.ReadFile(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
 	}
@@ -74,10 +86,11 @@ func (f FileStore) Get(_ context.Context, key string) ([]byte, error) {
 
 // Delete removes an object (missing is fine).
 func (f FileStore) Delete(_ context.Context, key string) error {
-	if err := checkKey(key); err != nil {
+	p, err := f.path(key)
+	if err != nil {
 		return err
 	}
-	err := os.Remove(filepath.Join(f.Dir, filepath.FromSlash(key)))
+	err = os.Remove(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -93,8 +106,11 @@ type S3Store struct {
 	SecretKey string
 	// VirtualHost: https://bucket.endpoint/key instead of endpoint/bucket/key.
 	VirtualHost bool
-	HTTP        *http.Client
-	Now         func() time.Time
+	// Prefix goes in front of every key ("yts/" on the platform's shared
+	// buckets).
+	Prefix string
+	HTTP   *http.Client
+	Now    func() time.Time
 }
 
 func (s *S3Store) client() *http.Client {
@@ -116,6 +132,7 @@ func (s *S3Store) url(key string) (*url.URL, error) {
 	if err != nil || u.Host == "" {
 		return nil, errors.New("media: bad S3 endpoint")
 	}
+	key = s.Prefix + key
 	if s.VirtualHost {
 		u.Host = s.Bucket + "." + u.Host
 		u.Path = "/" + key

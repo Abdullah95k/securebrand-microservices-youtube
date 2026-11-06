@@ -25,6 +25,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/jsonx"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/rawstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
 )
 
@@ -89,6 +90,9 @@ type Options struct {
 	// CDNBase serves thumbnails, default https://i.ytimg.com (tests use the
 	// fake server).
 	CDNBase string
+	// Raw keeps every page and API answer read (images aside) in the raw
+	// bucket (REQ-010 fix 8). nil = off.
+	Raw *rawstore.Store
 }
 
 // Client is safe for concurrent use.
@@ -137,6 +141,7 @@ type Response struct {
 	Proxy     string // proxy ID that answered
 	Elapsed   time.Duration
 	Attempt   proxypool.Result
+	RawRef    string // where the raw answer is kept; "" when raw capture is off
 }
 
 // Call sends a youtubei/v1 request. payload holds the endpoint-specific
@@ -181,7 +186,7 @@ func (c *Client) CallPrefer(ctx context.Context, ep Endpoint, payload map[string
 		req.Header.Set("X-YouTube-Client-Version", version)
 		req.Header.Set("Origin", c.opt.BaseURL)
 		return req, nil
-	}, ep == Player, true, prefer)
+	}, string(ep), ep == Player, true, prefer)
 }
 
 // Get fetches a page or feed under the base URL (for example
@@ -237,7 +242,7 @@ func (c *Client) get(ctx context.Context, cl proxypool.Class, url string, extra 
 			}
 		}
 		return req, nil
-	}, false, false, "")
+	}, "page", false, false, "")
 }
 
 func (c *Client) browserHeaders(req *http.Request, px *proxypool.Proxy) {
@@ -249,8 +254,14 @@ func (c *Client) browserHeaders(req *http.Request, px *proxypool.Proxy) {
 	}
 }
 
-func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypool.Proxy) (*http.Request, error), isPlayer, isJSON bool, prefer string) (*Response, error) {
+func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypool.Proxy) (*http.Request, error), label string, isPlayer, isJSON bool, prefer string) (*Response, error) {
 	var out *Response
+	// Images are media, kept in the media bucket; everything else is kept
+	// raw.
+	raw := c.opt.Raw
+	if cl == proxypool.ClassCDN {
+		raw = nil
+	}
 	attempt, err := c.opt.Pool.DoPrefer(ctx, cl, prefer, func(ctx context.Context, px *proxypool.Proxy) (proxypool.Outcome, error) {
 		req, err := build(px)
 		if err != nil {
@@ -272,40 +283,22 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 		}
 		r := &Response{Status: resp.StatusCode, Header: resp.Header, Body: body, WireBytes: wire, Proxy: px.ID(), Elapsed: time.Since(start)}
 		r.Signal = Classify(resp.StatusCode, resp.Header, body)
-		switch r.Signal {
-		case SignalBlocked:
+		outcome, err := c.judge(r, resp, px, isPlayer, isJSON)
+		if outcome == proxypool.Blocked {
 			meter.Block()
-			return proxypool.Blocked, ErrBlocked
-		case SignalConsent:
-			return proxypool.ProxyFailed, ErrConsent
-		case SignalServerError:
-			return proxypool.Transient, fmt.Errorf("innertube: HTTP %d", resp.StatusCode)
-		case SignalBadRequest:
-			if u, err := resp.Location(); err == nil {
-				return proxypool.Fatal, &RedirectError{Status: resp.StatusCode, Location: u}
+		}
+		if raw != nil && resp.StatusCode != http.StatusNotModified {
+			failure := ""
+			if outcome != proxypool.OK {
+				failure = err.Error()
 			}
-			return proxypool.Fatal, fmt.Errorf("innertube: HTTP %d", resp.StatusCode)
-		case SignalNotFound:
+			r.RawRef = raw.Capture(ctx, rawstore.Record{At: start.UTC(), Endpoint: label, Method: req.Method, URL: req.URL.String(),
+				Status: resp.StatusCode, Signal: r.Signal.String(), Proxy: px.ID(), ContentType: resp.Header.Get("Content-Type")}, body, failure)
+		}
+		if outcome == proxypool.OK {
 			out = r
-			return proxypool.OK, nil
 		}
-		if isJSON && resp.StatusCode != http.StatusNotModified {
-			data, err := jsonx.Decode(body)
-			if err != nil {
-				return proxypool.Fatal, fmt.Errorf("innertube: response is not JSON: %w", err)
-			}
-			r.Data = data
-			if vd := jsonx.String(data, "responseContext", "visitorData"); vd != "" {
-				c.setVisitor(px.ID(), vd)
-			}
-			if isPlayer && PlayerSignal(data) == SignalBlocked {
-				r.Signal = SignalBlocked
-				meter.Block()
-				return proxypool.Blocked, ErrBlocked
-			}
-		}
-		out = r
-		return proxypool.OK, nil
+		return outcome, err
 	})
 	if out != nil {
 		out.Attempt = attempt
@@ -317,6 +310,42 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 		return out, ErrNotFound
 	}
 	return out, nil
+}
+
+// judge decides what an answer means for the pool: OK (an answer, or not
+// found), a block, or an error. For JSON calls it also parses the body and
+// keeps the IP's visitor ID.
+func (c *Client) judge(r *Response, resp *http.Response, px *proxypool.Proxy, isPlayer, isJSON bool) (proxypool.Outcome, error) {
+	switch r.Signal {
+	case SignalBlocked:
+		return proxypool.Blocked, ErrBlocked
+	case SignalConsent:
+		return proxypool.ProxyFailed, ErrConsent
+	case SignalServerError:
+		return proxypool.Transient, fmt.Errorf("innertube: HTTP %d", resp.StatusCode)
+	case SignalBadRequest:
+		if u, err := resp.Location(); err == nil {
+			return proxypool.Fatal, &RedirectError{Status: resp.StatusCode, Location: u}
+		}
+		return proxypool.Fatal, fmt.Errorf("innertube: HTTP %d", resp.StatusCode)
+	case SignalNotFound:
+		return proxypool.OK, nil
+	}
+	if isJSON && resp.StatusCode != http.StatusNotModified {
+		data, err := jsonx.Decode(r.Body)
+		if err != nil {
+			return proxypool.Fatal, fmt.Errorf("innertube: response is not JSON: %w", err)
+		}
+		r.Data = data
+		if vd := jsonx.String(data, "responseContext", "visitorData"); vd != "" {
+			c.setVisitor(px.ID(), vd)
+		}
+		if isPlayer && PlayerSignal(data) == SignalBlocked {
+			r.Signal = SignalBlocked
+			return proxypool.Blocked, ErrBlocked
+		}
+	}
+	return proxypool.OK, nil
 }
 
 // RedirectError is a redirect the client did not follow (it never follows

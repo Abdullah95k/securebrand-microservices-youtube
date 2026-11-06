@@ -128,4 +128,20 @@ func TestPoolMetricsAndProxyHealth(t *testing.T) {
 	if !strings.Contains(b.String(), `yt_jobs_total{kind="video",result="error"} 1`) {
 		t.Error("job outcomes must be counted")
 	}
+	// Fix 8: raw responses by class and result, and the bytes stored.
+	raw := monitor.Raw(reg)
+	raw("keep", "stored", 1000)
+	raw("30d", "stored", 500)
+	raw("30d", "dropped", 700)
+	b.Reset()
+	_, _ = reg.WriteTo(&b)
+	for _, want := range []string{
+		`yt_raw_objects_total{class="keep",result="stored"} 1`,
+		`yt_raw_objects_total{class="30d",result="dropped"} 1`,
+		`yt_raw_bytes_total{class="30d"} 500`,
+	} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("missing %s", want)
+		}
+	}
 }

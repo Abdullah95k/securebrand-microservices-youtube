@@ -1239,11 +1239,11 @@ entities:
         present_pct: null
         origin: "collector"
         source: "collector"
-        stored_at: "parse_failures; a scrubbed structure skeleton in the debug folder"
+        stored_at: "parse_failures (raw_ref: the raw answers, kept under yts/keep/ in the raw bucket); a scrubbed structure skeleton in the debug folder"
         published_at: "not published"
         history: "latest"
         personal_data: false
-        notes: "Raw responses themselves are not kept (only skeletons: structure, no values)."
+        notes: "Since fix 8, the raw answers behind a failure are kept forever in the raw bucket; raw_ref points to them."
       - name: "schedule"
         meaning: "Per job: kind, entity, priority, due_at, attempts, last_ok, last_error"
         type: "row"

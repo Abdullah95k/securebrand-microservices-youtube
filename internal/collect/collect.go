@@ -24,6 +24,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/rawstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/writer"
@@ -38,10 +39,11 @@ type Service struct {
 	Sup        *privacy.Suppressor
 	Log        *slog.Logger
 	Now        func() time.Time
-	WithPlayer bool           // read the player endpoint for tags and category
-	Window     time.Duration  // backfill depth (default 365 days)
-	MaxPages   int            // safety limit per tab (default 400)
-	Stretch    func() float64 // the capacity planner's stretch for C, D, M; nil = 1
+	WithPlayer bool            // read the player endpoint for tags and category
+	Window     time.Duration   // backfill depth (default 365 days)
+	MaxPages   int             // safety limit per tab (default 400)
+	Stretch    func() float64  // the capacity planner's stretch for C, D, M; nil = 1
+	Raw        *rawstore.Store // keeps the pages behind a parse failure; nil = off
 
 	recentTabs tabCache // tab parameters for RecentUploads
 }
@@ -386,10 +388,12 @@ func (s *Service) video(ctx context.Context, j queue.Job) (time.Time, error) {
 }
 
 // parseFailure records a page the parsers could not read (its scrubbed
-// skeleton is in the debug folder); a rising rate raises an alert.
+// skeleton is in the debug folder); a rising rate raises an alert. The
+// job's latest raw answers are kept forever, and raw_ref points to them.
 func (s *Service) parseFailure(ctx context.Context, endpoint, kind, id, msg string) {
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO parse_failures (endpoint, entity_kind, entity_id, error) VALUES ($1, $2, $3, $4)`,
-		endpoint, kind, id, msg); err != nil && s.Log != nil {
+	refs := s.Raw.KeepRecent(ctx, "parse failure: "+endpoint+": "+msg)
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO parse_failures (endpoint, entity_kind, entity_id, error, raw_ref) VALUES ($1, $2, $3, $4, NULLIF($5, ''))`,
+		endpoint, kind, id, msg, strings.Join(refs, " ")); err != nil && s.Log != nil {
 		s.Log.Warn("recording a parse failure failed", "err", err)
 	}
 }

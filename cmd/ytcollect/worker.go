@@ -31,11 +31,13 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/rawstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/secrets"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/websub"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/writer"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytapi"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytparse"
 )
 
 // More secret files and folders the worker uses.
@@ -46,6 +48,10 @@ const (
 	DefaultDebugDir    = "/var/lib/securebrand-youtube/debug"
 	EnvAPIKeyFile      = "YT_API_KEY_FILE"
 	DefaultAPIKeyFile  = "/etc/securebrand-youtube/youtube_api_key"
+	// The raw bucket (REQ-010 fix 8): the same settings format as
+	// YT_STORAGE_FILE. No file: raw responses aren't kept.
+	EnvRawStorageFile     = "YT_RAW_STORAGE_FILE"
+	DefaultRawStorageFile = "/etc/securebrand-youtube/raw_storage.json"
 	// Push notifications (off until a public subdomain exists, D23).
 	EnvWebSubCallback       = "YT_WEBSUB_CALLBACK" // e.g. https://push.example.com/websub
 	EnvWebSubSecretFile     = "YT_WEBSUB_SECRET_FILE"
@@ -83,6 +89,8 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	metricsAddr := fs.String("metrics-addr", ":9101", "the ops port: /metrics, /healthz and /readyz (empty: off)")
 	drain := fs.Duration("drain", 20*time.Second, "on shutdown, how long running jobs may finish before they are interrupted and handed back (keep it below the pod's termination grace period)")
 	backfillDays := fs.Int("backfill-days", 365, "how many days of each channel's past uploads the backfill reads (the pilot starts with 7)")
+	rawSample := fs.Float64("raw-sample", 0.01, "share of ordinary raw responses kept forever under yts/keep/ (failures always are)")
+	raw30d := fs.Bool("raw-30d", true, "also write every other raw response under yts/30d/ (the bucket may expire them after 30 days)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -110,10 +118,19 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	if err != nil {
 		return err
 	}
-	pp := proxypool.New(proxies, proxypool.Config{MinInterval: *interval}, time.Now().UnixNano())
-	fetch := &phase0.Collector{Client: innertube.New(innertube.Options{Pool: pp}), Store: debug, Now: time.Now, Log: log}
-	rec := &fill.Recorder{}
+	if *rawSample < 0 || *rawSample > 1 {
+		return fmt.Errorf("-raw-sample must be between 0 and 1, not %v", *rawSample)
+	}
 	reg := metrics.New()
+	raw, err := openRawStore(log, *rawSample, !*raw30d, monitor.Raw(reg))
+	if err != nil {
+		return err
+	}
+	stopRaw := raw.Start(5 * time.Second)
+	defer stopRaw()
+	pp := proxypool.New(proxies, proxypool.Config{MinInterval: *interval}, time.Now().UnixNano())
+	fetch := &phase0.Collector{Client: innertube.New(innertube.Options{Pool: pp, Raw: raw}), Store: debug, Now: time.Now, Log: log}
+	rec := &fill.Recorder{}
 	store, err := openStorage(log)
 	if err != nil {
 		return err
@@ -124,7 +141,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 		return fmt.Errorf("-backfill-days must be between 1 and 3650, not %d", *backfillDays)
 	}
 	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer, Write: wr, Stretch: stretch.Value,
-		Window: time.Duration(*backfillDays) * 24 * time.Hour}
+		Window: time.Duration(*backfillDays) * 24 * time.Hour, Raw: raw}
 	handlers := svc.Handlers()
 	rss := &detect.RSS{Pool: pool, Feeds: feeds.NewFetcher(fetch.Client), Write: wr, Log: log, Stretch: stretch.Value,
 		Recent: svc.RecentUploads}
@@ -257,8 +274,30 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	}()
 	w := &worker.Worker{Pool: pool, Owner: owner, Handlers: handlers, OnResult: monitor.Jobs(reg), OnDead: monitor.Dead(reg),
 		Concurrency: *workers, Lease: 15 * time.Minute, Drain: *drain, Log: log}
-	log.Info("worker running", "proxies", len(proxies), "interval", interval.String(), "workers", *workers, "push", wsCfg.Enabled())
+	log.Info("worker running", "proxies", len(proxies), "interval", interval.String(), "workers", *workers, "push", wsCfg.Enabled(),
+		"raw_responses", raw != nil)
 	return w.Run(ctx)
+}
+
+// openRawStore opens the raw bucket from YT_RAW_STORAGE_FILE; nil (off)
+// when there is no settings file.
+func openRawStore(log *slog.Logger, sample float64, skipExpiring bool, onResult func(class, result string, n int)) (*rawstore.Store, error) {
+	path := pathFromEnv(EnvRawStorageFile, DefaultRawStorageFile)
+	objects, err := media.Load(path)
+	if errors.Is(err, media.ErrNotConfigured) {
+		log.Info("no raw bucket configured: raw responses are not kept", "settings", path)
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("raw bucket: %w", err)
+	}
+	base := "file:"
+	if s3, ok := objects.(*media.S3Store); ok {
+		base = "s3://" + s3.Bucket + "/"
+	}
+	log.Info("raw responses kept", "bucket", base, "sample", sample, "expiring_rest", !skipExpiring)
+	return rawstore.New(objects, rawstore.Options{Sample: sample, SkipExpiring: skipExpiring, RefBase: base,
+		ParserVersion: ytparse.Version, Log: log, OnResult: onResult}), nil
 }
 
 // websubCmd runs the push receiver (behind your HTTPS reverse proxy) and

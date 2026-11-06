@@ -126,10 +126,78 @@ func SyncTerms(ctx context.Context, pool *pgxpool.Pool) (added, removed int, err
 	return added, removed, err
 }
 
+// APIDataMaxAge is how long data from the official Data API may be kept
+// (its terms: refresh or delete within 30 days).
+const APIDataMaxAge = 30 * 24 * time.Hour
+
+// apiCheckDeadline is when an unchecked candidate found only by the API is
+// moved to the front of the queue, so its check (which reads the channel by
+// scraping) happens before APIDataMaxAge.
+const apiCheckDeadline = 20 * 24 * time.Hour
+
 // PurgeAPIHits deletes official-API hits older than 30 days.
 func PurgeAPIHits(ctx context.Context, q db.Querier, now time.Time) (int64, error) {
-	tag, err := q.Exec(ctx, `DELETE FROM search_hits WHERE engine = 'api' AND found_at < $1`, now.Add(-30*24*time.Hour))
+	tag, err := q.Exec(ctx, `DELETE FROM search_hits WHERE engine = 'api' AND found_at < $1`, now.Add(-APIDataMaxAge))
 	return tag.RowsAffected(), err
+}
+
+// APIExpiry is what ExpireAPIData did.
+type APIExpiry struct {
+	Hits        int64 // official-API search hits deleted
+	Videos      int64 // api_search videos whose API title and time were cleared
+	Candidates  int64 // API-only candidates removed, unchecked after 30 days
+	Prioritised int64 // API-only candidate checks moved to the front of the queue
+}
+
+// ExpireAPIData keeps the official Data API's 30-day rule for everything yts
+// first learned from the API (REQ-010 fix 10; REQ-004 §1):
+//
+//   - search hits from the API are deleted after 30 days;
+//   - a video first stored from an API hit (source api_search) starts with
+//     the API's title and time, and its website read replaces them. If that
+//     read never succeeded within 30 days (last_checked still empty), the
+//     API's title and time are cleared; the row keeps the video ID, so a
+//     later website read fills it;
+//   - a candidate found only by the API is checked by reading its channel
+//     page, after which its ID is scraped data. A check still waiting after
+//     20 days is moved to the front of the queue; a candidate still
+//     unchecked after 30 days is removed, with its job.
+//
+// Data read from the website is never touched.
+func ExpireAPIData(ctx context.Context, q db.Querier, now time.Time) (APIExpiry, error) {
+	var e APIExpiry
+	var err error
+	if e.Hits, err = PurgeAPIHits(ctx, q, now); err != nil {
+		return e, err
+	}
+	cutoff := now.Add(-APIDataMaxAge)
+	tag, err := q.Exec(ctx, `UPDATE videos SET title = NULL, published_at = NULL, published_precision_s = NULL
+		WHERE source = 'api_search' AND last_checked IS NULL AND first_seen < $1
+		  AND (title IS NOT NULL OR published_at IS NOT NULL)`, cutoff)
+	if err != nil {
+		return e, err
+	}
+	e.Videos = tag.RowsAffected()
+	// One statement, so a candidate and its job go together.
+	err = q.QueryRow(ctx, `WITH gone AS (
+			DELETE FROM candidates
+			WHERE status = 'new' AND sources = ARRAY['api_search']::text[] AND first_found < $1
+			RETURNING channel_id),
+		jobs AS (DELETE FROM schedule WHERE kind = $2 AND entity_id IN (SELECT channel_id FROM gone) RETURNING 1)
+		SELECT (SELECT count(*) FROM gone), (SELECT count(*) FROM jobs)`, cutoff, queue.KindCandidate).Scan(&e.Candidates, new(int64))
+	if err != nil {
+		return e, err
+	}
+	tag, err = q.Exec(ctx, `UPDATE schedule SET priority = 1, due_at = LEAST(due_at, now())
+		WHERE kind = $1 AND priority > 1 AND entity_id IN (
+			SELECT channel_id FROM candidates
+			WHERE status = 'new' AND sources = ARRAY['api_search']::text[] AND first_found < $2)`,
+		queue.KindCandidate, now.Add(-apiCheckDeadline))
+	if err != nil {
+		return e, err
+	}
+	e.Prioritised = tag.RowsAffected()
+	return e, err
 }
 
 // hit is one search result.

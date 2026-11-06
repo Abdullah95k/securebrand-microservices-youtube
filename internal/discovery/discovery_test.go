@@ -224,3 +224,111 @@ func TestTiers(t *testing.T) {
 		t.Error("3M subscribers: tier A")
 	}
 }
+
+// REQ-010 fix 10: data first learned from the official API is handled by
+// the 30-day rule; data read from the website is never touched.
+func TestExpireAPIData(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	now := time.Now()
+	old, recent, mid := now.Add(-31*24*time.Hour), now.Add(-2*24*time.Hour), now.Add(-21*24*time.Hour)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Videos: an old API row never read by scraping, an old API row that was
+	// read, a recent API row, and an old website row.
+	for _, v := range []struct {
+		id, source string
+		first      time.Time
+		read       bool
+	}{
+		{"fakeApiOld", "api_search", old, false},
+		{"fakeApiRead", "api_search", old, true},
+		{"fakeApiNew", "api_search", recent, false},
+		{"fakeWebOld", "web_search", old, false},
+	} {
+		var checked *time.Time
+		if v.read {
+			checked = &now
+		}
+		exec(`INSERT INTO videos (id, channel_id, kind, title, published_at, published_precision_s, first_seen, last_checked, source)
+			VALUES ($1, 'UCfake0000000000000001', 'video', 'example title', $2, 86400, $2, $3, $4)`, v.id, v.first, checked, v.source)
+	}
+	// Candidates: API-only unchecked (old, mid, recent), API-only checked,
+	// and one also found by website search.
+	for _, c := range []struct {
+		id      string
+		first   time.Time
+		sources string
+		status  string
+	}{
+		{"UCfakeCandOld000000000001", old, "{api_search}", "new"},
+		{"UCfakeCandMid000000000001", mid, "{api_search}", "new"},
+		{"UCfakeCandNew000000000001", recent, "{api_search}", "new"},
+		{"UCfakeCandChk000000000001", old, "{api_search}", "checked"},
+		{"UCfakeCandWeb000000000001", old, "{api_search,web_search}", "new"},
+	} {
+		exec(`INSERT INTO candidates (channel_id, first_found, last_found, sources, status) VALUES ($1, $2, $2, $3, $4)`,
+			c.id, c.first, c.sources, c.status)
+		exec(`INSERT INTO schedule (kind, entity_id, channel_id, priority, due_at) VALUES ('candidate', $1, $1, 3, now() + interval '1 day')`, c.id)
+	}
+	exec(`INSERT INTO search_hits (engine, video_id, channel_id, title, found_at) VALUES
+		('api', 'fakeApiOld', 'UCfake0000000000000001', 'example title', $1),
+		('api', 'fakeApiNew', 'UCfake0000000000000001', 'example title', $2),
+		('web', 'fakeWebOld', 'UCfake0000000000000001', 'example title', $1)`, old, recent)
+
+	e, err := discovery.ExpireAPIData(ctx, pool, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e != (discovery.APIExpiry{Hits: 1, Videos: 1, Candidates: 1, Prioritised: 1}) {
+		t.Errorf("expiry %+v; want 1 hit, 1 video, 1 candidate removed, 1 moved up", e)
+	}
+	title := func(id string) *string {
+		var s *string
+		_ = pool.QueryRow(ctx, `SELECT title FROM videos WHERE id = $1`, id).Scan(&s)
+		return s
+	}
+	if title("fakeApiOld") != nil {
+		t.Error("an old API title the website never replaced must be cleared")
+	}
+	for _, id := range []string{"fakeApiRead", "fakeApiNew", "fakeWebOld"} {
+		if title(id) == nil {
+			t.Errorf("%s: must keep its title (read by scraping, recent, or from the website)", id)
+		}
+	}
+	var n int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM videos WHERE id = 'fakeApiOld'`).Scan(&n)
+	if n != 1 {
+		t.Error("the video row stays, with its ID, for a later website read")
+	}
+	exists := func(table, col, id string) bool {
+		var ok bool
+		_ = pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+table+` WHERE `+col+` = $1)`, id).Scan(&ok)
+		return ok
+	}
+	if exists("candidates", "channel_id", "UCfakeCandOld000000000001") || exists("schedule", "entity_id", "UCfakeCandOld000000000001") {
+		t.Error("an API-only candidate unchecked after 30 days must go, with its job")
+	}
+	for _, id := range []string{"UCfakeCandMid000000000001", "UCfakeCandNew000000000001", "UCfakeCandChk000000000001", "UCfakeCandWeb000000000001"} {
+		if !exists("candidates", "channel_id", id) {
+			t.Errorf("%s: must stay", id)
+		}
+	}
+	var prio int
+	_ = pool.QueryRow(ctx, `SELECT priority FROM schedule WHERE entity_id = 'UCfakeCandMid000000000001'`).Scan(&prio)
+	if prio != 1 {
+		t.Errorf("a 21-day-old API-only check has priority %d; want 1 (checked before day 30)", prio)
+	}
+	_ = pool.QueryRow(ctx, `SELECT priority FROM schedule WHERE entity_id = 'UCfakeCandNew000000000001'`).Scan(&prio)
+	if prio != 3 {
+		t.Errorf("a recent check was moved (priority %d)", prio)
+	}
+	// Run again: nothing more to do.
+	if e, err := discovery.ExpireAPIData(ctx, pool, now); err != nil || e != (discovery.APIExpiry{}) {
+		t.Errorf("second run %+v, %v; want nothing", e, err)
+	}
+}

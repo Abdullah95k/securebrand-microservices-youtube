@@ -30,7 +30,8 @@ Files on the server:
 
 ## 1. What you need first
 
-- A server. Plan §7.2 recommends a Hetzner dedicated server. The Compose file is sized for 64 GB of memory; step 5 says what to change for other sizes.
+- A server. The Compose file is sized for a small machine: 4 vCPU and 16 GB of memory. Step 5 says what to change for a bigger one.
+  (Production itself runs on the platform's Kubernetes cluster; this Compose stack is for a single server.)
 - Ubuntu 24.04 with root access over SSH.
 - The proxy list (plan §7.3), in the same format as in Phase 0.
 - Optional: the YouTube Data API key, object storage (bucket and access keys), and webhook receivers.
@@ -162,8 +163,31 @@ echo '{"type": "dir", "dir": "/var/lib/securebrand-youtube/objects"}' > /etc/sec
 
 1. Check the worker's request gap. The Compose file starts at `-interval "2s"` under `worker`: Phase 0 (E1) found every page type
    clean down to 1 request per second per IP, except the player, which the collector asks only when it adds something. If the
-   alerts show blocks, raise it (for example to `"3s"`). On a server with a different amount of memory, also set Postgres's
-   `shared_buffers` to about 1/8 of memory and `effective_cache_size` to about 5/8:
+   alerts show blocks, raise it (for example to `"3s"`).
+
+   **Sizes.** Every container has a memory limit (`mem_limit`, with `memswap_limit` the same, so no swap), a CPU limit and a process
+   limit. A runaway process is stopped alone and never takes the machine down. For 4 vCPU and 16 GB:
+
+   | Container | Memory | CPU |
+   |---|---|---|
+   | postgres | 8 GB | 2 |
+   | worker | 1 GB (`GOMEMLIMIT` 850 MiB) | 1.5 |
+   | scheduler | 1 GB (`GOMEMLIMIT` 850 MiB) | 1 |
+   | prometheus | 1 GB | 0.5 |
+   | backup | 512 MB | 0.5 |
+   | migrate, websub | 256 MB each | 0.5 |
+   | alertmanager | 128 MB | 0.25 |
+
+   That is about 12 GB in all, leaving 4 GB to the system. **On a bigger machine**, raise Postgres first:
+   - `mem_limit` and `memswap_limit` to about half the machine's memory;
+   - `shared_buffers` to a quarter of that limit;
+   - `effective_cache_size` to three quarters of it.
+
+   For example, on 64 GB: a 32 GB limit, `shared_buffers=8GB`, `effective_cache_size=24GB`, `maintenance_work_mem=2GB` and
+   `max_wal_size=8GB`.
+
+   If a worker is killed for memory (`docker compose ps` shows it restarting, and `docker inspect` shows `OOMKilled`), raise its
+   limit and `GOMEMLIMIT` together, keeping `GOMEMLIMIT` about 15% below the limit:
 
 ```bash
 nano ~/securebrand-microservices-youtube/deploy/compose/docker-compose.yml

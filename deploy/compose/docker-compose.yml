@@ -5,6 +5,14 @@
 #
 # Steps, secret files and day-to-day commands: docs/production-runbook.md.
 #
+# Sized for a small machine: 4 vCPU and 16 GB of memory (REQ-010 fix 2).
+# Every container has a memory limit (no swap), a CPU limit and a process
+# limit, so a runaway process is stopped alone and never takes the machine
+# down (standard B2). Together the limits come to about 12 GB, leaving the
+# rest to the system. The Go services also get GOMEMLIMIT a little under
+# their limit, so they collect garbage before they hit it. For a bigger
+# machine, see docs/production-runbook.md step 5.
+#
 # Secrets are files in /etc/securebrand-youtube on the host (chmod 600),
 # mounted read-only; nothing secret is in this file, the image or the
 # environment. Data lives in /var/lib/securebrand-youtube and the Postgres
@@ -20,6 +28,11 @@ x-logging: &logging
 
 x-ytcollect: &ytcollect
   image: securebrand-youtube:latest
+  # The defaults for the small services; worker and scheduler set their own.
+  mem_limit: 256m
+  memswap_limit: 256m
+  cpus: 0.5
+  pids_limit: 256
   build:
     context: ../..
   entrypoint: ["/usr/local/bin/ytcollect"]
@@ -27,6 +40,7 @@ x-ytcollect: &ytcollect
   environment:
     # Push notifications (D23): set in .env next to this file; empty is off.
     YT_WEBSUB_CALLBACK: ${YT_WEBSUB_CALLBACK:-}
+    GOMEMLIMIT: 200MiB
   volumes:
     - /etc/securebrand-youtube:/etc/securebrand-youtube:ro
     - /var/lib/securebrand-youtube:/var/lib/securebrand-youtube
@@ -48,24 +62,39 @@ services:
       # (PGDATA); the volume is mounted one level up, as that image expects.
       - pgdata:/var/lib/postgresql
       - /etc/securebrand-youtube/postgres_password:/run/ytcollect/postgres_password:ro
-    # Sizes for a 64 GB server; see the runbook for other sizes.
+    # Tuned for 16 GB with an 8 GB container limit: shared_buffers a quarter
+    # of the limit, effective_cache_size what the machine's page cache can
+    # hold for it. The runbook (step 5) gives the settings for bigger
+    # machines.
     command:
       - postgres
       - -c
-      - shared_buffers=8GB
+      - shared_buffers=2GB
       - -c
-      - effective_cache_size=40GB
+      - effective_cache_size=6GB
       - -c
-      - work_mem=64MB
+      - work_mem=32MB
       - -c
-      - maintenance_work_mem=2GB
+      - maintenance_work_mem=512MB
       - -c
-      - max_connections=200
+      - max_connections=100
+      - -c
+      - max_worker_processes=4
+      - -c
+      - max_parallel_workers=4
+      - -c
+      - max_parallel_workers_per_gather=2
       - -c
       - wal_compression=on
       - -c
-      - max_wal_size=8GB
-    shm_size: 2g
+      - max_wal_size=4GB
+      - -c
+      - random_page_cost=1.1
+    shm_size: 1g
+    mem_limit: 8g
+    memswap_limit: 8g
+    cpus: 2
+    pids_limit: 512
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ytcollect -d ytcollect"]
       interval: 10s
@@ -87,6 +116,13 @@ services:
   scheduler:
     <<: *ytcollect
     command: ["scheduler"]
+    # The archiver builds compressed monthly parts in memory.
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 1
+    environment:
+      YT_WEBSUB_CALLBACK: ${YT_WEBSUB_CALLBACK:-}
+      GOMEMLIMIT: 850MiB
 
   # The collector. -interval: the gap between requests on one proxy IP.
   # Phase 0 (E1) found every page type clean down to 1 s per IP except the
@@ -98,6 +134,12 @@ services:
     <<: *ytcollect
     command: ["worker", "-interval", "2s", "-workers", "10", "-drain", "20s"]
     stop_grace_period: 30s
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 1.5
+    environment:
+      YT_WEBSUB_CALLBACK: ${YT_WEBSUB_CALLBACK:-}
+      GOMEMLIMIT: 850MiB
 
   # Push notifications (D23: off until a public subdomain exists). Start
   # with: docker compose --profile websub up -d. Put HTTPS (Caddy, nginx) in
@@ -121,6 +163,10 @@ services:
     volumes:
       - /var/lib/securebrand-youtube/backups:/backups
       - /etc/securebrand-youtube/postgres_password:/run/ytcollect/postgres_password:ro
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.5
+    pids_limit: 128
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -143,6 +189,10 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=400d
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 0.5
+    pids_limit: 256
     volumes:
       - ../prometheus:/etc/prometheus:ro
       - promdata:/prometheus
@@ -156,6 +206,10 @@ services:
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
       - --storage.path=/alertmanager
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
     volumes:
       - ../alertmanager:/etc/alertmanager:ro
       - /etc/securebrand-youtube:/etc/securebrand-youtube:ro

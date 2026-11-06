@@ -42,6 +42,11 @@ The current state of the YouTube collector, for the owner and the master session
 - proxies arrive in the secret `proxies`, key `proxies.yaml`, one line per proxy with `country=`;
 - raw responses go under `yts/keep/` and `yts/30d/` in the raw bucket. The platform expires `yts/30d/`; yts never deletes.
 
+**Questions for the master (fix 17, 6 November):**
+- Does `platform-credentials` carry the database server's CA? Under which key? yts reads `POSTGRES_SSLROOTCERT`; with it, yts
+  verifies the server (`verify-full`), without it, it still encrypts (`require`).
+- Does `POSTGRES_USER` own the `yts` database's `public` schema? `migrate` creates the tables as that role.
+
 **Changes to report (additions only):**
 - Fix 17: `YT_POSTGRES_DIR` (the platform's credential files). Each command connects as the owner, app or read-only role; `migrate`
   grants the app and read-only roles. Without TLS, a connection to another machine is refused. Compose is unchanged.

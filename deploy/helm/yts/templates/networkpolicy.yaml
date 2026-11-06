@@ -1,8 +1,39 @@
 {{- if .Values.networkPolicy.enabled -}}
 {{- $np := .Values.networkPolicy -}}
-# Every yts pod: in, only the monitoring namespace on the ops ports (and the
-# ingress namespace on the push receiver when it is on); out, only DNS,
-# HTTPS, the database and the proxy exits (yts-operations.md §6).
+{{- /* The managed services' ports, from the platform's credentials at
+install time (lookup reads the cluster; it finds nothing in "helm template",
+which then falls back to the values). */ -}}
+{{- $svcPorts := list -}}
+{{- $pc := lookup "v1" "Secret" .Release.Namespace .Values.secrets.platformCredentials -}}
+{{- if and $pc $pc.data -}}
+{{- range $k := list "POSTGRES_PORT" "VALKEY_PORT" -}}
+{{- $v := index $pc.data $k | default "" | b64dec | trim -}}
+{{- if regexMatch "^[0-9]+$" $v -}}{{- $svcPorts = append $svcPorts $v -}}{{- end -}}
+{{- end -}}
+{{- range $b := splitList "," (index $pc.data "KAFKA_BROKERS" | default "" | b64dec) -}}
+{{- $p := regexFind ":[0-9]+$" (trim $b) | trimPrefix ":" -}}
+{{- if $p -}}{{- $svcPorts = append $svcPorts $p -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not $svcPorts -}}{{- $svcPorts = $np.egress.managedServices.ports -}}{{- end -}}
+{{- /* The proxy ports, from the proxies secret at install time: the port of
+each line's URL (scheme://user:password@host:port …). Only ports are read. */ -}}
+{{- $proxyPorts := list -}}
+{{- $px := lookup "v1" "Secret" .Release.Namespace .Values.secrets.proxies.name -}}
+{{- if and $px $px.data -}}
+{{- range $line := splitList "\n" (index $px.data .Values.secrets.proxies.key | default "" | b64dec) -}}
+{{- $l := trim $line -}}
+{{- if and $l (not (hasPrefix "#" $l)) -}}
+{{- $p := regexFind ":[0-9]+$" (first (splitList " " $l) | trimSuffix "/") | trimPrefix ":" -}}
+{{- if $p -}}{{- $proxyPorts = append $proxyPorts $p -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not $proxyPorts -}}{{- $proxyPorts = $np.egress.proxies.ports -}}{{- end }}
+# Every yts pod. In: the monitoring namespace on the ops ports (and the
+# ingress namespace on the push receiver when it is on). Out: DNS, HTTPS,
+# the managed services, the schema registry and the proxy exits
+# (yts-operations.md §6; the master's ranges of 6 November).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -53,19 +84,37 @@ spec:
         - port: 443
           protocol: TCP
     - to:
-        {{- range $np.egress.database.cidrs }}
+        {{- range $np.egress.managedServices.cidrs }}
         - ipBlock:
             cidr: {{ . }}
         {{- end }}
+      {{- with uniq $svcPorts }}
       ports:
-        - port: {{ $np.egress.database.port }}
+        {{- range . }}
+        - port: {{ . }}
           protocol: TCP
+        {{- end }}
+      {{- end }}
+    {{- with $np.egress.schemaRegistry }}
+    {{- if .enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .podLabels | nindent 14 }}
+      ports:
+        - port: {{ .port }}
+          protocol: TCP
+    {{- end }}
+    {{- end }}
     - to:
         {{- range $np.egress.proxies.cidrs }}
         - ipBlock:
             cidr: {{ . }}
         {{- end }}
-      {{- with $np.egress.proxies.ports }}
+      {{- with uniq $proxyPorts }}
       ports:
         {{- range . }}
         - port: {{ . }}

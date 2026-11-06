@@ -37,14 +37,16 @@ x-ytcollect: &ytcollect
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     restart: unless-stopped
     environment:
       POSTGRES_USER: ytcollect
       POSTGRES_DB: ytcollect
       POSTGRES_PASSWORD_FILE: /run/ytcollect/postgres_password
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # The PostgreSQL 18 image keeps its data under /var/lib/postgresql/18
+      # (PGDATA); the volume is mounted one level up, as that image expects.
+      - pgdata:/var/lib/postgresql
       - /etc/securebrand-youtube/postgres_password:/run/ytcollect/postgres_password:ro
     # Sizes for a 64 GB server; see the runbook for other sizes.
     command:
@@ -111,7 +113,7 @@ services:
   # server too: see the runbook). A restored dump brings back erased data
   # until the next privacy audit, so run "privacy-audit" right after one.
   backup:
-    image: postgres:16
+    image: postgres:18
     restart: unless-stopped
     depends_on:
       postgres:

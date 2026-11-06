@@ -95,7 +95,9 @@ chmod 600 /etc/securebrand-youtube/database_url
 > **Back up the privacy key now, somewhere off this server** (a password manager). Without it, the suppression list can't be
 > checked, so erased people and channels could be collected again. Never paste it into a chat or ticket.
 
-5. Add the proxies, one per line, as in Phase 0 (`http://user:password@IP:PORT type=dc`):
+5. Add the proxies, one per line: `http://user:password@IP:PORT type=isp subnet=label country=XX`. `type` is `dc`, `isp` or `res`;
+   `subnet` is optional (proxies with the same label rest together); `country` is the exit's two-letter ISO code (`IQ`, `DE`…), used
+   for the platform's `exit_country`:
 
 ```bash
 nano /etc/securebrand-youtube/proxies.txt

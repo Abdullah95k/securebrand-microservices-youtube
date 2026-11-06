@@ -16,7 +16,7 @@ jobs:
       # The database tests run against a throwaway Postgres; each test gets
       # its own schema (internal/db/dbtest).
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: yttest

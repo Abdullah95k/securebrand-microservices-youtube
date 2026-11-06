@@ -45,9 +45,13 @@ type Proxy struct {
 	id     string
 	kind   Kind
 	subnet string // opaque label; raw addresses are never exposed
-	url    *url.URL
-	host   string // host:port of the proxy, used only to scrub errors
-	client *http.Client
+	// country is the exit's ISO 3166-1 alpha-2 country, as the proxy list
+	// gives it ("" when not given). It is no secret: it fills
+	// provenance.exit_country in the platform contract.
+	country string
+	url     *url.URL
+	host    string // host:port of the proxy, used only to scrub errors
+	client  *http.Client
 }
 
 // ID is a short stable identifier derived from the proxy's host and port.
@@ -58,6 +62,10 @@ func (p *Proxy) Kind() Kind { return p.kind }
 
 // Subnet returns an opaque label for the proxy's subnet.
 func (p *Proxy) Subnet() string { return p.subnet }
+
+// Country returns the exit's ISO 3166-1 alpha-2 country from the proxy
+// list, or "" when the list doesn't say.
+func (p *Proxy) Country() string { return p.country }
 
 // Client returns the HTTP client that sends requests through this proxy. Each
 // proxy has its own cookie jar, so anonymous visitor IDs are never shared
@@ -101,8 +109,9 @@ func (p *Proxy) ScrubError(err error) string {
 // ParseList parses proxy lines (comments and blank lines already removed, for
 // example by secrets.ReadLines). Each line is
 //
-//	URL [type=dc|isp|res] [subnet=label]
+//	URL [type=dc|isp|res] [subnet=label] [country=XX]
 //
+// country is the exit's ISO 3166-1 alpha-2 code (IQ, DE…), in either case.
 // or the word "direct" for the server's own IP. URL schemes http, https and
 // socks5 are supported. Errors give the line number but never the URL.
 func ParseList(lines []string) ([]*Proxy, error) {
@@ -115,11 +124,11 @@ func ParseList(lines []string) ([]*Proxy, error) {
 			continue
 		}
 		kind := KindDatacenter
-		subnetTag := ""
+		subnetTag, country := "", ""
 		for _, tag := range fields[1:] {
 			k, v, ok := strings.Cut(tag, "=")
 			if !ok {
-				return nil, fmt.Errorf("proxy line %d: unknown option (want type=… or subnet=…)", n)
+				return nil, fmt.Errorf("proxy line %d: unknown option (want type=…, subnet=… or country=…)", n)
 			}
 			switch k {
 			case "type":
@@ -134,6 +143,11 @@ func ParseList(lines []string) ([]*Proxy, error) {
 					return nil, fmt.Errorf("proxy line %d: empty subnet label", n)
 				}
 				subnetTag = v
+			case "country":
+				if !isCountryCode(v) {
+					return nil, fmt.Errorf("proxy line %d: country %q is not a two-letter ISO code", n, v)
+				}
+				country = strings.ToUpper(v)
 			default:
 				return nil, fmt.Errorf("proxy line %d: unknown option %q", n, k)
 			}
@@ -164,6 +178,7 @@ func ParseList(lines []string) ([]*Proxy, error) {
 		if subnetTag != "" {
 			p.subnet = "sn-" + shortHash("tag:"+subnetTag)
 		}
+		p.country = country
 		if prev, dup := seen[p.id]; dup {
 			if p.kind == KindDirect {
 				return nil, fmt.Errorf("proxy line %d: 'direct' listed twice (also line %d)", n, prev)
@@ -224,4 +239,17 @@ func newClient(proxyURL *url.URL) *http.Client {
 			return http.ErrUseLastResponse
 		},
 	}
+}
+
+// isCountryCode reports whether s is two ASCII letters.
+func isCountryCode(s string) bool {
+	if len(s) != 2 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+			return false
+		}
+	}
+	return true
 }

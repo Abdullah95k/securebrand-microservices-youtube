@@ -5,12 +5,12 @@ before the pilot (11), because the cluster can't run yts without them.
 
 | # | Fix | PR | Status | Evidence |
 |---|---|---|---|---|
-| 1 | `/healthz` and `/readyz` on the ops port (B1) | this PR | In review | `internal/ops` and its tests; the worker, scheduler and push receiver serve them; checked by hand against a local database |
+| 1 | `/healthz` and `/readyz` on the ops port (B1) | [#43](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/43) | Done, 6 Nov | `internal/ops` and its tests; the worker, scheduler and push receiver serve them; checked by hand against a local database |
 | 2 | Memory limits and small-server settings in Compose (B2) | | To do | |
 | 3 | Bounded job retries: `dead` state, metric, alert, `requeue` (C1, C3) | | To do | |
 | 4 | `yt_proxy_bytes_total` (F1) | | To do | |
 | 5 | `ytcollect report` (D5) | | To do | |
-| 6 | Hand back leases on SIGTERM, within the grace period (B4) | this PR | In review | `worker.Drain`, `queue.ReleaseOwner`; tests `TestWorkerDrainLetsRunningJobsFinish`, `TestWorkerDrainInterruptsAndHandsBack`, `TestReleaseOwner` |
+| 6 | Hand back leases on SIGTERM, within the grace period (B4) | [#43](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/43) | Done, 6 Nov | `worker.Drain`, `queue.ReleaseOwner`; tests `TestWorkerDrainLetsRunningJobsFinish`, `TestWorkerDrainInterruptsAndHandsBack`, `TestReleaseOwner` |
 | 7 | Alert: too few healthy IPs (C5) | | To do | |
 | 8 | Raw responses: failures and 1% kept forever, the rest 30 days (E8) | | To do | |
 | 9 | Move the AI labelling code out of `ytcollect` | | To do | |
@@ -28,5 +28,12 @@ before the pilot (11), because the cluster can't run yts without them.
 | 21 | Post attachments: images, poll options, linked video | | To do | |
 | 22 | Operations: runbooks, restore test, dashboard, migration check, visitor ID per IP, daily budget | | To do | |
 | 23 | 24-hour soak against the fake YouTube (G3) | | To do | |
+
+**Platform conventions** (from the master, 6 November):
+
+| Item | PR | Status | Evidence |
+|---|---|---|---|
+| `country=XX` on proxy lines, for `exit_country` (REQ-021 rule 7) | this PR | In review | `proxypool.ParseList`, `Proxy.Country`; test `TestParseListCountry` |
+| PostgreSQL 18 in CI and Compose (the cluster runs 18) | this PR | In review | `.github/workflows/ci.yml` and the Compose file use `postgres:18`; the whole test suite runs against it in CI |
 
 The contract adoption (REQ-021) is tracked in `yts-contract-adoption.md`, which starts with fix 12.

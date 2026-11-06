@@ -1,11 +1,7 @@
-# Verified false positives only. Each line is one finding's fingerprint
-# (commit:file:rule:line). Never add real secrets here: rotate them instead.
+# False positives, each checked by hand. Never add a real secret here: rotate it instead.
 #
-# An invented test token in a skeleton test ("Eg0S…"), not a credential.
-# The test now builds the value at run time; this line covers the old commit.
-5987e353b5ea1dbf64ed14708e0900afc87f6195:internal/skeleton/skeleton_test.go:generic-api-key:13
-#
-# Amazon's published Signature V4 example secret key (the "…EXAMPLEKEY" value
-# from the AWS documentation) in the S3 signer test, not a credential. The
-# test now builds it from short pieces; this line covers the old commit.
-ba1a5f0bb58e5c0025254bfb6b235aef16a21c04:internal/media/store_test.go:generic-api-key:20
+# A comment in the chart's values listing the platform's key names
+# ("... S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET_RAW and S3_BUCKET_MEDIA."),
+# read as a key and its value. No secret: names only. Reworded in the next
+# commit; this commit stays in the history.
+30ac8c196084ca8b3e1538f1684e85fb6cd6a1c8:deploy/helm/yts/values.yaml:generic-api-key:45

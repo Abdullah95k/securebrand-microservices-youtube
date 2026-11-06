@@ -324,6 +324,33 @@ docker compose exec worker ytcollect jobs requeue -kind KIND
 how many IPs can serve pages now. The alert `ProxiesHealthyLow` fires when fewer than 3 (or under half) are usable for 15 minutes.
 Player rests don't count against an IP.
 
+**What it costs.** Every job records what it used: requests, bytes on the wire and blocks, per hour and job kind, and per day and
+channel. The scheduler also records the database size every hour. `ytcollect report` turns this into the cost per channel per day,
+by tier, and in total. It projects the cost to 1,000 and 10,000 channels, with the proxy IPs needed. It shows counts only, never
+names, IDs or text.
+
+1. The last 48 hours, on the screen:
+
+```bash
+docker compose exec scheduler ytcollect report
+```
+
+2. Whole days, Iraq time, saved as a file in the container. Change the dates to the ones you want:
+
+```bash
+docker compose exec scheduler ytcollect report -from 2026-11-10 -to 2026-11-12 -o /tmp/report.md
+```
+
+3. Copy the file out of the container:
+
+```bash
+docker compose cp scheduler:/tmp/report.md ./report.md
+```
+
+`-channels 1000,10000,50000` projects to other counts; `-json` gives the same report as JSON. Memory and CPU come from the
+metrics (`process_resident_memory_bytes`, `process_cpu_seconds_total`), not from the report. The worker's `-backfill-days`
+(default 365) sets how far back a new channel's uploads are read; a pilot can start with `-backfill-days 7`.
+
 **Stopping.** On a stop, the worker takes no new jobs, gives running jobs 20 seconds (`-drain`) to finish, then interrupts the rest
 and hands them back. They run again at once on another worker, and the attempt doesn't count. The Compose file gives the worker
 30 seconds before Docker kills it. On Kubernetes, keep the pod's termination grace period above `-drain` plus about 10 seconds.

@@ -25,6 +25,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/jsonx"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
 )
 
 // Endpoint is a youtubei/v1 API method.
@@ -256,13 +257,16 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 			return proxypool.Fatal, err
 		}
 		start := time.Now()
+		meter := usage.From(ctx)
 		resp, err := px.Client().Do(req)
 		if err != nil {
+			meter.Request(req.ContentLength)
 			return networkOutcome(ctx, err), errors.New(px.ScrubError(err))
 		}
 		wire, body, rerr := readBody(resp)
 		resp.Body.Close()
 		px.AddBytes(wire + max(req.ContentLength, 0))
+		meter.Request(wire + max(req.ContentLength, 0))
 		if rerr != nil {
 			return proxypool.Transient, errors.New(px.ScrubError(rerr))
 		}
@@ -270,6 +274,7 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 		r.Signal = Classify(resp.StatusCode, resp.Header, body)
 		switch r.Signal {
 		case SignalBlocked:
+			meter.Block()
 			return proxypool.Blocked, ErrBlocked
 		case SignalConsent:
 			return proxypool.ProxyFailed, ErrConsent
@@ -295,6 +300,7 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 			}
 			if isPlayer && PlayerSignal(data) == SignalBlocked {
 				r.Signal = SignalBlocked
+				meter.Block()
 				return proxypool.Blocked, ErrBlocked
 			}
 		}

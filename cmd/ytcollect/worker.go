@@ -82,6 +82,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	commentCap := fs.Int("comment-cap", comments.DefaultCap, "most comments the first read of a video takes; capped videos are flagged partial")
 	metricsAddr := fs.String("metrics-addr", ":9101", "the ops port: /metrics, /healthz and /readyz (empty: off)")
 	drain := fs.Duration("drain", 20*time.Second, "on shutdown, how long running jobs may finish before they are interrupted and handed back (keep it below the pod's termination grace period)")
+	backfillDays := fs.Int("backfill-days", 365, "how many days of each channel's past uploads the backfill reads (the pilot starts with 7)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -119,7 +120,11 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	}
 	wr := &writer.Writer{Pool: pool, Sup: sup, KW: live, Fill: rec, Media: store != nil}
 	stretch := &capacity.Stretcher{Q: pool}
-	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer, Write: wr, Stretch: stretch.Value}
+	if *backfillDays < 1 || *backfillDays > 3650 {
+		return fmt.Errorf("-backfill-days must be between 1 and 3650, not %d", *backfillDays)
+	}
+	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer, Write: wr, Stretch: stretch.Value,
+		Window: time.Duration(*backfillDays) * 24 * time.Hour}
 	handlers := svc.Handlers()
 	rss := &detect.RSS{Pool: pool, Feeds: feeds.NewFetcher(fetch.Client), Write: wr, Log: log, Stretch: stretch.Value,
 		Recent: svc.RecentUploads}
@@ -194,7 +199,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
 		for {
-			if err := capacity.Announce(ctx, pool, owner, capacity.Worker{Proxies: len(proxies), IntervalS: interval.Seconds(), At: time.Now()}); err != nil && ctx.Err() == nil {
+			if err := capacity.Announce(ctx, pool, owner, capacity.Worker{Proxies: len(proxies), IntervalS: interval.Seconds(), BackfillDays: *backfillDays, At: time.Now()}); err != nil && ctx.Err() == nil {
 				log.Warn("announcing capacity failed", "err", err)
 			}
 			select {

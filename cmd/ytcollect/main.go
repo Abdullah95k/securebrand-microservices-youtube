@@ -41,7 +41,7 @@ const (
 	EnvStorageFile = "YT_STORAGE_FILE"
 )
 
-const usage = `ytcollect: SecureBrand YouTube collector
+const mainUsage = `ytcollect: SecureBrand YouTube collector
 
 Usage: ytcollect <command> [flags]
 
@@ -50,6 +50,7 @@ Usage: ytcollect <command> [flags]
   keywords   import the seed list; add, list, set or remove keywords ("ytcollect keywords" for details)
   health     the job queue by kind and priority, and switched-off features
   jobs       dead jobs (too many failures): list them, or requeue them once the cause is fixed
+  report     measured cost per channel per day and in total, projected to 1,000 and 10,000 channels with the IPs needed
   erase      record an erasure request (author, channel, video, comment or post); a worker carries it out
   erasures   list erasure requests and their status
   privacy-audit  check that nothing erased is in the database (the scheduler runs it daily)
@@ -67,7 +68,7 @@ Run "ytcollect <command> -h" for the flags of a command.
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(os.Stderr, mainUsage)
 		os.Exit(2)
 	}
 	cmd, args := os.Args[1], os.Args[2:]
@@ -86,7 +87,7 @@ func main() {
 		if err == nil {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
 		}
-	case "channels", "keywords", "health", "jobs", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
+	case "channels", "keywords", "health", "jobs", "report", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
 		pool := mustDB(ctx, log)
 		defer pool.Close()
 		switch cmd {
@@ -98,6 +99,8 @@ func main() {
 			err = healthCmd(ctx, pool, os.Stdout)
 		case "jobs":
 			err = jobsCmd(ctx, pool, os.Stdout, args)
+		case "report":
+			err = reportCmd(ctx, pool, os.Stdout, args, time.Now())
 		case "switch":
 			err = switchCmd(ctx, pool, os.Stdout, args)
 		case "scheduler":
@@ -122,9 +125,9 @@ func main() {
 			err = suppressionCmd(ctx, pool, os.Stdout, args)
 		}
 	case "-h", "--help", "help":
-		fmt.Print(usage)
+		fmt.Print(mainUsage)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, mainUsage)
 		os.Exit(2)
 	}
 	if err != nil {

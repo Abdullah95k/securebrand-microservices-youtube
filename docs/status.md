@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 17:55 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 18:30 (Iraq time)**.
 
 ## Where it stands
 
@@ -11,7 +11,10 @@ The current state of the YouTube collector, for the owner and the master session
 - **Phase 0:** has ended (the owner, 6 November). The census of 5 November was not run: there are no new long runs on the shared
   server (D-026). The final numbers come from the 4 November report and the 5 November discovery, into `docs/phase0-results.md`.
 - **Now building:** the owner's fix list (REQ-010) and the contract adoption (REQ-021), approved on 6 November. Progress, one row per
-  fix: [`master/yts-fixes.md`](master/yts-fixes.md). Fixes 1 and 6 are in review.
+  fix: [`master/yts-fixes.md`](master/yts-fixes.md).
+  - **Done:** fixes 1, 2, 3, 4, 6, 7, 9 and 10, plus the proxy `country=` tag and PostgreSQL 18.
+  - **In review:** fix 5, `ytcollect report` (measured cost per channel per day, projected to 1,000 and 10,000 channels).
+  - **Next, before the pilot:** fix 8 (raw responses), then fixes 13, 14, 16 and 17 for the cluster.
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
 
 ## What runs where
@@ -33,8 +36,15 @@ The current state of the YouTube collector, for the owner and the master session
 4. **Media for analysis:** thumbnails and community-post images, kept until analysed. No audio, video or transcripts.
 5. **The contract v1.0.0 is published** (D-016). The `content.*` mapping follows the outbox (fix 12).
 
-**Waiting for the master:** the database yts gets in the cluster, who expires the 30-day raw files, the `proxies.yaml` layout, and
-whether credentials arrive as environment variables or files (asked on 6 November).
+**Answered by the master (6 November):**
+- the database `yts`, with the roles `yts`, `yts_app` and `yts_ro`;
+- credentials arrive as files from the secret `platform-credentials`;
+- proxies arrive in the secret `proxies`, key `proxies.yaml`, one line per proxy with `country=`;
+- raw responses go under `yts/keep/` and `yts/30d/` in the raw bucket. The platform expires `yts/30d/`; yts never deletes.
+
+**Changes to report (additions only):** fix 5 adds three tables (`usage_hourly`, `usage_channel_daily`, `db_sizes`), the command
+`ytcollect report`, the worker flag `-backfill-days`, and a `backfill_days` field in the workers' capacity record. Nothing was renamed
+or removed. The outbox migration moves to `0012`.
 
 ## Reports for the master session (6 November)
 

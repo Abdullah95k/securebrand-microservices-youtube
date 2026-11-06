@@ -17,6 +17,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
 )
 
 // Handler runs one job. It returns when the job should run next (zero: the
@@ -202,16 +203,24 @@ func (w *Worker) run(ctx context.Context, j queue.Job) {
 			}
 		}
 	}()
-	next, err := safe(ctx, h, j)
+	jctx, meter := usage.With(ctx)
+	next, err := safe(jctx, h, j)
 	stopHB()
+	took := time.Since(start)
 	if w.OnResult != nil {
-		w.OnResult(j.Kind, err, time.Since(start))
+		w.OnResult(j.Kind, err, took)
 	}
 	// Report with a fresh context: a shutdown must not lose the outcome.
 	rctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	interrupted := err != nil && ctx.Err() != nil
+	// What the job used counts even when it failed or was interrupted: the
+	// requests were sent (REQ-010 fix 5).
+	if uerr := usage.Record(rctx, w.Pool, start, j, meter.Totals(), err != nil && !interrupted, took); uerr != nil {
+		w.Log.Warn("recording usage failed", "job", j.String(), "err", uerr)
+	}
 	if err != nil {
-		if ctx.Err() != nil {
+		if interrupted {
 			// Interrupted at shutdown, whatever the handler made of it:
 			// hand the job back unrun, so it runs again at once and the
 			// attempt doesn't count.
@@ -220,7 +229,7 @@ func (w *Worker) run(ctx context.Context, j queue.Job) {
 		}
 		item := !Systemic(err)
 		w.Log.Warn("job failed", "job", j.String(), "attempt", j.Attempts, "counts", item,
-			"took", time.Since(start).Round(time.Millisecond), "err", err)
+			"took", took.Round(time.Millisecond), "err", err)
 		dead, ferr := queue.Fail(rctx, w.Pool, j, err, item)
 		if ferr != nil {
 			w.Log.Error("recording a failure failed", "job", j.String(), "err", ferr)

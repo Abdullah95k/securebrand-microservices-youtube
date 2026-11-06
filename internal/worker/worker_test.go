@@ -10,6 +10,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db/dbtest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
 )
 
@@ -193,5 +194,45 @@ func TestReleaseOwner(t *testing.T) {
 	_ = pool.QueryRow(ctx, `SELECT lease_until IS NOT NULL FROM schedule WHERE entity_id = 'fakeTheirs'`).Scan(&theirs)
 	if mine || !theirs {
 		t.Errorf("mine leased=%v, theirs leased=%v; want only mine handed back", mine, theirs)
+	}
+}
+
+// What each job used is recorded, failed jobs included (REQ-010 fix 5).
+func TestWorkerRecordsUsage(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	past := time.Now().Add(-time.Minute)
+	ch := "UCfakeUSAGEAAAAAAAAAAAAA"
+	_ = queue.Put(ctx, pool, queue.KindVideo, "fakevid0001", ch, queue.P2, past)
+	_ = queue.Put(ctx, pool, queue.KindVideo, "fakevid0002", ch, queue.P2, past)
+	w := &worker.Worker{
+		Pool: pool, Owner: "test", Concurrency: 2, Idle: 20 * time.Millisecond, Lease: time.Minute,
+		Handlers: map[string]worker.Handler{
+			queue.KindVideo: func(ctx context.Context, j queue.Job) (time.Time, error) {
+				usage.From(ctx).Request(1000)
+				usage.From(ctx).Request(500)
+				if j.EntityID == "fakevid0002" {
+					usage.From(ctx).Block()
+					return time.Time{}, errors.New("HTTP 500")
+				}
+				return time.Now().Add(time.Hour), nil
+			},
+		},
+	}
+	wctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	if err := w.Run(wctx); err != nil {
+		t.Fatal(err)
+	}
+	var jobs, fails, reqs, bytes, blocks int64
+	if err := pool.QueryRow(ctx, `SELECT sum(jobs), sum(failures), sum(requests), sum(bytes), sum(blocks)
+		FROM usage_hourly WHERE kind = 'video'`).Scan(&jobs, &fails, &reqs, &bytes, &blocks); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 2 || fails != 1 || reqs != 4 || bytes != 3000 || blocks != 1 {
+		t.Errorf("hourly = %d jobs, %d failed, %d requests, %d bytes, %d blocks", jobs, fails, reqs, bytes, blocks)
+	}
+	if err := pool.QueryRow(ctx, `SELECT sum(requests) FROM usage_channel_daily WHERE channel_id = $1`, ch).Scan(&reqs); err != nil || reqs != 4 {
+		t.Errorf("channel requests = %d (%v); want 4", reqs, err)
 	}
 }

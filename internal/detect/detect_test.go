@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,14 +144,24 @@ func TestBreakerOpensWhenFeedsFailWidely(t *testing.T) {
 // is open. The next read is at the normal interval.
 func TestFeedOutageReadsTabs(t *testing.T) {
 	yt, pool, rss := Rig(t) // no feeds set: the fake answers 404
+	// The worker runs jobs on several goroutines at once, so the fake
+	// records its calls under a lock.
+	var mu sync.Mutex
 	var calls []string
 	rss.Recent = func(_ context.Context, channelID string) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
 		calls = append(calls, channelID)
 		return 1, nil
 	}
+	recent := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), calls...)
+	}
 	run(t, pool, rss.Handlers())
-	if len(calls) != 2 {
-		t.Fatalf("tabs read for %v; want both channels after their 404s", calls)
+	if got := recent(); len(got) != 2 {
+		t.Fatalf("tabs read for %v; want both channels after their 404s", got)
 	}
 	var due time.Time
 	_ = pool.QueryRow(context.Background(), `SELECT due_at FROM schedule WHERE kind = 'rss' AND entity_id = $1`, core).Scan(&due)
@@ -171,7 +182,9 @@ func TestFeedOutageReadsTabs(t *testing.T) {
 			feedsBefore++
 		}
 	}
+	mu.Lock()
 	calls = nil
+	mu.Unlock()
 	_, _ = pool.Exec(context.Background(), `UPDATE schedule SET due_at = now() WHERE kind = 'rss'`)
 	run(t, pool, rss.Handlers())
 	feedsAfter := 0
@@ -180,7 +193,7 @@ func TestFeedOutageReadsTabs(t *testing.T) {
 			feedsAfter++
 		}
 	}
-	if len(calls) != 2 || feedsAfter != feedsBefore {
-		t.Errorf("breaker open: tabs read %d times, %d feed requests; want 2 and none", len(calls), feedsAfter-feedsBefore)
+	if got := recent(); len(got) != 2 || feedsAfter != feedsBefore {
+		t.Errorf("breaker open: tabs read %d times, %d feed requests; want 2 and none", len(got), feedsAfter-feedsBefore)
 	}
 }

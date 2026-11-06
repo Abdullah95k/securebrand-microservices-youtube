@@ -69,6 +69,20 @@ jobs:
                  if not s.get("mem_limit") or s.get("memswap_limit") != s.get("mem_limit") or not s.get("cpus")]
           sys.exit("no memory or CPU limit, or swap allowed: " + ", ".join(bad) if bad else 0)
           '
+      - name: the collector's containers never run as root (standard A2)
+        run: |
+          docker compose -f deploy/compose/docker-compose.yml --profile websub config --format json | python3 -c '
+          import json, sys
+          bad = [n for n, s in json.load(sys.stdin)["services"].items()
+                 if s.get("image", "").startswith("securebrand-youtube")
+                 and (s.get("user", "").split(":")[0] in ("", "0", "root") or not s.get("read_only")
+                      or "ALL" not in s.get("cap_drop", []) or "no-new-privileges:true" not in s.get("security_opt", []))]
+          sys.exit("runs as root, or without a read-only root, dropped capabilities and no-new-privileges: " + ", ".join(bad) if bad else 0)
+          '
+      - name: the image runs as a non-root user, read-only, without capabilities
+        run: |
+          test "$(docker inspect -f '{{.Config.User}}' ytprobe:ci)" = "65532:65532"
+          docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges --entrypoint /usr/local/bin/ytcollect ytprobe:ci help
       - name: Prometheus and Alertmanager configs are valid
         run: |
           docker run --rm --entrypoint promtool -v "$PWD/deploy/prometheus:/etc/prometheus:ro" prom/prometheus:v2.55.1 check config /etc/prometheus/prometheus.yml

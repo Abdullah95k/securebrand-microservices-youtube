@@ -112,3 +112,82 @@ func TestLinesFromEnv(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// A Kubernetes secret volume with the pod's fsGroup: root owns the files,
+// the fsGroup may read them (0440), and each name is a symlink through
+// "..data" to a timestamped folder (REQ-010 fix 13).
+func TestGroupReadableForOwnGroupOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no file modes on Windows")
+	}
+	ours := true
+	saved := inGroup
+	inGroup = func(int) bool { return ours }
+	t.Cleanup(func() { inGroup = saved })
+
+	dir := t.TempDir()
+	stamp := filepath.Join(dir, "..2026_11_06_15_00_00.123456789")
+	if err := os.Mkdir(stamp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stamp, "proxies.yaml"), []byte("http://user:pass@203.0.113.1:8080 type=isp\n"), 0o440); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Base(stamp), filepath.Join(dir, "..data")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "proxies.yaml")
+	if err := os.Symlink(filepath.Join("..data", "proxies.yaml"), link); err != nil {
+		t.Fatal(err)
+	}
+	if lines, err := ReadLines(link); err != nil || len(lines) != 1 {
+		t.Fatalf("Kubernetes layout, our group: %v, %v", lines, err)
+	}
+	ours = false
+	if _, err := ReadLines(link); !errors.Is(err, ErrTooOpen) {
+		t.Errorf("group-readable by a group we aren't in: err = %v, want ErrTooOpen", err)
+	}
+
+	ours = true
+	for mode, ok := range map[os.FileMode]bool{
+		0o600: true, 0o400: true, 0o640: true, 0o440: true,
+		0o660: false, 0o650: false, 0o604: false, 0o644: false, 0o606: false, 0o601: false,
+	} {
+		p := writeFile(t, "value", mode)
+		_, err := ReadFile(p)
+		if ok && err != nil {
+			t.Errorf("mode %04o: %v; want accepted", mode, err)
+		}
+		if !ok && !errors.Is(err, ErrTooOpen) {
+			t.Errorf("mode %04o: err = %v; want ErrTooOpen", mode, err)
+		}
+	}
+}
+
+func TestPermissionDeniedSaysWhy(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a non-root user on a Unix system")
+	}
+	p := writeFile(t, "value", 0o000)
+	if _, err := ReadFile(p); err == nil || !strings.Contains(err.Error(), "65532") {
+		t.Errorf("err = %v; want a hint about the collector's user", err)
+	}
+}
+
+func TestOwnGroupIsRecognised(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no file modes on Windows")
+	}
+	// A new file belongs to this process's group, so 0640 is accepted.
+	p := writeFile(t, "value", 0o640)
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gid, ok := fileGroup(info); !ok || !inGroup(gid) {
+		t.Skipf("the temp folder gives new files another group (%d)", gid)
+	}
+	if _, err := ReadFile(p); err != nil {
+		t.Errorf("0640 in our own group: %v", err)
+	}
+}

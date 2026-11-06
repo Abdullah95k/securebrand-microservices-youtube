@@ -1,0 +1,23 @@
+{{- if or .Values.storage.media.enabled .Values.storage.raw.enabled -}}
+# The object-storage settings the programs read (YT_STORAGE_FILE,
+# YT_RAW_STORAGE_FILE). No secrets: the keys stay in their secret files.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "yts.fullname" . }}-storage
+  labels:
+    {{- include "yts.labels" . | nindent 4 }}
+data:
+  {{- with .Values.storage.media }}
+  {{- if .enabled }}
+  storage.json: |
+    {{- dict "type" "s3" "endpoint" .endpoint "region" .region "bucket" .bucket "prefix" .prefix "virtual_host" .virtualHost "access_key_file" .accessKeyFile "secret_key_file" .secretKeyFile | toJson | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- with .Values.storage.raw }}
+  {{- if .enabled }}
+  raw_storage.json: |
+    {{- dict "type" "s3" "endpoint" .endpoint "region" .region "bucket" .bucket "virtual_host" .virtualHost "access_key_file" .accessKeyFile "secret_key_file" .secretKeyFile | toJson | nindent 4 }}
+  {{- end }}
+  {{- end }}
+{{- end }}

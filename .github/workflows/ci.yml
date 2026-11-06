@@ -89,6 +89,45 @@ jobs:
           docker run --rm --entrypoint promtool -w /etc/prometheus -v "$PWD/deploy/prometheus:/etc/prometheus:ro" prom/prometheus:v2.55.1 test rules alerts_test.yml
           docker run --rm --entrypoint amtool -v "$PWD/deploy/alertmanager:/etc/alertmanager:ro" prom/alertmanager:v0.27.0 check-config /etc/alertmanager/alertmanager.yml
 
+  helm:
+    name: helm (the chart lints, renders and is secure)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: the chart's alerts are deploy/prometheus/alerts.yml
+        run: cmp deploy/prometheus/alerts.yml deploy/helm/yts/files/alerts.yml
+      - name: helm lint (default and production values)
+        run: |
+          helm version
+          helm lint deploy/helm/yts --strict --set image.repository=registry.invalid/yts
+          helm lint deploy/helm/yts --strict -f deploy/helm/yts/values-production.yaml --set image.repository=registry.invalid/yts
+      - name: render the production values, and with every option on
+        run: |
+          mkdir -p out
+          helm template yts deploy/helm/yts -n yts -f deploy/helm/yts/values-production.yaml \
+            --set image.repository=registry.invalid/yts --set image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000 > out/production.yaml
+          helm template yts deploy/helm/yts -n yts --set image.repository=registry.invalid/yts \
+            --set websub.enabled=true --set websub.callback=https://push.invalid/websub \
+            --set storage.media.enabled=true --set storage.media.endpoint=https://s3.invalid --set storage.media.region=x --set storage.media.bucket=media \
+            --set storage.raw.enabled=true --set storage.raw.endpoint=https://s3.invalid --set storage.raw.region=x --set storage.raw.bucket=raw \
+            --set database.platformCredentials=false --set 'networkPolicy.egress.proxies.ports={8080,3128}' > out/everything.yaml
+      - name: the chart refuses unsafe or incomplete values
+        run: |
+          refuses() { if helm template yts deploy/helm/yts "$@" >/dev/null 2>&1; then echo "rendered, but must refuse: $*"; exit 1; fi; }
+          refuses --set image.repository=registry.invalid/yts --set worker.replicas=2
+          refuses --set image.repository=registry.invalid/yts --set storage.raw.enabled=true
+          refuses --set image.repository=registry.invalid/yts --set websub.enabled=true
+          refuses
+      - name: Kubernetes schemas (kubeconform)
+        run: |
+          docker run --rm -v "$PWD/out:/out:ro" ghcr.io/yannh/kubeconform:v0.6.7 \
+            -strict -summary -kubernetes-version 1.31.0 -ignore-missing-schemas /out/production.yaml /out/everything.yaml
+      - name: pods are non-root, read-only, limited; alerts have runbooks
+        run: |
+          python3 -c 'import yaml' 2>/dev/null || pip install --user pyyaml==6.0.2
+          python3 deploy/helm/check_rendered.py < out/production.yaml
+          python3 deploy/helm/check_rendered.py < out/everything.yaml
+
   secrets:
     name: gitleaks (secret scan of full history)
     runs-on: ubuntu-24.04

@@ -1,0 +1,132 @@
+# Alerts from plan §8.13. Labels carry job kinds, tiers and opaque proxy
+# IDs only: never names, comment text or credentials.
+groups:
+  - name: scraping
+    rules:
+      - alert: PoolBrakeEngaged
+        expr: min(yt_pool_speed) < 1
+        for: 10m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "The proxy pool slowed down: more than 20% of IPs are blocked"
+      - alert: ProxyQuarantined
+        expr: yt_proxies_quarantined > 0
+        for: 15m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "{{ $value }} proxy IP(s) in quarantine"
+      # REQ-010 fix 7 (standard C5): the pool can't run dry unnoticed. Fewer
+      # than 3 usable IPs, or under half the pool, for 15 minutes. Player
+      # rests don't count: the player is blocked often by design.
+      - alert: ProxiesHealthyLow
+        expr: (yt_proxies_healthy < 3 and yt_proxies_total >= 3) or (yt_proxies_healthy < 0.5 * yt_proxies_total)
+        for: 15m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "Only {{ $value }} usable proxy IP(s) on {{ $labels.worker }}: collection slows to a crawl"
+          description: "Check yt_proxy_blocks_total for a block storm, and add or replace IPs (docs/production-runbook.md §7)."
+      - alert: FillRateDrop
+        expr: (yt_fill_rate < 0.7 * yt_fill_rate_baseline) and yt_fill_rate_baseline > 0.5
+        for: 30m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "{{ $labels.endpoint }}.{{ $labels.field }} is present far less often than usual: YouTube may have changed the page"
+      - alert: ParseFailureSpike
+        expr: yt_parse_failures_24h > 100
+        for: 15m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "{{ $value }} pages could not be parsed in 24 hours; skeletons are in the debug folder"
+      - alert: CanaryFailing
+        expr: yt_canary_targets > 0 and yt_canary_channels_ok == 0
+        for: 30m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "No canary channel could be read and parsed"
+      - alert: MonitorStale
+        expr: time() - yt_monitor_timestamp_seconds > 600
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "System metrics are not being refreshed (is the scheduler running?)"
+  - name: freshness
+    rules:
+      - alert: FreshnessDebtGrowing
+        expr: delta(sum(yt_freshness_debt_hours)[24h:1h]) > 0 and sum(yt_freshness_debt_hours) > 100
+        for: 1h
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "Overdue work has grown for 24 hours; capacity recommends {{ with query \"yt_capacity_recommended_ips\" }}{{ . | first | value }}{{ end }} IPs"
+      - alert: CommentCompletenessLow
+        expr: yt_comments_complete_pct < 90
+        for: 6h
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "Comments collected are under 90% of the displayed counts"
+      - alert: WebSubRenewalsFailing
+        expr: yt_queue_failing{kind="websub"} > 0
+        for: 1h
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#12-push-notifications-later-d23"
+          summary: "Push subscriptions are failing to renew; feeds and tab checks still find uploads"
+      - alert: APIQuotaExhausted
+        expr: yt_api_quota_cap_units > 0 and yt_api_quota_used_units >= 0.95 * yt_api_quota_cap_units
+        for: 30m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "The official API quota is almost used up for today (resets at midnight Pacific time)"
+  - name: privacy
+    rules:
+      - alert: ErasureRequestOverdue
+        expr: yt_erasure_oldest_pending_seconds > 172800
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#8-erasure-requests"
+          summary: "An erasure request has waited more than 48 hours (the plan allows 72)"
+      - alert: SuppressionViolation
+        expr: yt_suppression_violations > 0
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#8-erasure-requests"
+          summary: "Erased items were found in the database (they were erased again); find out how they came back"
+      - alert: ArchiveErasureOverdue
+        expr: yt_archive_unscrubbed_seconds > 172800
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#10-the-archive"
+          summary: "An erasure has not reached the archive files for 48 hours: check the scheduler's archive scrub"
+  - name: storage
+    rules:
+      - alert: ArchiverBehind
+        expr: max(yt_partition_oldest_age_days) > 430
+        for: 2d
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#10-the-archive"
+          summary: "A month older than 14 months is still in Postgres: the archiver is not running (is object storage configured?)"
+      - alert: MediaBacklog
+        expr: yt_media_jobs_due > 50000
+        for: 6h
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "{{ $value }} image downloads are waiting"
+  - name: webhooks
+    rules:
+      - alert: WebhookDeadLetters
+        expr: yt_webhook_deliveries{status="dead"} > 0
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#11-webhooks"
+          summary: "{{ $value }} webhook deliveries to {{ $labels.endpoint }} gave up; fix the receiver, then: ytcollect webhooks retry -endpoint {{ $labels.endpoint }}"
+      - alert: WebhookBacklog
+        expr: yt_webhook_oldest_pending_seconds > 3600
+        for: 15m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#11-webhooks"
+          summary: "Events for {{ $labels.endpoint }} have waited more than an hour: the receiver is failing or the scheduler is not running"
+  - name: queue
+    rules:
+      # REQ-010 fix 3 (standards C1, C3): a job that failed too often for
+      # reasons of its own stops being retried. It stays dead until someone
+      # fixes the cause and requeues it.
+      - alert: DeadJobs
+        expr: sum by (kind) (yt_queue_dead) > 0
+        for: 10m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "{{ $value }} dead {{ $labels.kind }} job(s): not retried until requeued"
+          description: "See the reasons with 'ytcollect jobs dead'; after the fix, 'ytcollect jobs requeue -kind {{ $labels.kind }}'."

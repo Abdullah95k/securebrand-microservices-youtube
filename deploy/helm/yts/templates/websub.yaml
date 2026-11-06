@@ -1,0 +1,88 @@
+{{- if .Values.websub.enabled -}}
+{{- $_ := required "websub.callback is required when websub.enabled (the public https address, D23)" .Values.websub.callback -}}
+{{- $c := dict "ctx" . "component" "websub" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "yts.fullname" . }}-websub
+  labels:
+    {{- include "yts.labels" . | nindent 4 }}
+    app.kubernetes.io/component: websub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "yts.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "yts.labels" . | nindent 8 }}
+        app.kubernetes.io/component: websub
+      {{- with .Values.websub.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "yts.podSpec" . | nindent 6 }}
+      containers:
+        - name: websub
+          image: {{ include "yts.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/ytcollect"]
+          args:
+            - websub
+            - -addr=:{{ .Values.websub.port }}
+          env:
+            {{- include "yts.env" . | nindent 12 }}
+            - name: GOMEMLIMIT
+              value: {{ .Values.websub.goMemLimit | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.websub.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.websub.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            {{- include "yts.volumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "yts.volumes" . | nindent 8 }}
+      {{- with .Values.websub.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.websub.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.websub.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "yts.fullname" . }}-websub
+  labels:
+    {{- include "yts.labels" . | nindent 4 }}
+    app.kubernetes.io/component: websub
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "yts.selector" $c | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.websub.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

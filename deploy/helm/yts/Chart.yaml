@@ -1,0 +1,9 @@
+apiVersion: v2
+name: yts
+description: SecureBrand YouTube collector (yts) on the platform's Kubernetes cluster (REQ-010 fix 14)
+type: application
+# The chart's own version. The image comes from the platform's pipeline
+# (image.repository and image.tag or image.digest in the values).
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"

@@ -110,7 +110,7 @@ jobs:
             --set websub.enabled=true --set websub.callback=https://push.invalid/websub \
             --set storage.media.enabled=true --set storage.media.endpoint=https://s3.invalid --set storage.media.region=x --set storage.media.bucket=media \
             --set storage.raw.enabled=true --set storage.raw.endpoint=https://s3.invalid --set storage.raw.region=x --set storage.raw.bucket=raw \
-            --set database.platformCredentials=false --set networkPolicy.egress.proxies.ports={8080,3128} > out/everything.yaml
+            --set database.platformCredentials=false --set 'networkPolicy.egress.proxies.ports={8080,3128}' > out/everything.yaml
       - name: the chart refuses unsafe or incomplete values
         run: |
           refuses() { if helm template yts deploy/helm/yts "$@" >/dev/null 2>&1; then echo "rendered, but must refuse: $*"; exit 1; fi; }

@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 18:45 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 18:54 (Iraq time)**.
 
 ## Where it stands
 
@@ -12,9 +12,9 @@ The current state of the YouTube collector, for the owner and the master session
   server (D-026). The final numbers come from the 4 November report and the 5 November discovery, into `docs/phase0-results.md`.
 - **Now building:** the owner's fix list (REQ-010) and the contract adoption (REQ-021), approved on 6 November. Progress, one row per
   fix: [`master/yts-fixes.md`](master/yts-fixes.md).
-  - **Done:** fixes 1 to 10, plus the proxy `country=` tag and PostgreSQL 18.
-  - **In review:** fix 13, the non-root image (user 65532, read-only root, no capabilities).
-  - **Next, before the pilot:** fixes 14 (Helm chart), 16 (releases) and 17 (database TLS and roles).
+  - **Done:** fixes 1 to 10 and 13 (the non-root image), plus the proxy `country=` tag and PostgreSQL 18.
+  - **In review:** fix 17, database TLS and separate roles (owner, app, read-only) from the platform's credentials.
+  - **Next, before the pilot:** fixes 14 (Helm chart) and 16 (releases).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
 
 ## What runs where
@@ -43,6 +43,8 @@ The current state of the YouTube collector, for the owner and the master session
 - raw responses go under `yts/keep/` and `yts/30d/` in the raw bucket. The platform expires `yts/30d/`; yts never deletes.
 
 **Changes to report (additions only):**
+- Fix 17: `YT_POSTGRES_DIR` (the platform's credential files). Each command connects as the owner, app or read-only role; `migrate`
+  grants the app and read-only roles. Without TLS, a connection to another machine is refused. Compose is unchanged.
 - Fix 13: the image runs as user 65532, not root. Secret files must be readable by 65532: owned by it on a server, or through the
   pod's fsGroup on Kubernetes. The Compose runbook has a new `chown` step. Phase 0 images already built are unaffected.
 - Fix 8 adds the worker settings `YT_RAW_STORAGE_FILE`, `-raw-sample` and `-raw-30d`, and the metrics `yt_raw_objects_total` and

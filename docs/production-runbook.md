@@ -61,6 +61,21 @@ git clone https://github.com/Abdullah95k/securebrand-microservices-youtube.git ~
 
 Nothing secret goes into the repository, the image or a chat. Each file is readable only by its owner.
 
+**On the platform's cluster** (REQ-010 fix 17) the database settings come instead from the platform's credentials, one file per
+value (`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`, `POSTGRES_SSLMODE`, then the user and password of each role). Point
+`YT_POSTGRES_DIR` at the folder they are mounted in. Each command then uses the least role it needs:
+
+| Role | Commands |
+|---|---|
+| Owner (`POSTGRES_USER`) | `migrate`, `scheduler`, `archive`: they change the tables (monthly partitions, the archive) |
+| App (`POSTGRES_APP_USER`) | the worker, the push receiver, and the admin commands that change data |
+| Read-only (`POSTGRES_RO_USER`) | `report`, `health`, `erasures`, `export` (the app role if there is no read-only one) |
+
+`migrate` grants the app role row access (never the schema) and the read-only role `SELECT`, also for tables made later. The
+connection must use TLS (`require`, `verify-ca` or `verify-full`; `verify-full` by default when `POSTGRES_SSLROOTCERT`, the server's
+CA, is there); a plain connection to another machine is refused. The steps below are for one server with Docker Compose, which keeps
+the single `database_url` file.
+
 1. Create the folders:
 
 ```bash

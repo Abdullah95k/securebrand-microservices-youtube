@@ -5,6 +5,8 @@
 // Secrets are read from files, never from the command line:
 //
 //	YT_DATABASE_URL_FILE  Postgres URL with its password (chmod 600); default /etc/securebrand-youtube/database_url
+//	YT_POSTGRES_DIR       instead of the URL: the platform's credential files (POSTGRES_HOST, POSTGRES_APP_USER, …);
+//	                      each command connects as the owner, app or read-only role, over TLS (REQ-010 fix 17)
 //	YT_PRIVACY_KEY_FILE   secret for keyed hashes (openssl rand -hex 32; chmod 600; back it up);
 //	                      default /etc/securebrand-youtube/privacy_key
 //	YT_PROXIES_FILE       the worker's proxies, one per line (chmod 600); default /etc/securebrand-youtube/proxies.txt
@@ -34,8 +36,11 @@ import (
 const (
 	EnvDatabaseURLFile     = "YT_DATABASE_URL_FILE"
 	DefaultDatabaseURLFile = "/etc/securebrand-youtube/database_url"
-	EnvPrivacyKeyFile      = "YT_PRIVACY_KEY_FILE"
-	DefaultPrivacyKeyFile  = "/etc/securebrand-youtube/privacy_key"
+	// The platform's credentials, one file per value (Kubernetes secret
+	// platform-credentials). Set, it replaces the URL file.
+	EnvPostgresDir        = "YT_POSTGRES_DIR"
+	EnvPrivacyKeyFile     = "YT_PRIVACY_KEY_FILE"
+	DefaultPrivacyKeyFile = "/etc/securebrand-youtube/privacy_key"
 	// Object storage for media and the archive (media.Config). No file:
 	// both are off.
 	EnvStorageFile = "YT_STORAGE_FILE"
@@ -80,15 +85,16 @@ func main() {
 	switch cmd {
 	case "migrate":
 		fs.Parse(args)
-		pool := mustDB(ctx, log)
+		pool := mustDB(ctx, log, db.RoleOwner)
 		defer pool.Close()
 		var applied []string
 		applied, err = db.Migrate(ctx, pool)
 		if err == nil {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
+			err = grantPlatformRoles(ctx, pool, log)
 		}
 	case "channels", "keywords", "health", "jobs", "report", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
-		pool := mustDB(ctx, log)
+		pool := mustDB(ctx, log, roleFor(cmd))
 		defer pool.Close()
 		switch cmd {
 		case "channels":
@@ -143,18 +149,58 @@ func pathFromEnv(env, def string) string {
 	return def
 }
 
-func mustDB(ctx context.Context, log *slog.Logger) *pgxpool.Pool {
-	url, err := secrets.ReadFile(pathFromEnv(EnvDatabaseURLFile, DefaultDatabaseURLFile))
+func mustDB(ctx context.Context, log *slog.Logger, role db.Role) *pgxpool.Pool {
+	url, err := databaseURL(role)
 	if err != nil {
-		log.Error("database URL", "err", err)
+		log.Error("database settings", "err", err)
 		os.Exit(2)
 	}
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	pool, err := db.Open(cctx, url, "")
 	if err != nil {
-		log.Error("database", "err", err)
+		log.Error("database", "err", err, "role", string(role))
 		os.Exit(2)
 	}
 	return pool
+}
+
+// databaseURL is the platform's credentials for role when YT_POSTGRES_DIR
+// is set, else the one URL file (Docker Compose: one role for everything).
+func databaseURL(role db.Role) (string, error) {
+	if dir := strings.TrimSpace(os.Getenv(EnvPostgresDir)); dir != "" {
+		return db.PlatformDSN(dir, role)
+	}
+	return secrets.ReadFile(pathFromEnv(EnvDatabaseURLFile, DefaultDatabaseURLFile))
+}
+
+// roleFor is the least role a command needs (REQ-010 fix 17). The
+// scheduler and the archive own the tables because they create, detach and
+// drop monthly partitions; listings and reports only read.
+func roleFor(cmd string) db.Role {
+	switch cmd {
+	case "migrate", "scheduler", "archive":
+		return db.RoleOwner
+	case "report", "health", "erasures", "export":
+		return db.RoleReadOnly
+	}
+	return db.RoleApp
+}
+
+// grantPlatformRoles gives the app and read-only roles their access after
+// the migrations, when the platform's credentials are used.
+func grantPlatformRoles(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {
+	dir := strings.TrimSpace(os.Getenv(EnvPostgresDir))
+	if dir == "" {
+		return nil
+	}
+	app, ro, err := db.PlatformRoles(dir)
+	if err != nil {
+		return err
+	}
+	if err := db.Grant(ctx, pool, app, ro); err != nil {
+		return err
+	}
+	log.Info("roles granted", "app", app, "read_only", ro)
+	return nil
 }

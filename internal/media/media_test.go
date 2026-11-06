@@ -201,4 +201,17 @@ func TestLoadConfig(t *testing.T) {
 		"access_key_file": "`+ak+`", "secret_key_file": "`+sk+`"}`)); err == nil {
 		t.Error("a plain-http endpoint would send the keys' signatures and data unencrypted")
 	}
+	// The platform's keys as files (REQ-010 fix 14): endpoint (a bare
+	// host gets https://), region and bucket; a file wins over a value.
+	ep, rg, bk := write("S3_ENDPOINT", "objects.fake.internal\n"), write("S3_REGION", "r9\n"), write("S3_BUCKET_MEDIA", "fake-media\n")
+	s, err = media.Load(write("platform.json", `{"type": "s3", "endpoint_file": "`+ep+`", "region_file": "`+rg+`", "bucket_file": "`+bk+`",
+		"bucket": "ignored", "prefix": "yts/", "access_key_file": "`+ak+`", "secret_key_file": "`+sk+`"}`))
+	s3, ok := s.(*media.S3Store)
+	if err != nil || !ok || s3.Endpoint != "https://objects.fake.internal" || s3.Region != "r9" || s3.Bucket != "fake-media" || s3.Prefix != "yts/" {
+		t.Errorf("from files: %+v %v", s, err)
+	}
+	if _, err := media.Load(write("missing-file.json", `{"type": "s3", "endpoint_file": "`+filepath.Join(dir, "nope")+`", "region": "r1",
+		"bucket": "b", "access_key_file": "`+ak+`", "secret_key_file": "`+sk+`"}`)); err == nil {
+		t.Error("a missing endpoint file must be an error")
+	}
 }

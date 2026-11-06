@@ -37,7 +37,8 @@ const (
 	pgPort       = "POSTGRES_PORT"
 	pgDatabase   = "POSTGRES_DATABASE"
 	pgSSLMode    = "POSTGRES_SSLMODE"
-	pgSSLRoot    = "POSTGRES_SSLROOTCERT" // optional: the server's CA, for verify-full
+	pgCACert     = "POSTGRES_CA_CERT"     // the server's CA (PEM), as the platform gives it
+	pgSSLRoot    = "POSTGRES_SSLROOTCERT" // the same, under libpq's name (either works)
 	pgUser       = "POSTGRES_USER"
 	pgPassword   = "POSTGRES_PASSWORD"
 	pgAppUser    = "POSTGRES_APP_USER"
@@ -49,7 +50,10 @@ const (
 // PlatformDSN builds a connection string for role from the platform's
 // credential files in dir (the secret mounted as files). The read-only role
 // falls back to the app role when the secret has none. Connections without
-// TLS are refused unless the host is this machine.
+// TLS are refused unless the host is this machine. With the server's CA
+// (POSTGRES_CA_CERT), the server is verified: its certificate against the
+// CA and its name against the host (verify-full, even when the secret says
+// require).
 func PlatformDSN(dir string, role Role) (string, error) {
 	read := func(name string, required bool) (string, error) {
 		p := filepath.Join(dir, name)
@@ -80,16 +84,18 @@ func PlatformDSN(dir string, role Role) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rootCert := filepath.Join(dir, pgSSLRoot)
-	hasRoot := false
-	if _, err := os.Stat(rootCert); err == nil {
-		hasRoot = true
+	rootCert, hasRoot := "", false
+	for _, name := range []string{pgCACert, pgSSLRoot} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			rootCert, hasRoot = filepath.Join(dir, name), true
+			break
+		}
 	}
 	if sslMode == "" {
 		sslMode = "require"
-		if hasRoot {
-			sslMode = "verify-full"
-		}
+	}
+	if hasRoot && sslMode == "require" {
+		sslMode = "verify-full"
 	}
 	switch sslMode {
 	case "require", "verify-ca", "verify-full":

@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:20 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:25 (Iraq time)**.
 
 ## Where it stands
 
@@ -29,8 +29,8 @@ yts's side is ready on `main` at `edab872` (6 November):
 | Secrets it mounts | `platform-credentials` (`POSTGRES_*`), `proxies` (`proxies.yaml`), `yts` (`privacy_key`, made by the owner from the README) |
 | Pilot settings | One worker, 2 s per proxy IP, 10 jobs at once, a 7-day backfill; the cost report with `ytcollect report` |
 
-**Still needed before it starts:** the cluster and namespace; the storage values (endpoint, region, bucket names, credential keys);
-the proxies secret; the owner's `yts` secret; optionally the network ranges and the Prometheus selector labels. The owner starts and
+**Still needed before it starts:** the cluster and namespace; the proxies secret; the owner's `yts` secret; optionally the network
+ranges and the Prometheus selector labels. The owner starts and
 stops the pilot; I give the commands, one per step, and write `docs/master/yts-pilot-report.md`.
 
 ## What runs where
@@ -58,18 +58,15 @@ stops the pilot; I give the commands, one per step, and write `docs/master/yts-p
 - proxies arrive in the secret `proxies`, key `proxies.yaml`, one line per proxy with `country=`;
 - raw responses go under `yts/keep/` and `yts/30d/` in the raw bucket. The platform expires `yts/30d/`; yts never deletes.
 
-**Questions for the master (fix 14, 6 November):** the values `values-production.yaml` still needs.
-- Object storage: the endpoint, the region, the media and raw bucket names, and the keys of the access and secret key in
-  `platform-credentials` (the chart assumes `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`). Storage stays off until then.
-- The address ranges of the database and the proxy exits, to narrow the network policy (open ranges until then).
-- The Prometheus Operator's selector labels for the ServiceMonitor and PrometheusRule, if any.
-- The namespace (the chart's docs use `yts`) and who creates yts's own secret `yts` (the privacy key): the owner, by the chart's
-  README.
+**Answered by the master (6 November, fixes 14 and 17):**
+- `platform-credentials` carries `POSTGRES_CA_CERT` (the PEM): yts now verifies the server (`verify-full`).
+- `POSTGRES_USER` owns the `yts` database and its `public` schema; `migrate` grants `yts_app` and `yts_ro`.
+- Object storage comes from the same secret (`S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET_RAW`,
+  `S3_BUCKET_MEDIA`): the chart now reads them, and storage is on in the production values.
+- The contract is at v1.2.0 (additions and checks only). The master wants, when REQ-010 is done: the commit, the image details,
+  the chart path and values file, the Helm image keys, and the outbox topics with their retention.
 
-**Questions for the master (fix 17, 6 November):**
-- Does `platform-credentials` carry the database server's CA? Under which key? yts reads `POSTGRES_SSLROOTCERT`; with it, yts
-  verifies the server (`verify-full`), without it, it still encrypts (`require`).
-- Does `POSTGRES_USER` own the `yts` database's `public` schema? `migrate` creates the tables as that role.
+**Still open with the platform:** the network ranges of the database and the proxy exits, and the Prometheus selector labels.
 
 **Changes to report (additions only):**
 - Fix 16: `ytcollect version`, the metric `yt_build_info`, OCI labels on the image, and a release workflow that publishes

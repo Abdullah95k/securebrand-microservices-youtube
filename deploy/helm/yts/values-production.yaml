@@ -4,30 +4,24 @@
 #     -f deploy/helm/yts/values-production.yaml \
 #     --set image.repository=REGISTRY/yts --set image.digest=sha256:…
 #
-# The values marked "confirm" wait for the master's answers (status.md).
+# The values marked "confirm" still wait for the platform (status.md).
 
 database:
   platformCredentials: true
 
-# Object storage: on once the master confirms the endpoint, region, bucket
-# names and credential keys (status.md). The chart refuses to render a store
-# that is on with a value missing.
+# Object storage: the platform's buckets, endpoint, region and keys, all
+# from platform-credentials (the master, 6 November). Raw responses under
+# yts/keep/ and yts/30d/; images under yts/ in the media bucket.
 storage:
   media:
-    enabled: false
-    endpoint: ""
-    region: ""
-    bucket: ""                                  # the platform's S3_BUCKET_MEDIA
+    enabled: true
+    fromPlatformCredentials: true
+    bucketKey: S3_BUCKET_MEDIA
     prefix: "yts/"
-    accessKeyFile: /etc/platform-credentials/S3_ACCESS_KEY_ID
-    secretKeyFile: /etc/platform-credentials/S3_SECRET_ACCESS_KEY
   raw:
-    enabled: false
-    endpoint: ""
-    region: ""
-    bucket: ""                                  # the platform's S3_BUCKET_RAW
-    accessKeyFile: /etc/platform-credentials/S3_ACCESS_KEY_ID
-    secretKeyFile: /etc/platform-credentials/S3_SECRET_ACCESS_KEY
+    enabled: true
+    fromPlatformCredentials: true
+    bucketKey: S3_BUCKET_RAW
 
 worker:
   replicas: 1

@@ -8,16 +8,23 @@ metadata:
   labels:
     {{- include "yts.labels" . | nindent 4 }}
 data:
-  {{- with .Values.storage.media }}
-  {{- if .enabled }}
-  storage.json: |
-    {{- dict "type" "s3" "endpoint" .endpoint "region" .region "bucket" .bucket "prefix" .prefix "virtual_host" .virtualHost "access_key_file" .accessKeyFile "secret_key_file" .secretKeyFile | toJson | nindent 4 }}
+  {{- range $file, $s := dict "storage.json" .Values.storage.media "raw_storage.json" .Values.storage.raw }}
+  {{- if $s.enabled }}
+  {{- $c := dict "type" "s3" "virtual_host" $s.virtualHost "access_key_file" $s.accessKeyFile "secret_key_file" $s.secretKeyFile }}
+  {{- if $s.prefix }}
+  {{- $_ := set $c "prefix" $s.prefix }}
   {{- end }}
+  {{- if $s.fromPlatformCredentials }}
+  {{- $_ := set $c "endpoint_file" "/etc/platform-credentials/S3_ENDPOINT" }}
+  {{- $_ := set $c "region_file" "/etc/platform-credentials/S3_REGION" }}
+  {{- $_ := set $c "bucket_file" (printf "/etc/platform-credentials/%s" $s.bucketKey) }}
+  {{- else }}
+  {{- $_ := set $c "endpoint" $s.endpoint }}
+  {{- $_ := set $c "region" $s.region }}
+  {{- $_ := set $c "bucket" $s.bucket }}
   {{- end }}
-  {{- with .Values.storage.raw }}
-  {{- if .enabled }}
-  raw_storage.json: |
-    {{- dict "type" "s3" "endpoint" .endpoint "region" .region "bucket" .bucket "virtual_host" .virtualHost "access_key_file" .accessKeyFile "secret_key_file" .secretKeyFile | toJson | nindent 4 }}
+  {{ $file }}: |
+    {{- $c | toJson | nindent 4 }}
   {{- end }}
   {{- end }}
 {{- end }}

@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:25 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:32 (Iraq time)**.
 
 ## Where it stands
 
@@ -29,9 +29,8 @@ yts's side is ready on `main` at `edab872` (6 November):
 | Secrets it mounts | `platform-credentials` (`POSTGRES_*`), `proxies` (`proxies.yaml`), `yts` (`privacy_key`, made by the owner from the README) |
 | Pilot settings | One worker, 2 s per proxy IP, 10 jobs at once, a 7-day backfill; the cost report with `ytcollect report` |
 
-**Still needed before it starts:** the cluster and namespace; the proxies secret; the owner's `yts` secret; optionally the network
-ranges and the Prometheus selector labels. The owner starts and
-stops the pilot; I give the commands, one per step, and write `docs/master/yts-pilot-report.md`.
+**Still needed before it starts:** the cluster and namespace; the proxies (bought, and in the `proxies` secret); the owner's `yts`
+secret. The owner starts and stops the pilot; I give the commands, one per step, and write `docs/master/yts-pilot-report.md`.
 
 ## What runs where
 
@@ -66,7 +65,11 @@ stops the pilot; I give the commands, one per step, and write `docs/master/yts-p
 - The contract is at v1.2.0 (additions and checks only). The master wants, when REQ-010 is done: the commit, the image details,
   the chart path and values file, the Helm image keys, and the outbox topics with their retention.
 
-**Still open with the platform:** the network ranges of the database and the proxy exits, and the Prometheus selector labels.
+- Network: the managed services sit in the production VPC (`10.20.0.0/16`) on the ports in their secret; the schema registry in
+  namespace `platform`; HTTPS anywhere; the proxy exits once bought. The chart's network policy now follows this.
+- Prometheus picks up every ServiceMonitor and PrometheusRule; no labels needed. Alerts go to the owner's Telegram.
+
+**Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
 - Fix 16: `ytcollect version`, the metric `yt_build_info`, OCI labels on the image, and a release workflow that publishes

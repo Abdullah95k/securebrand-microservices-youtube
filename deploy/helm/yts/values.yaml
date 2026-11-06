@@ -185,11 +185,23 @@ networkPolicy:
     # push hub and webhook receivers. Plain Kubernetes policies can't name
     # hosts, so this is by address.
     httpsCIDRs: ["0.0.0.0/0"]
-    database:
+    # The managed PostgreSQL, Kafka and Valkey. At install the chart reads
+    # their ports from the platform's credentials (POSTGRES_PORT,
+    # VALKEY_PORT, the ports in KAFKA_BROKERS); these ports are used only
+    # when the secret can't be read, and none means every port.
+    managedServices:
       cidrs: ["0.0.0.0/0"]
-      port: 5432
-    # The proxy exits. Narrow these to the provider's addresses and ports
-    # when known; no ports means every port.
+      ports: []
+    # The platform's schema registry (the outbox, fix 12).
+    schemaRegistry:
+      enabled: false
+      namespace: platform
+      podLabels:
+        app: schema-registry
+      port: 8080
+    # The proxy exits. At install the chart reads the ports from the
+    # proxies secret; these ports are used only when it can't be read, and
+    # none means every port.
     proxies:
       cidrs: ["0.0.0.0/0"]
       ports: []

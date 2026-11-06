@@ -83,6 +83,14 @@ nps = by_kind.get("NetworkPolicy", [])
 check(len(nps) == 1, "no NetworkPolicy")
 for np in nps:
     check(set(np["spec"]["policyTypes"]) == {"Ingress", "Egress"}, "the NetworkPolicy must limit both directions")
+    egress = np["spec"].get("egress", [])
+    dns = [r for r in egress if any(p.get("port") == 53 for p in r.get("ports", []))]
+    check(dns, "the NetworkPolicy must allow DNS")
+    https = [r for r in egress if [p.get("port") for p in r.get("ports", [])] == [443]]
+    check(https, "the NetworkPolicy must allow HTTPS")
+    for r in egress:
+        for p in r.get("ports", []):
+            check(isinstance(p.get("port"), int) and 0 < p["port"] < 65536, f"egress port {p.get('port')!r} is not a port number")
 
 if problems:
     print("Rendered chart problems:")

@@ -13,7 +13,7 @@ The Helm chart for the YouTube collector (REQ-010 fix 14). Docker Compose on one
 | `yts-migrate` Job | The migrations, a hook before every install and upgrade, then the grants for the app and read-only roles | — |
 | ServiceMonitor | Scrapes `/metrics` on the worker (`:9101`) and the scheduler (`:9102`) | — |
 | PrometheusRule | The 19 alerts of `deploy/prometheus/alerts.yml`, each with a runbook link | — |
-| NetworkPolicy | In: the monitoring namespace on the ops ports. Out: DNS, HTTPS, the database, the proxy exits | — |
+| NetworkPolicy | In: the monitoring namespace on the ops ports. Out: DNS; HTTPS; the managed PostgreSQL, Kafka and Valkey in the VPC (`10.20.0.0/16`) on the ports read from `platform-credentials` at install; the schema registry (namespace `platform`, `app: schema-registry`, port 8080); the proxy exits on the ports read from `proxies.yaml` at install | — |
 
 Every pod runs as user and group 65532, never root, with a read-only root filesystem, no capabilities and no service-account
 token. Probes: `/healthz` (alive) and `/readyz` (the database answers; for the worker, at least one proxy isn't quarantined).
@@ -108,7 +108,7 @@ kubectl -n yts exec deploy/yts-scheduler -- ytcollect jobs dead
 | `worker.commentCap`, `worker.player` | `20000`, `true` | Comments per first read; the player endpoint |
 | `storage.media`, `storage.raw` | on, `fromPlatformCredentials` | The endpoint, region, buckets and keys from `platform-credentials`; media under `yts/` |
 | `database.platformCredentials` | `true` | The platform's `POSTGRES_*` files, each command with its least role, over TLS |
-| `networkPolicy.egress` | open ranges until confirmed | The database's and the proxies' address ranges and ports |
+| `networkPolicy.egress` | the master's ranges | The VPC for the managed services, the schema registry, and the proxy exits (any address until they are bought; their ports from `proxies.yaml`) |
 | `*.resources`, `*.goMemLimit` | as in `values.yaml` | Requests and limits; `GOMEMLIMIT` a little under the limit |
 
 The chart refuses to render with more than one worker, a store switched on with a value missing, push switched on without its
@@ -117,7 +117,9 @@ address, or no image.
 The database connection verifies the server: with `POSTGRES_CA_CERT`, the platform's `require` becomes `verify-full` (the
 certificate against the CA, and the name against `POSTGRES_HOST`).
 
+The platform's Prometheus picks up every ServiceMonitor and PrometheusRule, so no selector labels are needed; alerts go to the
+owner's Telegram.
+
 ## Waiting for the platform
 
-- The address ranges of the database and the proxy exits, to narrow the network policy.
-- The Prometheus Operator's selector labels, if it needs any (`serviceMonitor.labels`, `prometheusRule.labels`).
+- The proxy exits' addresses, once they are bought, to narrow the proxy rule from any address to theirs.

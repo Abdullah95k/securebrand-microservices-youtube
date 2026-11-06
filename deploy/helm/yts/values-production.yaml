@@ -4,7 +4,6 @@
 #     -f deploy/helm/yts/values-production.yaml \
 #     --set image.repository=REGISTRY/yts --set image.digest=sha256:…
 #
-# The values marked "confirm" still wait for the platform (status.md).
 
 database:
   platformCredentials: true
@@ -39,14 +38,18 @@ worker:
 websub:
   enabled: false
 
+# The master's ranges (6 November): the managed services in the production
+# VPC on the ports their secret gives; the schema registry in namespace
+# platform; HTTPS anywhere; the proxy exits (not bought yet) on the ports of
+# proxies.yaml, to any address until their addresses exist.
 networkPolicy:
   enabled: true
   monitoringNamespace: monitoring
   egress:
     httpsCIDRs: ["0.0.0.0/0"]
-    database:
-      cidrs: ["0.0.0.0/0"]                      # confirm: the database's address range
-      port: 5432
+    managedServices:
+      cidrs: ["10.20.0.0/16"]
+    schemaRegistry:
+      enabled: true
     proxies:
-      cidrs: ["0.0.0.0/0"]                      # confirm: the proxy provider's ranges
-      ports: []
+      cidrs: ["0.0.0.0/0"]

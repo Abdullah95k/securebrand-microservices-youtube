@@ -27,6 +27,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/metrics"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/monitor"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ops"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
@@ -79,7 +80,8 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	workers := fs.Int("workers", 10, "jobs at the same time")
 	noPlayer := fs.Bool("no-player", false, "skip the player endpoint (tags, category)")
 	commentCap := fs.Int("comment-cap", comments.DefaultCap, "most comments the first read of a video takes; capped videos are flagged partial")
-	metricsAddr := fs.String("metrics-addr", ":9101", "where Prometheus reads this worker's metrics (empty: off)")
+	metricsAddr := fs.String("metrics-addr", ":9101", "the ops port: /metrics, /healthz and /readyz (empty: off)")
+	drain := fs.Duration("drain", 20*time.Second, "on shutdown, how long running jobs may finish before they are interrupted and handed back (keep it below the pod's termination grace period)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -202,7 +204,17 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 			}
 		}
 	}()
-	serveMetrics(ctx, *metricsAddr, reg, log)
+	health := &ops.Health{}
+	health.Add("database", pool.Ping)
+	health.Add("proxies", func(context.Context) error {
+		for _, p := range pp.Stats().Proxies {
+			if !p.Quarantined {
+				return nil
+			}
+		}
+		return errors.New("every proxy is quarantined")
+	})
+	serveOps(ctx, *metricsAddr, reg, health, log)
 	// Every minute: fill rates and proxy health; every 15 minutes: canaries;
 	// daily: the website client version.
 	go func() {
@@ -239,7 +251,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 		}
 	}()
 	w := &worker.Worker{Pool: pool, Owner: owner, Handlers: handlers, OnResult: monitor.Jobs(reg),
-		Concurrency: *workers, Lease: 15 * time.Minute, Log: log}
+		Concurrency: *workers, Lease: 15 * time.Minute, Drain: *drain, Log: log}
 	log.Info("worker running", "proxies", len(proxies), "interval", interval.String(), "workers", *workers, "push", wsCfg.Enabled())
 	return w.Run(ctx)
 }
@@ -294,9 +306,14 @@ func websubCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 			}
 		}
 	}()
-	srv := &http.Server{Addr: *addr, Handler: rc, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second}
+	health := &ops.Health{}
+	health.Add("database", pool.Ping)
+	mux := ops.Mux(health, nil)
+	mux.Handle("/", rc)
+	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second}
 	go func() {
 		<-ctx.Done()
+		health.Drain()
 		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
@@ -313,21 +330,14 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
-// serveMetrics serves /metrics on addr until ctx ends ("" = off).
-func serveMetrics(ctx context.Context, addr string, reg *metrics.Registry, log *slog.Logger) {
-	if addr == "" {
-		return
-	}
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", reg.Handler())
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+// serveOps serves /metrics, /healthz and /readyz on addr ("" = off), for
+// as long as the process runs: it outlives ctx, the shutdown signal, so
+// /healthz keeps answering while the process drains. From the signal on,
+// /readyz answers "draining".
+func serveOps(ctx context.Context, addr string, reg *metrics.Registry, health *ops.Health, log *slog.Logger) {
 	go func() {
 		<-ctx.Done()
-		_ = srv.Close()
+		health.Drain()
 	}()
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Warn("metrics endpoint stopped", "addr", addr, "err", err)
-		}
-	}()
+	ops.Serve(context.WithoutCancel(ctx), addr, ops.Mux(health, reg.Handler()), log)
 }

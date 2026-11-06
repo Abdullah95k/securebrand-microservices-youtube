@@ -188,6 +188,16 @@ func Release(ctx context.Context, q db.Querier, j Job) error {
 	return err
 }
 
+// ReleaseOwner hands back every job the given worker still holds, the way
+// Release does: a stopping worker calls it last, so nothing it leased waits
+// for its lease to expire. It returns how many jobs it handed back.
+func ReleaseOwner(ctx context.Context, q db.Querier, owner string) (int64, error) {
+	tag, err := q.Exec(ctx, `UPDATE schedule SET lease_until = NULL, lease_owner = NULL,
+		attempts = GREATEST(attempts - 1, 0), due_at = LEAST(due_at, COALESCE(rearm_at, due_at)), rearm_at = NULL
+		WHERE lease_owner = $1 AND lease_until IS NOT NULL`, owner)
+	return tag.RowsAffected(), err
+}
+
 // Backoff is the retry delay after the given number of failed attempts.
 func Backoff(attempts int) time.Duration {
 	if attempts < 1 {

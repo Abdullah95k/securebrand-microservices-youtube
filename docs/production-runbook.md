@@ -268,6 +268,19 @@ What to look at (plan §8.13):
 - `yt_fill_rate` against `yt_fill_rate_baseline`: a big drop means YouTube changed a page.
 - `yt_erasure_oldest_pending_seconds` and `yt_suppression_violations`: must stay low and 0.
 
+**Health endpoints.** The worker (`:9101`) and the scheduler (`:9102`) answer on their ops port. The push receiver answers on its own
+port (`:8080`).
+
+| Endpoint | Answers |
+|---|---|
+| `/healthz` | 200 while the process runs, also while it shuts down |
+| `/readyz` | 200 when the database answers (and, for the worker, at least one proxy isn't quarantined). Otherwise 503, with the names of the failed checks. 503 `draining` once a shutdown has started |
+| `/metrics` | Prometheus (worker and scheduler) |
+
+**Stopping.** On a stop, the worker takes no new jobs, gives running jobs 20 seconds (`-drain`) to finish, then interrupts the rest
+and hands them back. They run again at once on another worker, and the attempt doesn't count. The Compose file gives the worker
+30 seconds before Docker kills it. On Kubernetes, keep the pod's termination grace period above `-drain` plus about 10 seconds.
+
 To send alerts to your system, add a receiver in [deploy/alertmanager/alertmanager.yml](../deploy/alertmanager/alertmanager.yml)
 (it has an example), then restart Alertmanager:
 

@@ -22,6 +22,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/erasure"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/metrics"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/monitor"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ops"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
@@ -200,12 +201,14 @@ func switchCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer, args []st
 // (weekly).
 func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("scheduler", flag.ContinueOnError)
-	metricsAddr := fs.String("metrics-addr", ":9102", "where Prometheus reads the system metrics (empty: off)")
+	metricsAddr := fs.String("metrics-addr", ":9102", "the ops port: /metrics, /healthz and /readyz (empty: off)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	reg := metrics.New()
-	serveMetrics(ctx, *metricsAddr, reg, log)
+	health := &ops.Health{}
+	health.Add("database", pool.Ping)
+	serveOps(ctx, *metricsAddr, reg, health, log)
 	// Outgoing webhooks: sent from here, every 10 seconds.
 	wh, err := dispatcher(pool, log)
 	if err != nil {

@@ -31,8 +31,13 @@ type Worker struct {
 	Concurrency int
 	Lease       time.Duration // how long a job may run before others may take it
 	Idle        time.Duration // wait when nothing is due
-	Log         *slog.Logger
-	OnResult    func(kind string, err error, took time.Duration) // metrics; nil = none
+	// Drain is how long running jobs may keep working after Run's context
+	// ends (the shutdown signal) before they are interrupted and handed
+	// back. Zero interrupts them at once. Keep it below the pod's
+	// termination grace period.
+	Drain    time.Duration
+	Log      *slog.Logger
+	OnResult func(kind string, err error, took time.Duration) // metrics; nil = none
 
 	switches Switches
 	swAt     time.Time
@@ -85,7 +90,14 @@ func (w *Worker) kinds(ctx context.Context) []string {
 	return ks
 }
 
-// Run works until ctx ends, then waits for running jobs to finish.
+// interruptWait is how long interrupted jobs get to return and report
+// before Run hands back whatever is still leased and returns anyway.
+const interruptWait = 5 * time.Second
+
+// Run works until ctx ends (standard B4). Then it leases nothing more, lets
+// running jobs finish for up to Drain, interrupts the rest (each is handed
+// back unrun, so another worker takes it at once), and finally hands back
+// anything this worker still holds.
 func (w *Worker) Run(ctx context.Context) error {
 	if w.Concurrency <= 0 {
 		w.Concurrency = 4
@@ -99,9 +111,13 @@ func (w *Worker) Run(ctx context.Context) error {
 	if w.Log == nil {
 		w.Log = slog.Default()
 	}
+	// Jobs run on their own context, which outlives the shutdown signal by
+	// up to Drain.
+	work, interrupt := context.WithCancel(context.WithoutCancel(ctx))
+	defer interrupt()
 	slots := make(chan struct{}, w.Concurrency)
 	var wg sync.WaitGroup
-	defer wg.Wait()
+	defer w.stop(&wg, interrupt)
 	for ctx.Err() == nil {
 		free := w.Concurrency - len(slots)
 		kinds := w.kinds(ctx)
@@ -125,7 +141,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			wg.Add(1)
 			go func(j queue.Job) {
 				defer func() { <-slots; wg.Done() }()
-				w.run(ctx, j)
+				w.run(work, j)
 			}(j)
 		}
 		// Wait for a free slot before leasing more.
@@ -136,6 +152,32 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// stop is the end of Run: drain, interrupt, hand back.
+func (w *Worker) stop(wg *sync.WaitGroup, interrupt context.CancelFunc) {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	if w.Drain > 0 {
+		select {
+		case <-done:
+		case <-time.After(w.Drain):
+			w.Log.Info("drain time over: interrupting running jobs", "drain", w.Drain.String())
+		}
+	}
+	interrupt()
+	select {
+	case <-done:
+	case <-time.After(interruptWait):
+		w.Log.Warn("jobs still running after the interrupt; handing back their leases")
+	}
+	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if n, err := queue.ReleaseOwner(rctx, w.Pool, w.Owner); err != nil {
+		w.Log.Warn("handing back leases failed; they expire on their own", "err", err)
+	} else if n > 0 {
+		w.Log.Info("leases handed back", "jobs", n)
+	}
 }
 
 func (w *Worker) run(ctx context.Context, j queue.Job) {
@@ -167,8 +209,10 @@ func (w *Worker) run(ctx context.Context, j queue.Job) {
 	rctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err != nil {
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			// Shutting down: hand the job back so it runs again at once.
+		if ctx.Err() != nil {
+			// Interrupted at shutdown, whatever the handler made of it:
+			// hand the job back unrun, so it runs again at once and the
+			// attempt doesn't count.
 			_ = queue.Release(rctx, w.Pool, j)
 			return
 		}

@@ -84,3 +84,114 @@ func TestWorkerRunsRetriesAndHonoursKillSwitches(t *testing.T) {
 		t.Errorf("switches %v", sw)
 	}
 }
+
+// A shutdown lets running jobs finish within the drain time (standard B4).
+func TestWorkerDrainLetsRunningJobsFinish(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	_ = queue.Put(ctx, pool, "video", "fakeSlow", "", queue.P2, time.Now().Add(-time.Minute))
+	started := make(chan struct{})
+	w := &worker.Worker{
+		Pool: pool, Owner: "test-drain", Concurrency: 1, Idle: 20 * time.Millisecond, Lease: time.Minute, Drain: 5 * time.Second,
+		Handlers: map[string]worker.Handler{
+			"video": func(ctx context.Context, j queue.Job) (time.Time, error) {
+				close(started)
+				select {
+				case <-time.After(300 * time.Millisecond): // finishes inside the drain time
+					return time.Now().Add(time.Hour), nil
+				case <-ctx.Done():
+					return time.Time{}, ctx.Err()
+				}
+			},
+		},
+	}
+	wctx, cancel := context.WithCancel(ctx)
+	errc := make(chan error, 1)
+	go func() { errc <- w.Run(wctx) }()
+	<-started
+	cancel() // the shutdown signal, while the job runs
+	if err := <-errc; err != nil {
+		t.Fatal(err)
+	}
+	var due time.Time
+	var leased, ok bool
+	var attempts int
+	if err := pool.QueryRow(ctx, `SELECT due_at, lease_until IS NOT NULL, last_ok IS NOT NULL, attempts FROM schedule
+		WHERE kind = 'video' AND entity_id = 'fakeSlow'`).Scan(&due, &leased, &ok, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if !ok || leased || attempts != 0 || time.Until(due) < 30*time.Minute {
+		t.Errorf("finished=%v leased=%v attempts=%d due in %v; the job should have finished and been rescheduled",
+			ok, leased, attempts, time.Until(due).Round(time.Minute))
+	}
+}
+
+// A job still running when the drain time is over is interrupted and handed
+// back unrun: due at once, the attempt not counted, no error recorded.
+func TestWorkerDrainInterruptsAndHandsBack(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	_ = queue.Put(ctx, pool, "video", "fakeStuck", "", queue.P2, time.Now().Add(-time.Minute))
+	started := make(chan struct{})
+	w := &worker.Worker{
+		Pool: pool, Owner: "test-interrupt", Concurrency: 1, Idle: 20 * time.Millisecond, Lease: time.Minute,
+		Drain: 200 * time.Millisecond,
+		Handlers: map[string]worker.Handler{
+			"video": func(ctx context.Context, j queue.Job) (time.Time, error) {
+				close(started)
+				<-ctx.Done()
+				// Handlers often wrap the cancellation in their own error.
+				return time.Time{}, errors.New("browse: request aborted")
+			},
+		},
+	}
+	wctx, cancel := context.WithCancel(ctx)
+	errc := make(chan error, 1)
+	go func() { errc <- w.Run(wctx) }()
+	<-started
+	stopAt := time.Now()
+	cancel()
+	if err := <-errc; err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(stopAt); took < 200*time.Millisecond || took > 3*time.Second {
+		t.Errorf("Run returned %v after the signal; want just after the 200ms drain", took)
+	}
+	var due time.Time
+	var leased bool
+	var attempts int
+	var lastErr *string
+	if err := pool.QueryRow(ctx, `SELECT due_at, lease_until IS NOT NULL, attempts, last_error FROM schedule
+		WHERE kind = 'video' AND entity_id = 'fakeStuck'`).Scan(&due, &leased, &attempts, &lastErr); err != nil {
+		t.Fatal(err)
+	}
+	if leased || attempts != 0 || lastErr != nil || time.Until(due) > time.Second {
+		t.Errorf("leased=%v attempts=%d last_error=%v due in %v; want handed back, due now, no failure", leased, attempts,
+			lastErr, time.Until(due))
+	}
+}
+
+// ReleaseOwner hands back only the stopping worker's own leases.
+func TestReleaseOwner(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	past := time.Now().Add(-time.Minute)
+	_ = queue.Put(ctx, pool, "video", "fakeMine", "", queue.P2, past)
+	_ = queue.Put(ctx, pool, "comments", "fakeTheirs", "", queue.P2, past)
+	if _, err := queue.Lease(ctx, pool, "w-mine", []string{"video"}, 5, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Lease(ctx, pool, "w-theirs", []string{"comments"}, 5, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	n, err := queue.ReleaseOwner(ctx, pool, "w-mine")
+	if err != nil || n != 1 {
+		t.Fatalf("released %d, %v; want 1", n, err)
+	}
+	var mine, theirs bool
+	_ = pool.QueryRow(ctx, `SELECT lease_until IS NOT NULL FROM schedule WHERE entity_id = 'fakeMine'`).Scan(&mine)
+	_ = pool.QueryRow(ctx, `SELECT lease_until IS NOT NULL FROM schedule WHERE entity_id = 'fakeTheirs'`).Scan(&theirs)
+	if mine || !theirs {
+		t.Errorf("mine leased=%v, theirs leased=%v; want only mine handed back", mine, theirs)
+	}
+}

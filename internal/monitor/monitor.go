@@ -84,6 +84,10 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 		{"yt_keywords_low_precision", "Keywords flagged for low precision today.", `SELECT count(*) FROM keyword_stats
 			WHERE day = $1::date AND matches >= 20 AND confirmed::float / matches < 0.3`, []any{now.UTC().Format("2006-01-02")}, nil},
 		{"yt_db_size_bytes", "Database size.", `SELECT pg_database_size(current_database())`, nil, nil},
+		{"yt_outbox_unsent", "Outbox events not yet sent to Kafka, by kind (fix 12).",
+			`SELECT kind, count(*) FROM event_outbox WHERE published_at IS NULL GROUP BY 1`, nil, []string{"kind"}},
+		{"yt_outbox_oldest_unsent_seconds", "Age of the oldest outbox event not yet sent.",
+			`SELECT COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0) FROM event_outbox WHERE published_at IS NULL`, nil, nil},
 		{"yt_webhook_deliveries", "Webhook deliveries by endpoint and status (dead: gave up).",
 			`SELECT endpoint, status, count(*) FROM webhook_deliveries GROUP BY 1, 2`, nil, []string{"endpoint", "status"}},
 		{"yt_webhook_oldest_pending_seconds", "Age of the oldest event still waiting to be delivered, by endpoint.",

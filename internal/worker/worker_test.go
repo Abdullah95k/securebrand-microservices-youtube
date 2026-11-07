@@ -3,12 +3,14 @@ package worker_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db/dbtest"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/provenance"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
@@ -205,10 +207,15 @@ func TestWorkerRecordsUsage(t *testing.T) {
 	ch := "UCfakeUSAGEAAAAAAAAAAAAA"
 	_ = queue.Put(ctx, pool, queue.KindVideo, "fakevid0001", ch, queue.P2, past)
 	_ = queue.Put(ctx, pool, queue.KindVideo, "fakevid0002", ch, queue.P2, past)
+	var mu sync.Mutex
+	jobIDs := map[string]string{}
 	w := &worker.Worker{
 		Pool: pool, Owner: "test", Concurrency: 2, Idle: 20 * time.Millisecond, Lease: time.Minute,
 		Handlers: map[string]worker.Handler{
 			queue.KindVideo: func(ctx context.Context, j queue.Job) (time.Time, error) {
+				mu.Lock()
+				jobIDs[j.EntityID] = provenance.From(ctx).Take().JobID // the outbox's provenance (fix 12)
+				mu.Unlock()
 				usage.From(ctx).Request(1000)
 				usage.From(ctx).Request(500)
 				if j.EntityID == "fakevid0002" {
@@ -234,5 +241,12 @@ func TestWorkerRecordsUsage(t *testing.T) {
 	}
 	if err := pool.QueryRow(ctx, `SELECT sum(requests) FROM usage_channel_daily WHERE channel_id = $1`, ch).Scan(&reqs); err != nil || reqs != 4 {
 		t.Errorf("channel requests = %d (%v); want 4", reqs, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, v := range []string{"fakevid0001", "fakevid0002"} {
+		if !strings.HasPrefix(jobIDs[v], "video/"+v+"/") {
+			t.Errorf("job %s ran with provenance job ID %q", v, jobIDs[v])
+		}
 	}
 }

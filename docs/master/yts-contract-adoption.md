@@ -1,7 +1,8 @@
 # yts: adopting the unified contract (REQ-021, fix 12)
 
 Written by the yts session on 6 November 2026 (Iraq time), from `main` `9a0e248`. A plan: the outbox and relay (fix 12) and the
-`content.*` mapping (REQ-021) are built from it in small PRs, in the order of section 7.
+`content.*` mapping (REQ-021) are built from it in small PRs, in the order of section 7. **Updated 7 November:** the owner's two
+answers, and PR 1 (the outbox) built; section 4 describes it as built.
 
 **Contract version:** v1.2.0 (`github.com/abdullah95k/securebrand-contracts`). The owner approved v1.0.0 (D-016); v1.1.0 and v1.2.0 only
 add fields and checks, and the master agreed to v1.2.0 (6 November). Every message goes out with `sb-contract: 1.2.0`.
@@ -66,18 +67,49 @@ and alerted, and a test case is added. CI runs the checks on events built from t
 
 ## 4. The outbox and the relay
 
-- **Migration `0012`:** `event_outbox` (id, topic, key, message type, payload bytes, headers, created_at, published_at, failure) and
-  `version` columns on `channels`, `videos`, `posts` and `playlists` (`comments` has one). Additions only.
-- **Writes:** the writer, comment engine, discovery, media and the scheduler's coverage roll-up insert their outbox rows in the same
-  transaction as the data. One commit: an event exists exactly when its data does.
+- **Migration `0012` (built, PR 1):** two new tables, nothing else changed.
+  - `event_outbox`: id, kind, the entity's YouTube ID, the ID its Kafka key is built from (the post, for comments and counts),
+    when it was read, the payload, the provenance, created_at, attempts, published_at, failure.
+  - `outbox_state`: per entity, the hash of the last content sent, and the hash and time of the last counts sent.
+
+  **A change from the first draft:** no `version` columns. The contract sets the version to the time of the read in microseconds,
+  which needs no stored counter, so yts's tables are untouched.
+- **Writes (built, PR 1):** one commit, so an event exists exactly when its data does. These write their events in the same
+  transaction as the data:
+  - the writer: channels, videos (a new upload goes out at once from the listing), removals, community posts, playlists;
+  - the comment engine: comments, edits, deletions, commenters;
+  - enrichment: commenters' profiles.
+
+  Discovery and the coverage roll-ups follow in PR 6, media in PR 7.
+- **When an event is written (built):**
+  - a content event (channel, video, post, comment, playlist with its items, commenter with their profile) when what is stored
+    changed, counts and bookkeeping aside. The first read, an edit, a removal and a deletion are changes; a read that changes
+    nothing writes nothing.
+  - a counts event (metrics, channel snapshots) when a count changed (a comment's likes or replies too), and at least once a day
+    for every item still read: the contract's volume rule.
+- **Provenance (built):**
+  - each job carries a trail: the job ID (kind, entity, start time), the operations read, each answer's `raw_ref` (fix 8) and the
+    proxies' `country=` tags;
+  - each write takes what was read since the write before;
+  - with the collector's and parser's versions.
+
+  This is bookkeeping only: how yts reaches YouTube is unchanged.
 - **The relay** (`ytcollect relay`, its own Deployment in the chart): leases outbox rows in order, builds the `yt.*` message and its
   `content.*` mapping, checks them, and publishes both in **one Kafka transaction** with an idempotent producer (franz-go). Keys as in
   section 1, so a post's comments and counts stay in order. At-least-once; consumers drop repeats by `event_id` (a ULID).
 - **Credentials:** `KAFKA_BROKERS`, `KAFKA_USER`, `KAFKA_PASSWORD`, `KAFKA_SASL_MECHANISM` (SCRAM-SHA-256), `KAFKA_TLS` and
   `KAFKA_CA_CERT` from `platform-credentials`, as files. The schema registry at `SCHEMA_REGISTRY_URL`, read only.
-- **Metrics and alerts:** outbox depth and oldest unsent row, published per topic, failures by reason, conformance rejections.
-- **Sent rows:** kept 7 days, then deleted. They are transport copies; the data stays in Postgres, and Kafka's copy reaches ClickHouse.
-  **The owner's call** (decision 3 keeps processed data forever; this deletes only the copies made for sending).
+- **Metrics and alerts:** outbox depth by kind and the oldest unsent row (`yt_outbox_unsent`, `yt_outbox_oldest_unsent_seconds`,
+  built in PR 1). Published per topic, failures by reason, conformance rejections and the alerts come with the relay.
+- **Sent rows:** deleted 7 days after they were sent, hourly by the scheduler (**the owner, 7 November**). They are copies made for
+  sending; the data stays in Postgres, and Kafka's copy reaches ClickHouse. Unsent rows are never deleted.
+- **Until the relay runs:** the pilot runs without Kafka (the owner), so events wait in the outbox and go out when the relay arrives.
+  At 1,000 channels that is roughly 100,000 rows and 100 MB a day; the pilot's `report` shows the table's size. `outbox_state` adds
+  about 150 bytes per item ever stored, most of them comments.
+- **Data from before the outbox:** each item goes out at its next read. A one-off command could send everything stored before it, if
+  the platform wants that history in ClickHouse; I can propose it with the relay.
+- **Erasure (off, kept working):** erasing an item also deletes its outbox events and state, so an unsent copy is never published.
+  Copies already sent need the contract's erasure message, later.
 
 ## 5. The `yt.*` platform events
 
@@ -86,10 +118,8 @@ from it with `buf generate` and committed; CI checks that the committed code mat
 against the last release so the topics stay compatible (the master: they stay unregistered, read only by yts; if another service
 ever needs one, it moves into the contract).
 
-**Tooling question:** this session can't run code generators (`buf`, `protoc-gen-go`): its permissions block running downloaded tools.
-Options: the owner allows `buf generate` here; or CI generates the code and the session commits CI's output; or the `yt.*` messages
-are compiled at start-up from the embedded `.proto` files (`protocompile` and `dynamicpb`), which needs no generator but checks less
-at build time. I recommend the first.
+**Tooling:** the owner allowed `buf generate` in this session (7 November), so the Go code is generated here and committed, and CI
+checks it matches.
 
 ## 6. The master's answers (6 November)
 
@@ -106,7 +136,7 @@ at build time. I recommend the first.
 
 | # | PR | Effort |
 |---|---|---|
-| 1 | Migration `0012`, the outbox writer and the version columns; events written in the same transaction (no Kafka yet) | 3 days |
+| 1 | Migration `0012` and the outbox writer; events written in the same transaction (no Kafka yet). **Built** | 3 days |
 | 2 | The `content.*` mapping from outbox rows, with the conformance checks and tests from the fake YouTube | 5 days |
 | 3 | The `yt.*` protos and their mapping | 4 days |
 | 4 | The relay: franz-go transactions, leases, metrics, alerts; an end-to-end test with Redpanda in CI | 4 days |
@@ -114,5 +144,5 @@ at build time. I recommend the first.
 | 6 | Discovery candidates and the hourly coverage roll-ups | 2 days |
 | 7 | The media hand-off: media ready; a consumer of `content.media.processed.v1` (yts's own consumer group); deleting each file once acknowledged or at its deadline, with `content.media.deleted.v1`; metrics and an alert for files past their deadline | 3 days |
 
-About 4–5 weeks in all, matching the contract README's estimate for yts (4–5 weeks with the new fields of fixes 19–21). Section 4's
-row deletion and section 5's tooling are the two points that need an answer before PR 1 and PR 3.
+About 4–5 weeks in all, matching the contract README's estimate for yts (4–5 weeks with the new fields of fixes 19–21). The owner
+answered both open points on 7 November: sent rows go after 7 days, and `buf generate` may run here.

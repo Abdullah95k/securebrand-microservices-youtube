@@ -20,6 +20,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
@@ -94,6 +95,7 @@ func (e *Enricher) enrich(ctx context.Context, j queue.Job) (time.Time, error) {
 		vidsMin = &vids.Min
 	}
 	now := e.now()
+	ev := outbox.New(ctx, now)
 	err = pgx.BeginFunc(ctx, e.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO author_profiles (author_id, fetched_at, handle, display_name, description, country,
 				links, subscribers_min, videos_min, avatar_url, banner_url)
@@ -102,9 +104,12 @@ func (e *Enricher) enrich(ctx context.Context, j queue.Job) (time.Time, error) {
 			nz(ch.Channel.AvatarURL), nz(ch.Channel.BannerURL)); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE authors SET enriched_at = $2, handle = COALESCE($3, handle),
+		if _, err := tx.Exec(ctx, `UPDATE authors SET enriched_at = $2, handle = COALESCE($3, handle),
 			display_name = COALESCE($4, display_name), avatar_url = COALESCE($5, avatar_url) WHERE id = $1`,
-			id, now, nz(ch.Channel.Handle), nz(ch.Channel.Title), nz(ch.Channel.AvatarURL))
+			id, now, nz(ch.Channel.Handle), nz(ch.Channel.Title), nz(ch.Channel.AvatarURL)); err != nil {
+			return err
+		}
+		_, err := ev.Content(ctx, tx, outbox.Authors, id) // the commenter's profile (fix 12)
 		return err
 	})
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytparse"
 )
@@ -41,6 +42,7 @@ func (w *Writer) Post(ctx context.Context, channelID string, p ytparse.Post) (Po
 	}
 	likes, likesText := count(p.Likes)
 	comments, commentsText := count(p.Comments)
+	ev := outbox.New(ctx, now)
 	err := pgx.BeginFunc(ctx, w.Pool, func(tx pgx.Tx) error {
 		var oldText *string
 		err := tx.QueryRow(ctx, `SELECT text FROM posts WHERE id = $1 FOR UPDATE`, p.ID).Scan(&oldText)
@@ -77,9 +79,11 @@ func (w *Writer) Post(ctx context.Context, channelID string, p ytparse.Post) (Po
 			out.Relevant, nonNil(kws), str(p.DetailParams), p.HasImage, p.HasPoll, p.HasVideo, now); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO post_snapshots (post_id, taken_at, likes_min, comments_min) VALUES ($1, $2, $3, $4)
-			ON CONFLICT DO NOTHING`, p.ID, now, likes, comments)
-		return err
+		if _, err := tx.Exec(ctx, `INSERT INTO post_snapshots (post_id, taken_at, likes_min, comments_min) VALUES ($1, $2, $3, $4)
+			ON CONFLICT DO NOTHING`, p.ID, now, likes, comments); err != nil {
+			return err
+		}
+		return ev.Write(ctx, tx, outbox.Posts, p.ID)
 	})
 	return out, err
 }
@@ -95,12 +99,20 @@ func (w *Writer) Playlist(ctx context.Context, channelID string, p ytparse.Playl
 		n := int(p.VideoCount.Min)
 		count = &n
 	}
-	_, err = w.Pool.Exec(ctx, `INSERT INTO playlists (id, channel_id, title, video_count, relevant, first_seen, last_checked)
-		VALUES ($1, $2, $3, $4, $5, $6, $6)
-		ON CONFLICT (id) DO UPDATE SET title = COALESCE(EXCLUDED.title, playlists.title),
-			video_count = COALESCE(EXCLUDED.video_count, playlists.video_count), relevant = EXCLUDED.relevant,
-			last_checked = EXCLUDED.last_checked, removed_at = NULL`,
-		p.ID, channelID, str(p.Title), count, relevant, w.now())
+	now := w.now()
+	ev := outbox.New(ctx, now)
+	err = pgx.BeginFunc(ctx, w.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO playlists (id, channel_id, title, video_count, relevant, first_seen, last_checked)
+			VALUES ($1, $2, $3, $4, $5, $6, $6)
+			ON CONFLICT (id) DO UPDATE SET title = COALESCE(EXCLUDED.title, playlists.title),
+				video_count = COALESCE(EXCLUDED.video_count, playlists.video_count), relevant = EXCLUDED.relevant,
+				last_checked = EXCLUDED.last_checked, removed_at = NULL`,
+			p.ID, channelID, str(p.Title), count, relevant, now); err != nil {
+			return err
+		}
+		_, err := ev.Content(ctx, tx, outbox.Playlists, p.ID)
+		return err
+	})
 	return relevant, err
 }
 
@@ -108,6 +120,7 @@ func (w *Writer) Playlist(ctx context.Context, channelID string, p ytparse.Playl
 // whole list was read), videos no longer in it are marked removed.
 func (w *Writer) PlaylistItems(ctx context.Context, playlistID string, items []ytparse.PlaylistEntry, complete bool) error {
 	now := w.now()
+	ev := outbox.New(ctx, now)
 	return pgx.BeginFunc(ctx, w.Pool, func(tx pgx.Tx) error {
 		ids := make([]string, 0, len(items))
 		for i, it := range items {
@@ -132,7 +145,10 @@ func (w *Writer) PlaylistItems(ctx context.Context, playlistID string, items []y
 				return err
 			}
 		}
-		_, err := tx.Exec(ctx, `UPDATE playlists SET last_checked = $2 WHERE id = $1`, playlistID, now)
+		if _, err := tx.Exec(ctx, `UPDATE playlists SET last_checked = $2 WHERE id = $1`, playlistID, now); err != nil {
+			return err
+		}
+		_, err := ev.Content(ctx, tx, outbox.Playlists, playlistID) // the list changed
 		return err
 	})
 }

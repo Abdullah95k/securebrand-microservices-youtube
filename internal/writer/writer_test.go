@@ -3,6 +3,7 @@ package writer_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +47,32 @@ func newRig(t *testing.T) *rig {
 	return r
 }
 
+// events lists the kinds of the outbox events about id, oldest first.
+func (r *rig) events(t *testing.T, id string) []string {
+	t.Helper()
+	rows, err := r.pool.Query(context.Background(), `SELECT kind FROM event_outbox WHERE entity_id = $1 ORDER BY id`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+func sameEvents(t *testing.T, what string, got []string, want ...string) {
+	t.Helper()
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("%s: outbox events %v, want %v", what, got, want)
+	}
+}
+
 func (r *rig) count(t *testing.T, sql string, args ...any) int {
 	t.Helper()
 	var n int
@@ -86,6 +113,9 @@ func TestChannelChangesAndSnapshots(t *testing.T) {
 	if n := r.count(t, `SELECT count(*) FROM channels WHERE id = $1 AND status = 'removed' AND removed_at IS NOT NULL AND title = 'New title'`, ch); n != 1 {
 		t.Error("a removed channel keeps its data")
 	}
+	// Events: the first read (content and counts), the new title (the
+	// counts did not change), nothing for the first miss, the removal.
+	sameEvents(t, "channel", r.events(t, ch), "channel", "channel_snapshot", "channel", "channel")
 }
 
 func TestVideosRelevancePrecisionAndSuppression(t *testing.T) {
@@ -156,4 +186,45 @@ func TestVideosRelevancePrecisionAndSuppression(t *testing.T) {
 	if n := r.count(t, `SELECT count(*) FROM videos WHERE id = 'fakeVIDw01' AND removed_at IS NOT NULL AND title IS NOT NULL`); n != 1 {
 		t.Error("a removed video keeps its data")
 	}
+	// Events: the new listing (at once, before its check), not the known
+	// one; the first check (details and views); the edited title (same
+	// counts); the removal. Nothing for the erased video.
+	sameEvents(t, "video", r.events(t, "fakeVIDw01"), "video", "video_metrics", "video", "video_metrics", "video", "video")
+	sameEvents(t, "erased video", r.events(t, "fakeVIDw02"))
+}
+
+func TestPostsAndPlaylistsAddEvents(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	p := ytparse.Post{ID: "UgkxFakePost01", Text: "A post", Likes: ytparse.ParseCount("12"), Comments: ytparse.ParseCount("3")}
+	if _, err := r.w.Post(ctx, ch, p); err != nil {
+		t.Fatal(err)
+	}
+	r.now = r.now.Add(time.Hour)
+	if _, err := r.w.Post(ctx, ch, p); err != nil { // read again, unchanged
+		t.Fatal(err)
+	}
+	r.now = r.now.Add(time.Hour)
+	p.Likes = ytparse.ParseCount("15")
+	if _, err := r.w.Post(ctx, ch, p); err != nil {
+		t.Fatal(err)
+	}
+	sameEvents(t, "post", r.events(t, p.ID), "post", "post_metrics", "post_metrics")
+
+	pl := ytparse.Playlist{ID: "PLfakeWRITER01", Title: "Episodes", VideoCount: ytparse.ParseCount("2 videos")}
+	if _, err := r.w.Playlist(ctx, ch, pl); err != nil {
+		t.Fatal(err)
+	}
+	items := []ytparse.PlaylistEntry{{VideoID: "fakeVIDw01"}, {VideoID: "fakeVIDw03"}}
+	if err := r.w.PlaylistItems(ctx, pl.ID, items, true); err != nil {
+		t.Fatal(err)
+	}
+	r.now = r.now.Add(time.Hour)
+	if err := r.w.PlaylistItems(ctx, pl.ID, items, true); err != nil { // the same list
+		t.Fatal(err)
+	}
+	if err := r.w.PlaylistItems(ctx, pl.ID, items[:1], true); err != nil { // one removed
+		t.Fatal(err)
+	}
+	sameEvents(t, "playlist", r.events(t, pl.ID), "playlist", "playlist", "playlist")
 }

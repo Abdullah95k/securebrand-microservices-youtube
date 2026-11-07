@@ -16,8 +16,10 @@ The current state of the YouTube collector, for the owner and the master session
 - **Deployed to production (7 November, the master):** on the platform's cluster through Argo CD, at `9a4700d`, then pinned to
   `145e68c` (no overrides left but the image and the worker count). The migrations ran (PreSync hook) and the scheduler is
   running and ready. **The worker is held at 0** until the proxies are bought (the owner is buying 10 IPs), so nothing is
-  collected from YouTube yet. The relay and push stay off (no Kafka for the pilot). The two fixes the deploy needed are
-  merged: the London VPC (`10.30.0.0/16`, ports 5432 and 25073) and the registry's pull secret in `values-production.yaml`.
+  collected from YouTube yet. Push stays off. The master is turning the relay on in production (canary checks on, media
+  hand-off off). If Kafka's access rules can't grant the transactional ID `yts-relay`, `relay.transactions: false` makes the
+  relay send without transactions (runbook §16). The two fixes the deploy needed are merged: the London VPC (`10.30.0.0/16`,
+  ports 5432 and 25073) and the registry's pull secret in `values-production.yaml`.
 - **Phase 0:** has ended (the owner, 6 November). The census of 5 November was not run: there are no new long runs on the shared
   server (D-026). The final numbers come from the 4 November report and the 5 November discovery, into `docs/phase0-results.md`.
 - **Now building:** the owner's fix list (REQ-010) and the contract adoption (REQ-021), approved on 6 November. Progress, one row per
@@ -107,6 +109,8 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- The relay's `-transactions` flag and the chart value `relay.transactions` (default `true`, as before). `false` sends each
+  batch without a Kafka transaction (idempotent sends), for a Kafka that can't grant the transactional ID; runbook §16.
 - REQ-023 and REQ-024: migration `0014_leases.sql` (a new table `leases`); the migrate command's `-wait` flag (45 minutes) and the
   chart's `migrate.waitForSlot` and `migrate.activeDeadlineSeconds` 3600 (give `helm upgrade` `--timeout 60m`); the relay's
   `-idle` now means the longest idle wait (30 seconds); the metric `yt_relay_up` now means "holds the lease"; runbook §18. The

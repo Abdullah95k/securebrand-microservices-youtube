@@ -133,16 +133,23 @@ const TransactionalID = "yts-relay"
 // Options are the Kafka client's options: transactional and idempotent,
 // never creating a topic (the platform owns them), keys hashed as Kafka's
 // own clients do so a post's messages share a partition.
-func (c Config) Options() ([]kgo.Opt, error) {
-	return c.options(
-		kgo.TransactionalID(TransactionalID),
-		kgo.TransactionTimeout(time.Minute),
+func (c Config) Options() ([]kgo.Opt, error) { return c.ProducerOptions(true) }
+
+// ProducerOptions are Options; without transactions (transactional false)
+// the producer is idempotent only, for a Kafka whose access rules can't
+// grant the transactional ID.
+func (c Config) ProducerOptions(transactional bool) ([]kgo.Opt, error) {
+	opts := []kgo.Opt{
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.StickyKeyPartitioner(nil)),
-		kgo.ProducerBatchMaxBytes(1<<20),
-		kgo.RecordDeliveryTimeout(2*time.Minute),
+		kgo.ProducerBatchMaxBytes(1 << 20),
+		kgo.RecordDeliveryTimeout(2 * time.Minute),
 		kgo.ClientID("yts-relay"),
-	)
+	}
+	if transactional {
+		opts = append(opts, kgo.TransactionalID(TransactionalID), kgo.TransactionTimeout(time.Minute))
+	}
+	return c.options(opts...)
 }
 
 // ConsumerOptions are a reader's options: in consumer group group, the

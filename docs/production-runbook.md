@@ -715,6 +715,15 @@ the relay looks for new events less often, from every second up to every 30 seco
 or data the contract can't express), or Kafka can't take them (too large). `ytcollect outbox check` shows each with its reason.
 After the fix is deployed, the relay's restart tries them again.
 
+**Without Kafka transactions.** The relay uses the transactional ID `yts-relay`. If Kafka's access rules can't grant it (the
+relay's log then says "beginning a transaction" or "committing" failed, with an authorization error such as
+`TRANSACTIONAL_ID_AUTHORIZATION_FAILED`), set `relay.transactions: false` in the chart (the flag `-transactions=false`). The relay
+then sends each batch without a transaction; the producer stays idempotent, so a retry inside Kafka doesn't write a message twice.
+What changes: when part of a batch fails, the events up to the first failure are marked sent and the rest go again, so a consumer
+may see a message twice (with the same event ID, which it drops) but never an older message after a newer one for the same post.
+`yt_relay_transactions_total` stays at zero in this mode; `yt_relay_published_total` and the `OutboxBacklog` alert work as before.
+The start-up log line "relay starting" says `transactions=false`.
+
 ## 17. The media hand-off
 
 yts downloads video thumbnails (and keeps channel avatars, banners and commenters' avatars). The contract's rule for media

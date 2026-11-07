@@ -38,6 +38,7 @@ func relayCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []
 	idle := fs.Duration("idle", 30*time.Second, "the longest wait when nothing is waiting to be sent (waits start at 1s and double)")
 	canary := fs.Bool("canary", false, "check messages as the canary does (the contract allows test-only values; owner D-012)")
 	metricsAddr := fs.String("metrics-addr", ":9103", "the ops port: /metrics, /healthz and /readyz (empty: off)")
+	transactions := fs.Bool("transactions", true, "send each batch in one Kafka transaction (false: idempotent sends without transactions, for a Kafka that can't grant the transactional ID)")
 	handOff := fs.Bool("media-handoff", true, "hand stored images to analysis and delete them once analysed (needs object storage)")
 	mediaKeep := fs.Duration("media-keep", handoff.DefaultKeep, "an announced image's deadline: deleted then even without every acknowledgement (at least 24h)")
 	mediaGroup := fs.String("media-group", "yts-media", "the Kafka consumer group that reads the acknowledgements")
@@ -71,7 +72,7 @@ func relayCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []
 	if err != nil {
 		return err
 	}
-	opts, err := cfg.Options()
+	opts, err := cfg.ProducerOptions(*transactions)
 	if err != nil {
 		return err
 	}
@@ -94,7 +95,8 @@ func relayCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []
 
 	mapper := &contract.Mapper{Options: conformance.Options{Production: true, Canary: *canary},
 		Keywords: func() contract.KeywordIDs { return live.Matcher() }, MediaConsumers: consumers}
-	r := &relay.Relay{Pool: pool, Producer: client, Batch: *batch, Idle: *idle, Log: log, Metrics: reg, Content: mapper}
+	r := &relay.Relay{Pool: pool, Producer: client, Batch: *batch, Idle: *idle, Log: log, Metrics: reg, Content: mapper,
+		NoTransactions: !*transactions}
 	var store media.Store
 	if *handOff {
 		if store, err = openStorage(log); err != nil {
@@ -117,6 +119,6 @@ func relayCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []
 		log.Info("media hand-off on", "kinds", media.HandoffKinds, "consumers", consumers, "keep", *mediaKeep, "group", *mediaGroup)
 	}
 
-	log.Info("relay starting", "brokers", len(cfg.Brokers), "tls", cfg.TLS, "batch", *batch, "canary", *canary)
+	log.Info("relay starting", "brokers", len(cfg.Brokers), "tls", cfg.TLS, "batch", *batch, "canary", *canary, "transactions", *transactions)
 	return r.Run(ctx)
 }

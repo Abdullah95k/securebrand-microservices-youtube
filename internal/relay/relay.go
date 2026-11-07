@@ -61,6 +61,12 @@ type Relay struct {
 	// Lead, when set, runs while this relay holds the lease (the media
 	// hand-off), and is stopped with it.
 	Lead func(ctx context.Context)
+	// NoTransactions sends each batch without a Kafka transaction, for a
+	// Kafka that can't grant the transactional ID (the producer is then
+	// idempotent only: Config.ProducerOptions(false)). An event whose
+	// records were all acknowledged is marked sent; the others go again,
+	// with the same event IDs, which consumers drop.
+	NoTransactions bool
 }
 
 func (r *Relay) now() time.Time {
@@ -195,8 +201,10 @@ func (r *Relay) Once(ctx context.Context) (Result, error) {
 	if len(batch) == 0 {
 		return res, nil
 	}
-	if err := r.Producer.BeginTransaction(); err != nil {
-		return res, fmt.Errorf("relay: beginning a transaction: %w", err)
+	if !r.NoTransactions {
+		if err := r.Producer.BeginTransaction(); err != nil {
+			return res, fmt.Errorf("relay: beginning a transaction: %w", err)
+		}
 	}
 	var mu sync.Mutex
 	failed := map[int64]error{}
@@ -219,6 +227,9 @@ func (r *Relay) Once(ctx context.Context) (Result, error) {
 	}
 	flushErr := r.Producer.Flush(ctx)
 	wg.Wait()
+	if r.NoTransactions {
+		return r.settle(ctx, res, batch, failed, flushErr)
+	}
 	if flushErr != nil || len(failed) > 0 {
 		abortErr := r.Producer.EndTransaction(context.WithoutCancel(ctx), kgo.TryAbort)
 		r.add("yt_relay_transactions_total", "Kafka transactions by result.", map[string]string{"result": "aborted"}, 1)
@@ -255,6 +266,51 @@ func (r *Relay) Once(ctx context.Context) (Result, error) {
 	}
 	res.Sent = len(ids)
 	r.set("yt_relay_last_commit_timestamp_seconds", "When the relay last committed a batch.", nil, float64(r.now().Unix()))
+	return res, nil
+}
+
+// settle ends a batch sent without a transaction. The batch is in outbox
+// order, so it is marked sent up to the first event that failed for a
+// reason that may pass: that event and every one after it go again (with
+// the same event IDs, which consumers drop), so a later event never stays
+// ahead of an earlier one it might overwrite. An event Kafka will never
+// take is set aside.
+func (r *Relay) settle(ctx context.Context, res Result, batch []pending, failed map[int64]error, flushErr error) (Result, error) {
+	ids := make([]int64, 0, len(batch))
+	for _, p := range batch {
+		if err := failed[p.row.ID]; err != nil {
+			if permanent(err) {
+				continue
+			}
+			break
+		}
+		ids = append(ids, p.row.ID)
+		res.Messages += len(p.recs)
+		for _, rec := range p.recs {
+			r.add("yt_relay_published_total", "Messages published, by topic.", map[string]string{"topic": rec.Topic}, 1)
+		}
+	}
+	if err := outbox.MarkSent(context.WithoutCancel(ctx), r.Pool, ids, r.now()); err != nil {
+		// Sent but not marked: they go again, with the same event IDs.
+		return res, fmt.Errorf("relay: marking %d sent events: %w", len(ids), err)
+	}
+	res.Sent = len(ids)
+	if len(ids) > 0 {
+		r.set("yt_relay_last_commit_timestamp_seconds", "When the relay last committed a batch.", nil, float64(r.now().Unix()))
+	}
+	for id, err := range failed {
+		if permanent(err) {
+			if err := outbox.MarkFailed(ctx, r.Pool, id, "kafka: "+err.Error()); err != nil {
+				return res, err
+			}
+			res.Refused++
+			r.add("yt_relay_refused_total", "Outbox events not sent: refused by the contract or not mappable, by kind.",
+				map[string]string{"kind": kindOf(batch, id)}, 1)
+		}
+	}
+	if flushErr != nil || len(failed) > 0 {
+		return res, fmt.Errorf("relay: %d events not sent (flush: %v): %w", len(failed), flushErr, firstErr(failed, flushErr))
+	}
 	return res, nil
 }
 

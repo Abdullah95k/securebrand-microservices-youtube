@@ -683,3 +683,30 @@ rsync -a root@DROPLET_IP:/var/lib/securebrand-youtube/phase0/ /var/lib/securebra
 ```
 
 The files stay as they are (JSON lines, readable with any tool), next to the production data.
+
+## 16. The outbox and the relay
+
+Every change yts stores also goes into an outbox table, in the same save (REQ-010 fix 12). The relay (`ytcollect relay`, its own
+service on the cluster) sends the outbox to the platform's Kafka: each event as the contract's message (`content.*`, checked first)
+and as yts's own (`yt.*`), in one Kafka transaction per batch. Sent events are deleted after 7 days; unsent ones stay until sent.
+Until the relay runs (the pilot has no Kafka), events wait in the outbox.
+
+What is waiting, by kind:
+
+```bash
+ytcollect outbox
+```
+
+Check the waiting events against the contract, without sending anything. It lists any the contract would refuse, with the reason:
+
+```bash
+ytcollect outbox check
+```
+
+**Alert `OutboxBacklog`** (events have waited more than 30 minutes, once a relay has run): the relay is behind, failing or
+stopped. Its log says why ("sending a batch failed"); `yt_relay_transactions_total` shows aborted or failed transactions. Kafka down
+or a topic missing (the platform creates them; the relay never does) keeps events waiting; they go when it is fixed.
+
+**Alert `OutboxRefused`**: some events will not be sent until something changes: the contract refused them (a bug in yts's mapping,
+or data the contract can't express), or Kafka can't take them (too large). `ytcollect outbox check` shows each with its reason.
+After the fix is deployed, the relay's restart tries them again.

@@ -302,3 +302,54 @@ func Unsent(ctx context.Context, q db.Querier, after int64, limit int) ([]Row, e
 	}
 	return out, rows.Err()
 }
+
+// Pending returns up to limit events to send, oldest first: not sent, and
+// not refused (failure set) since the relay started.
+func Pending(ctx context.Context, q db.Querier, limit int) ([]Row, error) {
+	rows, err := q.Query(ctx, `SELECT id, kind, entity_id, partition_key, observed_at, payload, provenance
+		FROM event_outbox WHERE published_at IS NULL AND failure IS NULL ORDER BY id LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("outbox: reading pending events: %w", err)
+	}
+	defer rows.Close()
+	var out []Row
+	for rows.Next() {
+		var r Row
+		if err := rows.Scan(&r.ID, &r.Kind, &r.EntityID, &r.PartitionKey, &r.ObservedAt, &r.Payload, &r.Provenance); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// MarkSent records that the events were published, at now.
+func MarkSent(ctx context.Context, q db.Querier, ids []int64, now time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := q.Exec(ctx, `UPDATE event_outbox SET published_at = $2, attempts = attempts + 1, failure = NULL
+		WHERE id = ANY($1)`, ids, now)
+	return err
+}
+
+// MarkFailed records why an event can't be published (the contract
+// refused it, or Kafka can't take it). It stays unsent, and is tried again
+// when the relay restarts (after a fix).
+func MarkFailed(ctx context.Context, q db.Querier, id int64, reason string) error {
+	if len(reason) > 2000 {
+		reason = reason[:2000]
+	}
+	_, err := q.Exec(ctx, `UPDATE event_outbox SET failure = $2, attempts = attempts + 1 WHERE id = $1`, id, reason)
+	return err
+}
+
+// RetryFailed clears the failures of unsent events, so they are tried
+// again; the relay calls it when it starts. It returns how many.
+func RetryFailed(ctx context.Context, q db.Querier) (int64, error) {
+	tag, err := q.Exec(ctx, `UPDATE event_outbox SET failure = NULL WHERE published_at IS NULL AND failure IS NOT NULL`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

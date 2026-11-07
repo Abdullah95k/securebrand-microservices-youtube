@@ -69,6 +69,7 @@ Usage: ytcollect <command> [flags]
   scheduler  run the maintenance loop (partitions, missing jobs); a long-running service
   worker     run the collector: lease jobs and read YouTube through the proxies; a long-running service
   websub     run the push-notification receiver (needs YT_WEBSUB_CALLBACK, D23); a long-running service
+  relay      publish the outbox to Kafka: content.* (checked against the contract) and yt.*; a long-running service
   version    the release and commit this program was built from
 
 Run "ytcollect <command> -h" for the flags of a command.
@@ -96,9 +97,9 @@ func main() {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
 			err = grantPlatformRoles(ctx, pool, log)
 		}
-	case "channels", "keywords", "health", "jobs", "report", "outbox", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
+	case "channels", "keywords", "health", "jobs", "report", "outbox", "switch", "scheduler", "worker", "websub", "relay", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
 		switch cmd {
-		case "scheduler", "worker", "websub":
+		case "scheduler", "worker", "websub", "relay":
 			log.Info("starting", "command", cmd, "version", version.Version, "revision", version.Revision)
 		}
 		pool := mustDB(ctx, log, roleFor(cmd))
@@ -124,6 +125,8 @@ func main() {
 			err = workerCmd(ctx, pool, log, args)
 		case "websub":
 			err = websubCmd(ctx, pool, log, args)
+		case "relay":
+			err = relayCmd(ctx, pool, log, args)
 		case "erase":
 			err = eraseCmd(ctx, pool, log, os.Stdout, args)
 		case "erasures":

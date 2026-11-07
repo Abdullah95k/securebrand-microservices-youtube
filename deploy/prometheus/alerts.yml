@@ -130,3 +130,25 @@ groups:
           runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
           summary: "{{ $value }} dead {{ $labels.kind }} job(s): not retried until requeued"
           description: "See the reasons with 'ytcollect jobs dead'; after the fix, 'ytcollect jobs requeue -kind {{ $labels.kind }}'."
+  - name: outbox
+    rules:
+      # Fix 12. Events wait for Kafka: only an alert once a relay has run in
+      # the last day (the pilot runs without Kafka, and its events wait on
+      # purpose). It also catches a relay that stopped: its last report of
+      # yt_relay_up stays in the day's window.
+      - alert: OutboxBacklog
+        expr: max(yt_outbox_oldest_unsent_seconds) > 1800 and on() max(max_over_time(yt_relay_up[1d])) == 1
+        for: 15m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#16-the-outbox-and-the-relay"
+          summary: "Events have waited more than 30 minutes for Kafka (the oldest: {{ $value | humanizeDuration }})"
+          description: "The relay is behind, failing or stopped: see its log and yt_relay_transactions_total; 'ytcollect outbox' shows what waits."
+      # An event the contract refuses, or Kafka can't take, is never sent
+      # until the cause is fixed.
+      - alert: OutboxRefused
+        expr: sum(yt_outbox_failed) > 0
+        for: 10m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#16-the-outbox-and-the-relay"
+          summary: "{{ $value }} outbox event(s) refused: not sent to Kafka"
+          description: "'ytcollect outbox check' lists them with the reason; after the fix, restarting the relay tries them again."

@@ -7,6 +7,12 @@ The current state of the YouTube collector, for the owner and the master session
 - **Built and merged:** every production step of the plan (1–20). That is the collector, comments, posts and playlists, discovery,
   capacity planning, privacy tools (dormant), images, the archive, webhooks, and the Docker Compose deployment, all with tests. See
   [plan.md](plan.md) §10.
+- **The 48-hour pilot (fix 11) is running** since 18:29 Iraq time on 7 November, run by the master's ops workflow. The proxies are
+  igs's 10 US ISP IPs, shared until yts's own are bought (the owner, D-042). It uses a 2 s gap per IP, 10 jobs at once and a 7-day
+  backfill. The 46 Iraq place names are loaded, and the owner's 329 channels were imported at 18:52. An hour later, 374 channels
+  were listed (45 more found by discovery), 5 of the owner's inputs were unresolved, and no jobs were failing or dead. The first
+  day goes to the new videos and their comments (the top priorities); the rest drains after. The report covers 18:29 on
+  7 November to 18:29 on 9 November; then `docs/master/yts-pilot-report.md`.
 - **Deployed to production (7 November, the master):** on the platform's cluster through Argo CD, at `9a4700d`, then pinned to
   `145e68c` (no overrides left but the image and the worker count). The migrations ran (PreSync hook) and the scheduler is
   running and ready. **The worker is held at 0** until the proxies are bought (the owner is buying 10 IPs), so nothing is

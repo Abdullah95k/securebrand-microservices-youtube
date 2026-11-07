@@ -38,6 +38,14 @@ worker:
 websub:
   enabled: false
 
+# The relay to the platform's Kafka (fix 12): off for the pilot, which runs
+# without Kafka (the owner); events wait in the outbox meanwhile
+# ("ytcollect outbox" shows them, "ytcollect outbox check" checks them).
+# On with Kafka: relay.enabled=true, and canary=true while the canary runs.
+relay:
+  enabled: false
+  canary: false
+
 # The master's ranges (6 November): the managed services in the production
 # VPC on the ports their secret gives; the schema registry in namespace
 # platform; HTTPS anywhere; the proxy exits (not bought yet) on the ports of

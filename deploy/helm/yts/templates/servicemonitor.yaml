@@ -13,7 +13,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ include "yts.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
-  # The worker's and the scheduler's ops ports: /metrics.
+  # The worker's, the scheduler's and the relay's ops ports: /metrics.
   endpoints:
     - port: ops
       path: /metrics

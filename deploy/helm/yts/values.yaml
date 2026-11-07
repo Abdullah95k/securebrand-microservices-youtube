@@ -132,6 +132,27 @@ scheduler:
   tolerations: []
   affinity: {}
 
+# The relay (REQ-010 fix 12): publishes the outbox to the platform's Kafka,
+# the contract's content.* messages (checked) and yts's yt.* messages, in
+# one transaction per batch. Off until Kafka is there: the pilot runs
+# without it, and events wait in the outbox. It reads the KAFKA_* files of
+# the platform's credentials, and never creates a topic.
+relay:
+  enabled: false
+  batch: 500              # events per Kafka transaction
+  canary: false           # the contract's canary checks (D-012) while the canary runs
+  opsPort: 9103           # /metrics, /healthz and /readyz (the database and Kafka)
+  extraArgs: []
+  goMemLimit: 200MiB
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 256Mi}
+  terminationGracePeriodSeconds: 30
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
 # Push notifications (D23): off until a public HTTPS address exists.
 websub:
   enabled: false

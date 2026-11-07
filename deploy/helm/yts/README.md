@@ -10,19 +10,21 @@ The Helm chart for the YouTube collector (REQ-010 fix 14). Docker Compose on one
 | `yts-worker` Deployment | The collector: leases jobs, reads YouTube through the proxies | **1**, replaced on an update (`Recreate`): each worker paces every proxy IP itself, so two would double the rate (fix 15 lifts this) |
 | `yts-scheduler` Deployment | Partitions, missing jobs, metrics, capacity, archive, webhooks | 1 (no leader election yet) |
 | `yts-websub` Deployment | Push notifications | Off until a public HTTPS address exists (D23) |
+| `yts-relay` Deployment | Publishes the outbox to the platform's Kafka: the contract's `content.*` messages (checked) and yts's `yt.*` messages, one transaction per batch (fix 12) | Off until Kafka is there (the pilot runs without it); then **1**, `Recreate` (one sends at a time) |
 | `yts-migrate` Job | The migrations, a hook before every install and upgrade, then the grants for the app and read-only roles | — |
-| ServiceMonitor | Scrapes `/metrics` on the worker (`:9101`) and the scheduler (`:9102`) | — |
-| PrometheusRule | The 19 alerts of `deploy/prometheus/alerts.yml`, each with a runbook link | — |
+| ServiceMonitor | Scrapes `/metrics` on the worker (`:9101`), the scheduler (`:9102`) and the relay (`:9103`) | — |
+| PrometheusRule | The 21 alerts of `deploy/prometheus/alerts.yml`, each with a runbook link | — |
 | NetworkPolicy | In: the monitoring namespace on the ops ports. Out: DNS; HTTPS; the managed PostgreSQL, Kafka and Valkey in the VPC (`10.20.0.0/16`) on the ports read from `platform-credentials` at install; the schema registry (namespace `platform`, `app: schema-registry`, port 8080); the proxy exits on the ports read from `proxies.yaml` at install | — |
 
 Every pod runs as user and group 65532, never root, with a read-only root filesystem, no capabilities and no service-account
-token. Probes: `/healthz` (alive) and `/readyz` (the database answers; for the worker, at least one proxy isn't quarantined).
+token. Probes: `/healthz` (alive) and `/readyz` (the database answers; for the worker, at least one proxy isn't quarantined; for the
+relay, Kafka answers too).
 
 ## Secrets (files, never values in the chart)
 
 | Secret | Keys | From |
 |---|---|---|
-| `platform-credentials` | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`, `POSTGRES_SSLMODE`, `POSTGRES_CA_CERT`, `POSTGRES_USER`/`_PASSWORD` (owner), `POSTGRES_APP_USER`/`_PASSWORD`, `POSTGRES_RO_USER`/`_PASSWORD`; `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET_RAW`, `S3_BUCKET_MEDIA` | The platform |
+| `platform-credentials` | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`, `POSTGRES_SSLMODE`, `POSTGRES_CA_CERT`, `POSTGRES_USER`/`_PASSWORD` (owner), `POSTGRES_APP_USER`/`_PASSWORD`, `POSTGRES_RO_USER`/`_PASSWORD`; `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET_RAW`, `S3_BUCKET_MEDIA`; for the relay `KAFKA_BROKERS`, `KAFKA_USER`, `KAFKA_PASSWORD`, `KAFKA_SASL_MECHANISM`, `KAFKA_TLS`, `KAFKA_CA_CERT` | The platform |
 | `proxies` | `proxies.yaml`: one proxy per line, `scheme://user:password@host:port type=isp subnet=label country=XX` | The platform |
 | `yts` | `privacy_key` (required), `youtube_api_key` (optional), `websub_secret` (only with push) | The owner, below |
 
@@ -94,6 +96,16 @@ kubectl -n yts exec deploy/yts-scheduler -- ytcollect health
 kubectl -n yts exec deploy/yts-scheduler -- ytcollect jobs dead
 ```
 
+The events waiting for Kafka, and a check of them against the platform contract (it sends nothing):
+
+```bash
+kubectl -n yts exec deploy/yts-scheduler -- ytcollect outbox
+```
+
+```bash
+kubectl -n yts exec deploy/yts-scheduler -- ytcollect outbox check
+```
+
 ## Values
 
 `values.yaml` lists every setting with its default; `values-production.yaml` overrides them for production.
@@ -108,6 +120,7 @@ kubectl -n yts exec deploy/yts-scheduler -- ytcollect jobs dead
 | `worker.commentCap`, `worker.player` | `20000`, `true` | Comments per first read; the player endpoint |
 | `storage.media`, `storage.raw` | on, `fromPlatformCredentials` | The endpoint, region, buckets and keys from `platform-credentials`; media under `yts/` |
 | `database.platformCredentials` | `true` | The platform's `POSTGRES_*` files, each command with its least role, over TLS |
+| `relay.enabled`, `relay.canary` | `false`, `false` | The relay to Kafka: on once Kafka is there, with `canary` while the canary runs (D-012); `relay.batch` events per transaction (500) |
 | `networkPolicy.egress` | the master's ranges | The VPC for the managed services, the schema registry, and the proxy exits (any address until they are bought; their ports from `proxies.yaml`) |
 | `*.resources`, `*.goMemLimit` | as in `values.yaml` | Requests and limits; `GOMEMLIMIT` a little under the limit |
 

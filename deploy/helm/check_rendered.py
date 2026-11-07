@@ -4,8 +4,8 @@
 Usage: helm template ... | python3 deploy/helm/check_rendered.py
 
 Fails (exit 1) when a pod could run as root or write its root filesystem,
-keeps a capability, lacks requests or limits, when the worker could run
-twice, when a secret file is more open than 0440, when an alert has no
+keeps a capability, lacks requests or limits, when the worker or the relay
+could run twice, when the relay lacks its Kafka settings, when a secret file is more open than 0440, when an alert has no
 runbook link, or when the network policy, the monitoring objects or the
 migration hook are missing.
 """
@@ -67,6 +67,15 @@ for w in workloads:
         check(any(a.startswith("-interval=") for a in args), f"{name}: no -interval")
         env = {e["name"] for e in pod["containers"][0].get("env", [])}
         check("YT_PROXIES_FILE" in env, f"{name}: no proxies")
+    if w["metadata"]["name"].endswith("-relay"):
+        check(w["spec"]["replicas"] == 1, f"{name}: one relay sends at a time")
+        check(w["spec"].get("strategy", {}).get("type") == "Recreate", f"{name}: not Recreate (an update would run two)")
+        c = pod["containers"][0]
+        check(c["args"][0] == "relay", f"{name}: not the relay command")
+        env = {e["name"]: e.get("value") for e in c.get("env", [])}
+        check(env.get("YT_KAFKA_DIR") == "/etc/platform-credentials", f"{name}: no Kafka settings (YT_KAFKA_DIR)")
+        mounts = {m["mountPath"] for m in c.get("volumeMounts", [])}
+        check("/etc/platform-credentials" in mounts, f"{name}: the platform's credentials (KAFKA_*) are not mounted")
     if w["kind"] == "Job":
         hook = w["metadata"].get("annotations", {}).get("helm.sh/hook", "")
         check("pre-install" in hook and "pre-upgrade" in hook, f"{name}: not a pre-install and pre-upgrade hook")

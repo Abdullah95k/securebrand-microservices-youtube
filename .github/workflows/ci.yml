@@ -187,6 +187,8 @@ jobs:
           # The relay: off in the production values (the pilot has no Kafka), there when switched on.
           if grep -q 'name: yts-relay$' out/production.yaml; then echo "the relay must be off in values-production.yaml"; exit 1; fi
           grep -q 'name: yts-relay$' out/everything.yaml || { echo "relay.enabled=true rendered no relay"; exit 1; }
+          # Every pod in production names the registry's pull secret (the cluster adds it only to the default account).
+          test "$(grep -c 'imagePullSecrets:' out/production.yaml)" -ge 2 || { echo "production pods must name imagePullSecrets"; exit 1; }
       - name: the chart refuses unsafe or incomplete values
         run: |
           refuses() { if helm template yts deploy/helm/yts "$@" >/dev/null 2>&1; then echo "rendered, but must refuse: $*"; exit 1; fi; }

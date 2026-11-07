@@ -5,6 +5,12 @@
 #     --set image.repository=REGISTRY/yts --set image.digest=sha256:…
 #
 
+# The registry's pull secret (DigitalOcean's registry integration adds it
+# to the namespace's default service account only; yts's pods run as their
+# own account, so they name it themselves). The master, 7 November.
+imagePullSecrets:
+  - name: securebrand
+
 database:
   platformCredentials: true
 

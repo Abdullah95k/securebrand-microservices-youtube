@@ -24,7 +24,8 @@ message Event {
   // with "yt|" before the hash input (internal/ytevents).
   string event_id = 1;
   // The outbox kind: channel, channel_snapshot, video, video_metrics,
-  // post, post_metrics, comment, playlist, author.
+  // post, post_metrics, comment, playlist, author; media, media_ready,
+  // media_deleted.
   string kind = 2;
   // When yts read it; version is that in microseconds (the highest wins).
   google.protobuf.Timestamp observed_at = 3;
@@ -337,4 +338,34 @@ message AuthorProfile {
   Profile profile = 11;
   // Also a listed channel (its yt.channel events describe it).
   bool monitored = 12;
+}
+
+// Media is a stored image (topic yt.media.v1; key the media ID,
+// "yt:media:<kind>:<entity_id>:<first 16 hex of sha256>"): sent when it is
+// stored, announced to analysis, and deleted from storage, with the row as
+// it is then. The row stays after the file is gone.
+message Media {
+  Event event = 1;
+  // thumb, avatar, banner, author_avatar.
+  string kind = 2;
+  // The video, channel or commenter it belongs to.
+  string entity_id = 3;
+  optional string channel_id = 4;
+  string sha256 = 5;
+  // The key in storage, without the store's prefix.
+  string object_key = 6;
+  string source_url = 7;
+  string content_type = 8;
+  int64 bytes = 9;
+  google.protobuf.Timestamp first_seen = 10;
+  google.protobuf.Timestamp last_seen = 11;
+  // The hand-off (content.media.ready.v1): first announced, the deadline,
+  // and how many announcements (1, and up to 3 more after retryable
+  // failures).
+  google.protobuf.Timestamp announced_at = 12;
+  google.protobuf.Timestamp delete_after = 13;
+  int32 attempt = 14;
+  // The file was deleted from storage: processed or expired.
+  google.protobuf.Timestamp deleted_at = 15;
+  optional string delete_reason = 16;
 }

@@ -95,7 +95,14 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 		{"yt_webhook_oldest_pending_seconds", "Age of the oldest event still waiting to be delivered, by endpoint.",
 			`SELECT dl.endpoint, EXTRACT(EPOCH FROM now() - min(ev.created_at)) FROM webhook_deliveries dl
 			JOIN webhook_events ev ON ev.id = dl.event_id WHERE dl.status = 'pending' GROUP BY 1`, nil, []string{"endpoint"}},
-		{"yt_media_bytes", "Stored images, by kind.", `SELECT kind, COALESCE(sum(bytes), 0) FROM media GROUP BY kind`, nil, []string{"kind"}},
+		{"yt_media_bytes", "Stored images, by kind (files still in storage).", `SELECT kind, COALESCE(sum(bytes), 0) FROM media
+			WHERE deleted_at IS NULL GROUP BY kind`, nil, []string{"kind"}},
+		{"yt_media_handoff", "Images by kind and hand-off state: stored, announced (waiting for analysis), deleted_processed, deleted_expired.",
+			`SELECT kind, CASE WHEN deleted_at IS NOT NULL THEN 'deleted_' || COALESCE(delete_reason, 'unknown')
+				WHEN announced_at IS NOT NULL THEN 'announced' ELSE 'stored' END, count(*) FROM media GROUP BY 1, 2`, nil, []string{"kind", "state"}},
+		{"yt_media_past_deadline", "Announced images still in storage an hour after their deadline (the relay's deletion is failing or stopped).",
+			`SELECT count(*) FROM media WHERE announced_at IS NOT NULL AND deleted_at IS NULL AND delete_after < $1`,
+			[]any{now.Add(-time.Hour)}, nil},
 		{"yt_media_jobs_due", "Image downloads waiting.", `SELECT count(*) FROM schedule WHERE kind = 'media' AND due_at <= now() AND dead_at IS NULL`, nil, nil},
 		{"yt_archive_bytes", "Archive size (compressed), by table.", `SELECT table_name, COALESCE(sum(bytes), 0) FROM archive_index GROUP BY table_name`, nil, []string{"table"}},
 		{"yt_archive_rows", "Archived rows, by table.", `SELECT table_name, COALESCE(sum(rows), 0) FROM archive_months GROUP BY table_name`, nil, []string{"table"}},

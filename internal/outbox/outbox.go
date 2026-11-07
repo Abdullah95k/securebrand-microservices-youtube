@@ -45,6 +45,9 @@ const (
 	KindAuthor          = "author"           // content.account (not monitored), yt.author_profile
 	KindCandidate       = "candidate"        // discovery.candidate
 	KindCoverage        = "coverage"         // collection.coverage (an hourly roll-up per job kind)
+	KindMedia           = "media"            // content.media (the record, kept forever), yt.media
+	KindMediaReady      = "media_ready"      // content.media.ready (a file announced to analysis)
+	KindMediaDeleted    = "media_deleted"    // content.media.deleted (a file removed from storage)
 )
 
 // Table is how one stored table becomes events. Its SQL reads the row as t;
@@ -291,6 +294,41 @@ func (e *Events) Coverage(ctx context.Context, q db.Querier, from, to time.Time)
 		FROM cur JOIN fresh ON fresh.entity_id = cur.id ORDER BY cur.id`, from, to, e.at, e.prov)
 	if err != nil {
 		return 0, fmt.Errorf("outbox: coverage events: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// MediaKey names one stored image (the media table's key).
+type MediaKey struct{ Kind, EntityID, SHA256 string }
+
+// ID is the image's media ID: kind, owner and the first 16 hex of its
+// SHA-256 ("thumb:<video>:<hash>"); the contract's is "yt:media:" and this.
+func (k MediaKey) ID() string {
+	h := k.SHA256
+	if len(h) > 16 {
+		h = h[:16]
+	}
+	return k.Kind + ":" + k.EntityID + ":" + h
+}
+
+// MediaEvent adds an event of kind (KindMedia, KindMediaReady or
+// KindMediaDeleted) for each image, from its row as it is now, keyed by
+// its media ID.
+func (e *Events) MediaEvent(ctx context.Context, q db.Querier, kind string, keys ...MediaKey) (int64, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	ks, es, hs := make([]string, len(keys)), make([]string, len(keys)), make([]string, len(keys))
+	for i, k := range keys {
+		ks[i], es[i], hs[i] = k.Kind, k.EntityID, k.SHA256
+	}
+	tag, err := q.Exec(ctx, `INSERT INTO event_outbox (kind, entity_id, partition_key, observed_at, payload, provenance)
+		SELECT $1, m.kind || ':' || m.entity_id || ':' || left(m.sha256, 16), m.kind || ':' || m.entity_id || ':' || left(m.sha256, 16),
+			$5::timestamptz, to_jsonb(m), $6::jsonb
+		FROM media m JOIN unnest($2::text[], $3::text[], $4::text[]) AS k (kind, entity_id, sha256) USING (kind, entity_id, sha256)
+		ORDER BY m.kind, m.entity_id, m.sha256`, kind, ks, es, hs, e.at, e.prov)
+	if err != nil {
+		return 0, fmt.Errorf("outbox: %s events: %w", kind, err)
 	}
 	return tag.RowsAffected(), nil
 }

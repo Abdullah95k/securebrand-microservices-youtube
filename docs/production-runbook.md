@@ -710,3 +710,26 @@ or a topic missing (the platform creates them; the relay never does) keeps event
 **Alert `OutboxRefused`**: some events will not be sent until something changes: the contract refused them (a bug in yts's mapping,
 or data the contract can't express), or Kafka can't take them (too large). `ytcollect outbox check` shows each with its reason.
 After the fix is deployed, the relay's restart tries them again.
+
+## 17. The media hand-off
+
+yts downloads video thumbnails (and keeps channel avatars, banners and commenters' avatars). The contract's rule for media
+files (R5) is that a file is kept until analysis is done with it, and at least 24 hours. The relay does this, once storage and
+Kafka are both there:
+
+1. Every minute it announces new thumbnails on `content.media.ready.v1`, each with a deadline 72 hours later
+   (`relay.media.keep` in the chart).
+2. It reads analysis's acknowledgements from `content.media.processed.v1`, in consumer group `yts-media`. After a retryable
+   failure it announces the file again, at most 3 more times.
+3. Every 10 minutes it deletes each file that analysis has acknowledged (processed, skipped, or failed for good), and each file
+   whose deadline has passed, and says so on `content.media.deleted.v1`.
+
+The record of every image (its row, and `content.media.v1`) stays forever; only the file goes. Without Kafka (the pilot) nothing
+is announced and nothing is deleted. Avatars and banners are never handed off: they stay as before.
+
+What the relay has done, by kind and state (`stored`, `announced`, `deleted_processed`, `deleted_expired`), is the metric
+`yt_media_handoff`. Files deleted without analysis (`deleted_expired`) mean analysis did not answer within the deadline.
+
+**Alert `MediaPastDeadline`**: files are still in storage an hour after their deadline. The relay could not delete them (its log
+says "deleting an analysed file failed", with the storage's answer), or the relay is stopped. When storage answers again, the
+next round deletes them.

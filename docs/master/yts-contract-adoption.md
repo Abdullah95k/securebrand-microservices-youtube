@@ -2,7 +2,7 @@
 
 Written by the yts session on 6 November 2026 (Iraq time), from `main` `9a0e248`. A plan: the outbox and relay (fix 12) and the
 `content.*` mapping (REQ-021) are built from it in small PRs, in the order of section 7. **Updated 7 November:** the owner's two
-answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5. PR 4 (the relay) built: section 4. PR 5 (the chart) built: section 7. PR 6 (candidates and coverage) built: section 7.
+answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5. PR 4 (the relay) built: section 4. PR 5 (the chart) built: section 7. PR 6 (candidates and coverage) built: section 7. PR 7 (the media hand-off) built: section 7; fix 12 is complete.
 
 **Contract version:** v1.2.0 (`github.com/abdullah95k/securebrand-contracts`). The owner approved v1.0.0 (D-016); v1.1.0 and v1.2.0 only
 add fields and checks, and the master agreed to v1.2.0 (6 November). Every message goes out with `sb-contract: 1.2.0`.
@@ -52,7 +52,7 @@ From the README's rules (section "The rules collectors follow") and the field ma
 | `posts` and `post_snapshots` | `Post` (`COMMUNITY`) and `Metrics` | an attached video is a link, a re-shared post a `Reshare` |
 | `playlists`, `playlist_items` | `Playlist` `yt:playlist:<id>` | |
 | `authors`, `author_profiles` | `Account` (`NOT_MONITORED`) | enriched commenters carry their About links |
-| `media` | `Media`, `MediaReady` and `MediaDeleted` | `owner_kind` post or account; SHA-256 and the perceptual hash; `required_consumers: [sb-analysis]`; the file is removed once acknowledged (or at `delete_after`), the `Media` record stays |
+| `media` | `Media`, `MediaReady` and `MediaDeleted` | `owner_kind` post (a thumbnail) or account (an avatar or banner); the SHA-256 (no perceptual hash yet: the field is optional, and yts doesn't decode images); `required_consumers: [sb-analysis]`; the file is removed once acknowledged (or at `delete_after`), the `Media` record stays |
 | `candidates` | `Candidate` | source keyword search, official API search, commenter, link…; outcome added, dormant, not relevant, second list; never `CAPPED` |
 | the usage tables (fix 5) and the queue | `JobCoverage` | hourly roll-up per kind, with `job_count` and the reasons from the dead and failing jobs |
 
@@ -107,7 +107,7 @@ what is waiting.
   - the comment engine: comments, edits, deletions, commenters;
   - enrichment: commenters' profiles.
 
-  Discovery and the coverage roll-ups follow in PR 6, media in PR 7.
+  Discovery and the coverage roll-ups were added in PR 6; stored images and the hand-off in PR 7.
 - **When an event is written (built):**
   - a content event (channel, video, post, comment, playlist with its items, commenter with their profile) when what is stored
     changed, counts and bookkeeping aside. The first read, an edit, a removal and a deletion are changes; a read that changes
@@ -177,7 +177,7 @@ checks it matches.
   provenance, the outbox row's ID.
 - Keys: the same contract IDs as the `content.*` message from the same row, so the two stay on matching partitions.
 - A comment's counts alone have no `yt.*` topic (none was created for them): `content.metrics.v1` carries them, and the next
-  `yt.comment.v1` message has them too. `yt.media.v1` comes with the media hand-off (PR 7).
+  `yt.comment.v1` message has them too. `yt.media.v1` (PR 7) carries a stored image's row when it is stored, announced and deleted.
 - Go code in `gen/go/securebrand/yt/v1`, generated with buf 1.50.0 and protoc-gen-go 1.35.2 (`buf.yaml`, `buf.gen.yaml`; run
   `buf generate` after changing the `.proto` file).
 - CI job `proto`: `buf lint`; the committed code must equal what `buf generate` writes; `buf breaking` against `main` (rule set
@@ -205,7 +205,7 @@ checks it matches.
 | 4 | The relay: franz-go transactions, leases, metrics, alerts; end-to-end tests against an in-memory Kafka. **Built** | 4 days |
 | 5 | The chart: the relay Deployment, its credentials, the network policy to Kafka and the registry. **Built:** `yts-relay` (off by default and in `values-production.yaml`, for the pilot without Kafka; `relay.enabled=true` turns it on, `relay.canary=true` while the canary runs), one replica, `Recreate`, the platform's credentials mounted for the `KAFKA_*` files, ops port 9103 scraped and allowed from monitoring; Kafka's ports come from `KAFKA_BROKERS` at install, as before. The registry isn't needed: the relay reads nothing from it | 1 day |
 | 6 | Discovery candidates and the hourly coverage roll-ups. **Built:** see below | 2 days |
-| 7 | The media hand-off: media ready; a consumer of `content.media.processed.v1` (yts's own consumer group); deleting each file once acknowledged or at its deadline, with `content.media.deleted.v1`; metrics and an alert for files past their deadline | 3 days |
+| 7 | The media hand-off: media ready; a consumer of `content.media.processed.v1` (yts's own consumer group); deleting each file once acknowledged or at its deadline, with `content.media.deleted.v1`; metrics and an alert for files past their deadline. **Built:** see below | 3 days |
 
 **PR 6, as built:**
 - **Candidates** (`discovery.candidate.v1`, key the account ID, checked by the contract's `Candidate` rule): an event when discovery
@@ -222,6 +222,29 @@ checks it matches.
 - **A fix to PR 1:** a video first seen through an official-API search hit is stored with the API's title and time, and PR 1 sent it
   at once. It now waits for its first website read, which sends it with the website's data; both mappings also refuse such a video
   as a guard. The API's data never reaches the platform's events.
+
+**PR 7, as built:**
+- **The record** (`content.media.v1`, key the media ID `yt:media:<kind>:<video or channel>:<first 16 hex of the SHA-256>`): one
+  event when an image is first stored (a new picture of the same thing is a new image), for every kind yts stores: thumbnails
+  (owner the video, role `THUMBNAIL`), channel avatars and banners and commenters' avatars (owner the account, `PROFILE_PICTURE`,
+  `BANNER`). Its provenance says `image` and the proxy's country, like any other read.
+- **The hand-off** runs in the relay, so only once Kafka is there: without it (the pilot) nothing is announced or deleted.
+  - Every minute, each stored thumbnail not yet announced gets its deadline (72 hours, `-media-keep`, at least 24 hours) and a
+    `content.media.ready.v1` (bucket, key with the store's prefix, SHA-256, size, type; `required_consumers: [sb-analysis]`;
+    `attempt` 1).
+  - The acknowledgements are read from `content.media.processed.v1` in consumer group `yts-media` (committed records only; offsets
+    committed once recorded), keeping those with `platform = yt` from a required consumer, one row per file and consumer
+    (`media_acks`). After `FAILED_RETRYABLE` the file is announced again, at most 4 announcements in all; the deadline stays.
+  - Every 10 minutes, each file every required consumer acknowledged (processed, skipped, or failed for good), or whose deadline
+    passed, is deleted from storage, recorded (`deleted_at`, reason processed or expired) and announced on
+    `content.media.deleted.v1`. A file storage won't delete stays and is tried next round.
+  - Avatars and banners are not handed off (the owner's decision names thumbnails and post images); they stay as before.
+- `yt.media.v1` carries the row each time (stored, announced, deleted).
+- Migration `0013_media_handoff.sql` (additions only): five columns on `media`, the table `media_acks`.
+- Erasure deletes an image's events and acknowledgements with it; a file already deleted after the hand-off isn't counted again.
+- Metrics `yt_media_handoff{kind,state}`, `yt_media_past_deadline`, `yt_media_announced_total`, `yt_media_acks_total`,
+  `yt_media_deleted_total`, `yt_media_delete_failures_total`; `yt_media_bytes` now counts only files still in storage. Alert
+  `MediaPastDeadline`; runbook section 17. Chart: `relay.media.handoff`, `keep`, `group`, `consumers`.
 
 About 4–5 weeks in all, matching the contract README's estimate for yts (4–5 weeks with the new fields of fixes 19–21). The owner
 answered both open points on 7 November: sent rows go after 7 days, and `buf generate` may run here.

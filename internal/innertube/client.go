@@ -298,10 +298,13 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 		}
 		if outcome == proxypool.OK {
 			out = r
-			if cl != proxypool.ClassCDN {
-				// Where the data came from, for the outbox's events.
-				provenance.From(ctx).Record(label, r.RawRef, px.Country())
+			// Where the data came from, for the outbox's events (an image:
+			// the stored file is its record).
+			op := label
+			if cl == proxypool.ClassCDN {
+				op = "image"
 			}
+			provenance.From(ctx).Record(op, r.RawRef, px.Country())
 		}
 		return outcome, err
 	})

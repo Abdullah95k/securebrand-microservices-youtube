@@ -142,6 +142,13 @@ relay:
   batch: 500              # events per Kafka transaction
   canary: false           # the contract's canary checks (D-012) while the canary runs
   opsPort: 9103           # /metrics, /healthz and /readyz (the database and Kafka)
+  # The media hand-off (contract R5), with object storage on: thumbnails are
+  # announced to analysis and deleted once acknowledged, or at the deadline.
+  media:
+    handoff: true
+    keep: 72h             # an announced image's deadline (at least 24h)
+    group: yts-media      # the Kafka consumer group reading the acknowledgements
+    consumers: [sb-analysis]
   extraArgs: []
   goMemLimit: 200MiB
   resources:

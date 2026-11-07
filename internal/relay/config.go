@@ -134,16 +134,34 @@ const TransactionalID = "yts-relay"
 // never creating a topic (the platform owns them), keys hashed as Kafka's
 // own clients do so a post's messages share a partition.
 func (c Config) Options() ([]kgo.Opt, error) {
-	opts := []kgo.Opt{
-		kgo.SeedBrokers(c.Brokers...),
+	return c.options(
 		kgo.TransactionalID(TransactionalID),
 		kgo.TransactionTimeout(time.Minute),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.StickyKeyPartitioner(nil)),
-		kgo.ProducerBatchMaxBytes(1 << 20),
-		kgo.RecordDeliveryTimeout(2 * time.Minute),
+		kgo.ProducerBatchMaxBytes(1<<20),
+		kgo.RecordDeliveryTimeout(2*time.Minute),
 		kgo.ClientID("yts-relay"),
-	}
+	)
+}
+
+// ConsumerOptions are a reader's options: in consumer group group, the
+// topics given, committed records only, offsets committed by the caller
+// once what it read is recorded, from the start when the group has none.
+func (c Config) ConsumerOptions(group string, topics ...string) ([]kgo.Opt, error) {
+	return c.options(
+		kgo.ConsumerGroup(group),
+		kgo.ConsumeTopics(topics...),
+		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+		kgo.DisableAutoCommit(),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.ClientID("yts-relay-"+group),
+	)
+}
+
+// options adds the brokers, credentials and TLS to extra.
+func (c Config) options(extra ...kgo.Opt) ([]kgo.Opt, error) {
+	opts := append([]kgo.Opt{kgo.SeedBrokers(c.Brokers...)}, extra...)
 	if c.User != "" {
 		m, err := c.mechanism()
 		if err != nil {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
@@ -218,24 +219,55 @@ func (s *Service) fetch(ctx context.Context, j queue.Job) (time.Time, error) {
 	if channelID != "" {
 		ch = &channelID
 	}
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO media (kind, entity_id, channel_id, sha256, object_key, source_url, content_type, bytes, first_seen, last_seen)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) ON CONFLICT (kind, entity_id, sha256) DO UPDATE SET last_seen = EXCLUDED.last_seen`,
-		kind, id, ch, hash, key, src, ct, len(resp.Body), now); err != nil {
-		return time.Time{}, err
-	}
-	return next, nil
+	// The row and its record event (fix 12) in one transaction.
+	ev := outbox.New(ctx, now)
+	err = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		var inserted bool
+		if err := tx.QueryRow(ctx, `INSERT INTO media (kind, entity_id, channel_id, sha256, object_key, source_url, content_type, bytes, first_seen, last_seen)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) ON CONFLICT (kind, entity_id, sha256) DO UPDATE SET last_seen = EXCLUDED.last_seen
+			RETURNING (xmax = 0)`, kind, id, ch, hash, key, src, ct, len(resp.Body), now).Scan(&inserted); err != nil {
+			return err
+		}
+		if !inserted {
+			return nil
+		}
+		_, err := ev.MediaEvent(ctx, tx, outbox.KindMedia, outbox.MediaKey{Kind: kind, EntityID: id, SHA256: hash})
+		return err
+	})
+	return next, err
 }
 
-// Keys lists the stored objects of an erasure target (privacy kind and ID).
+// HandoffKinds are the images announced to analysis and deleted once it is
+// done (the owner: thumbnails and community-post images, kept until
+// analysed; post images come with fix 21). Avatars and banners are kept.
+var HandoffKinds = []string{Thumb}
+
+// Location is where a store keeps objects, for the hand-off's messages:
+// the bucket, and the prefix in front of every key.
+func Location(s Store) (bucket, prefix string) {
+	switch st := s.(type) {
+	case *S3Store:
+		return st.Bucket, st.Prefix
+	case FileStore:
+		return "file:" + st.Dir, st.Prefix
+	case *FileStore:
+		return "file:" + st.Dir, st.Prefix
+	}
+	return "", ""
+}
+
+// Keys lists the stored objects of an erasure target (privacy kind and ID):
+// those still in storage (not deleted after the hand-off).
 func Keys(ctx context.Context, q db.Querier, kind, id string) ([]string, error) {
 	var sql string
 	switch kind {
 	case privacy.Author:
-		sql = `SELECT object_key FROM media WHERE kind = 'author_avatar' AND entity_id = $1`
+		sql = `SELECT object_key FROM media WHERE kind = 'author_avatar' AND entity_id = $1 AND deleted_at IS NULL`
 	case privacy.Channel:
-		sql = `SELECT object_key FROM media WHERE kind IN ('avatar', 'banner', 'thumb') AND (entity_id = $1 OR channel_id = $1)`
+		sql = `SELECT object_key FROM media WHERE kind IN ('avatar', 'banner', 'thumb') AND (entity_id = $1 OR channel_id = $1)
+			AND deleted_at IS NULL`
 	case privacy.Video:
-		sql = `SELECT object_key FROM media WHERE kind = 'thumb' AND entity_id = $1`
+		sql = `SELECT object_key FROM media WHERE kind = 'thumb' AND entity_id = $1 AND deleted_at IS NULL`
 	default:
 		return nil, nil
 	}

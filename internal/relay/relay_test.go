@@ -10,6 +10,7 @@ import (
 
 	"github.com/abdullah95k/securebrand-contracts/conformance"
 	contentv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/content/v1"
+	mediav1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/media/v1"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -19,6 +20,8 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/collecttest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/contract"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db/dbtest"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/handoff"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/metrics"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/relay"
@@ -112,10 +115,27 @@ func TestRelaySendsTheOutbox(t *testing.T) {
 	if n, err := ev.Coverage(ctx, run.Pool, time.Now().Add(-2*time.Hour), time.Now().Add(2*time.Hour)); err != nil || n == 0 {
 		t.Fatalf("coverage roll-ups: %d (%v)", n, err)
 	}
+	// The thumbnails are announced; one is analysed and deleted.
+	h := &handoff.Handoff{Pool: run.Pool, Store: run.Store, Kinds: media.HandoffKinds, Consumers: contract.DefaultConsumers, Log: quiet}
+	if n, err := h.Announce(ctx, 100); err != nil || n == 0 {
+		t.Fatalf("announced %d (%v)", n, err)
+	}
+	var thumb string
+	if err := run.Pool.QueryRow(ctx, `SELECT 'yt:media:thumb:' || entity_id || ':' || left(sha256, 16) FROM media WHERE kind = 'thumb' LIMIT 1`).Scan(&thumb); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Process(ctx, &mediav1.MediaProcessed{MediaId: thumb, Consumer: "sb-analysis", Platform: "yt",
+		Status: mediav1.ProcessStatus_PROCESS_STATUS_PROCESSED}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := h.DeleteDue(ctx, 100); err != nil || n != 1 {
+		t.Fatalf("deleted %d (%v)", n, err)
+	}
 	c, cl := kafka(t)
 	reg := metrics.New()
 	r := newRelay(run.Pool, cl, reg)
 	r.Content.Keywords = func() contract.KeywordIDs { return run.Live.Matcher() }
+	r.Content.MediaBucket, r.Content.MediaPrefix = media.Location(run.Store)
 	var total int
 	if err := run.Pool.QueryRow(context.Background(), `SELECT count(*) FROM event_outbox`).Scan(&total); err != nil {
 		t.Fatal(err)
@@ -167,6 +187,16 @@ func TestRelaySendsTheOutbox(t *testing.T) {
 			var v ytv1.Video
 			if err := proto.Unmarshal(rec.Value, &v); err != nil || "yt:post:"+v.GetId() != string(rec.Key) || v.GetEvent().GetEventId() == "" {
 				t.Errorf("yt.video %q: %v", rec.Key, err)
+			}
+		case contract.TopicMediaReady:
+			var m mediav1.MediaReady
+			if err := proto.Unmarshal(rec.Value, &m); err != nil || m.GetMediaId() != string(rec.Key) || !strings.HasPrefix(m.GetObject().GetBucket(), "file:") {
+				t.Errorf("content.media.ready %q: %v (%v)", rec.Key, &m, err)
+			}
+		case contract.TopicMediaDeleted:
+			var m mediav1.MediaDeleted
+			if err := proto.Unmarshal(rec.Value, &m); err != nil || string(rec.Key) != thumb || m.GetReason() != mediav1.DeleteReason_DELETE_REASON_PROCESSED {
+				t.Errorf("content.media.deleted %q: %v (%v)", rec.Key, &m, err)
 			}
 		}
 	}

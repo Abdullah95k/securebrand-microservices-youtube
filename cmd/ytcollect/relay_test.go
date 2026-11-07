@@ -47,6 +47,9 @@ func TestRelayCommand(t *testing.T) {
 	if err := relayCmd(ctx, pool, quiet, []string{"-batch", "0"}); err == nil {
 		t.Error("-batch 0 must be refused")
 	}
+	if err := relayCmd(ctx, pool, quiet, []string{"-media-keep", "1h"}); err == nil || !strings.Contains(err.Error(), "at least 24h") {
+		t.Errorf("a deadline under the contract's 24 hours must be refused: %v", err)
+	}
 	rctx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- relayCmd(rctx, pool, quiet, []string{"-metrics-addr", "", "-idle", "50ms"}) }()

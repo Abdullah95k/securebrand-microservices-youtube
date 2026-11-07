@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **7 November 2026, 04:49 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **7 November 2026 (Iraq time)**.
 
 ## Where it stands
 
@@ -23,8 +23,10 @@ The current state of the YouTube collector, for the owner and the master session
     the `yt.*` messages, is merged** ([#62](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/62)): the platform events with every field yts holds, generated with buf, checked in CI. **PR 4, the relay, is
     merged** ([#63](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/63)): `ytcollect relay` sends the outbox to Kafka, both message sets in one transaction. **PR 5, the relay in the
     chart, is merged** ([#64](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/64)): off until Kafka is there; `relay.enabled=true` turns it on. **PR 6, discovery candidates
-    and hourly coverage, is in review** ([#65](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/65)); it also stops a video first seen through the official API from going out before its
-    website read.
+    and hourly coverage, is merged** ([#65](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/65)); it also stops a video first seen through the official API from going out before its
+    website read. **PR 7, the media hand-off, is in review:** thumbnails are announced to analysis, and each file is deleted once
+    analysis acknowledges it, or at its 72-hour deadline; the record stays. It runs in the relay, so the pilot (no Kafka) keeps
+    every image.
   - **Next:** the pilot (fix 11) when the platform is ready (below). Until the relay runs, events wait in the outbox (roughly
     100 MB a day at 1,000 channels).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
@@ -84,6 +86,13 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- Fix 12, PR 7: migration `0013_media_handoff.sql` (five new columns on `media`, a new table `media_acks`); the relay publishes
+  `content.media.v1`, `content.media.ready.v1`, `content.media.deleted.v1` and `yt.media.v1`, and **reads**
+  `content.media.processed.v1` in consumer group `yts-media`; relay flags `-media-handoff`, `-media-keep`, `-media-group`,
+  `-media-consumers` and chart values `relay.media.*`; metrics `yt_media_handoff`, `yt_media_past_deadline`,
+  `yt_media_announced_total`, `yt_media_acks_total`, `yt_media_deleted_total`, `yt_media_delete_failures_total`; alert
+  `MediaPastDeadline`; runbook §17. One change of meaning: `yt_media_bytes` now counts only files still in storage. Image
+  downloads now appear in the provenance trail (operation `image`).
 - Fix 12, PR 6: the scheduler's hourly "coverage roll-up" task; candidates and coverage go to `discovery.candidate.v1` and
   `collection.coverage.v1`.
 - Fix 12, PR 5: the chart's `yts-relay` Deployment and Service (off by default and in production values), values `relay.*`, the

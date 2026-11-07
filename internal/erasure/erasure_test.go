@@ -228,6 +228,27 @@ func TestEraseDeletesImages(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A thumbnail already analysed and deleted from storage (its row stays),
+	// the images' hand-off events, and an acknowledgement.
+	if _, err := pool.Exec(ctx, `INSERT INTO media (kind, entity_id, channel_id, sha256, object_key, source_url, content_type, bytes,
+		first_seen, last_seen, announced_at, delete_after, attempt, deleted_at, delete_reason)
+		VALUES ('thumb', 'fakeEv1', $1, 'eeee', 'media/thumb/fakeEv1/eeee.jpg', 'x', 'image/jpeg', 1, now(), now(), now(), now(), 1, now(), 'processed')`,
+		ch); err != nil {
+		t.Fatal(err)
+	}
+	ev := outbox.New(ctx, time.Now())
+	for _, k := range []outbox.MediaKey{{Kind: "avatar", EntityID: ch, SHA256: "media/avatar/" + ch + "/aaaa.jpg"},
+		{Kind: "thumb", EntityID: "fakeEv1", SHA256: "eeee"}, {Kind: "author_avatar", EntityID: authorY, SHA256: "media/author_avatar/" + authorY + "/cccc.jpg"}} {
+		for _, kind := range []string{outbox.KindMedia, outbox.KindMediaReady, outbox.KindMediaDeleted} {
+			if n, err := ev.MediaEvent(ctx, pool, kind, k); err != nil || n != 1 {
+				t.Fatalf("%s event: %d %v", kind, n, err)
+			}
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO media_acks (kind, entity_id, sha256, consumer, status, received_at)
+		VALUES ('thumb', 'fakeEv1', 'eeee', 'sb-analysis', 'processed', now())`); err != nil {
+		t.Fatal(err)
+	}
 
 	// Without storage settings, an erasure with images fails (and retries)
 	// rather than leaving the files behind.
@@ -256,8 +277,18 @@ func TestEraseDeletesImages(t *testing.T) {
 	if n := count(t, pool, `SELECT count(*) FROM media WHERE channel_id = $1 OR entity_id = $1`, ch); n != 0 {
 		t.Errorf("%d media rows left", n)
 	}
+	// Two files were in storage; the analysed thumbnail's was already gone.
 	if n := count(t, pool, `SELECT count(*) FROM erasure_audit WHERE request_id = $1 AND step = 'media files' AND rows = 2`, id); n != 1 {
 		t.Error("the audit log counts the deleted files")
+	}
+	if n := count(t, pool, `SELECT count(*) FROM event_outbox WHERE kind LIKE 'media%' AND entity_id NOT LIKE 'author_avatar:%'`); n != 0 {
+		t.Errorf("%d of the channel's media events left", n)
+	}
+	if n := count(t, pool, `SELECT count(*) FROM event_outbox WHERE kind LIKE 'media%' AND entity_id LIKE 'author_avatar:%'`); n != 3 {
+		t.Errorf("the commenter's avatar events: %d, want them kept", n)
+	}
+	if n := count(t, pool, `SELECT count(*) FROM media_acks`); n != 0 {
+		t.Errorf("%d acknowledgements left", n)
 	}
 
 	// A thumbnail row that comes back (a restored backup) is erased again.

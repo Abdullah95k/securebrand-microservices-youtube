@@ -43,6 +43,11 @@ func TestDatabaseMetrics(t *testing.T) {
 	}
 	_, _ = pool.Exec(ctx, `INSERT INTO archive_index (table_name, month, part, object_key, rows, bytes, sha256, scrubbed_at)
 		VALUES ('comment_versions', '2025-01-01', 1, 'k', 10, 1234, 'x', now())`)
+	// Two thumbnails: one deleted after analysis, one past its deadline.
+	_, _ = pool.Exec(ctx, `INSERT INTO media (kind, entity_id, sha256, object_key, source_url, content_type, bytes, first_seen, last_seen,
+		announced_at, delete_after, attempt, deleted_at, delete_reason) VALUES
+		('thumb', 'fakeMONv1', 'a', 'k1', 'x', 'image/jpeg', 100, $1, $1, $1, $1, 1, $1, 'processed'),
+		('thumb', 'fakeMONv2', 'b', 'k2', 'x', 'image/jpeg', 200, $1, $1, $1, $1, 1, NULL, NULL)`, now.Add(-3*time.Hour))
 	reg := metrics.New()
 	if err := monitor.DB(ctx, pool, reg, now); err != nil {
 		t.Fatal(err)
@@ -64,6 +69,10 @@ func TestDatabaseMetrics(t *testing.T) {
 		`yt_archive_bytes{table="comment_versions"} 1234`,
 		"yt_archive_unscrubbed_seconds 0",
 		`yt_partition_oldest_age_days{table="channel_snapshots"}`,
+		`yt_media_bytes{kind="thumb"} 200`,
+		`yt_media_handoff{kind="thumb",state="deleted_processed"} 1`,
+		`yt_media_handoff{kind="thumb",state="announced"} 1`,
+		"yt_media_past_deadline 1",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics miss %q", want)

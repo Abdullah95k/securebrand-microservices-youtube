@@ -9,6 +9,9 @@
 // candidates and the coverage roll-ups have none either: their contract
 // topics (discovery.candidate.v1, collection.coverage.v1) carry everything.
 //
+// A stored image's row goes to yt.media.v1 when it is stored, announced to
+// analysis and deleted from storage (the media hand-off).
+//
 // A video first stored from an official-API search hit and never read on
 // the website (title and time still the API's) is not sent: its first
 // website read is.
@@ -49,6 +52,7 @@ func account(r outbox.Row) string  { return "yt:account:" + r.EntityID }
 func post(r outbox.Row) string     { return "yt:post:" + r.EntityID }
 func postKey(r outbox.Row) string  { return "yt:post:" + r.PartitionKey }
 func playlist(r outbox.Row) string { return "yt:playlist:" + r.EntityID }
+func media(r outbox.Row) string    { return "yt:media:" + r.EntityID }
 
 // kinds maps the outbox kinds to their topics. comment_metrics has none.
 var kinds = map[string]kind{
@@ -61,13 +65,21 @@ var kinds = map[string]kind{
 	outbox.KindComment:         {"yt.comment.v1", func() proto.Message { return &ytv1.Comment{} }, postKey},
 	outbox.KindPlaylist:        {"yt.playlist.v1", func() proto.Message { return &ytv1.Playlist{} }, playlist},
 	outbox.KindAuthor:          {"yt.author_profile.v1", func() proto.Message { return &ytv1.AuthorProfile{} }, account},
+	// A stored image's row when it is stored, announced and deleted.
+	outbox.KindMedia:        {"yt.media.v1", func() proto.Message { return &ytv1.Media{} }, media},
+	outbox.KindMediaReady:   {"yt.media.v1", func() proto.Message { return &ytv1.Media{} }, media},
+	outbox.KindMediaDeleted: {"yt.media.v1", func() proto.Message { return &ytv1.Media{} }, media},
 }
 
 // Topics lists the yt.* topics yts publishes.
 func Topics() []string {
+	seen := map[string]bool{}
 	out := make([]string, 0, len(kinds))
 	for _, k := range kinds {
-		out = append(out, k.topic)
+		if !seen[k.topic] {
+			seen[k.topic] = true
+			out = append(out, k.topic)
+		}
 	}
 	return out
 }

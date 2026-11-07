@@ -44,7 +44,8 @@ type Event struct {
 	// with "yt|" before the hash input (internal/ytevents).
 	EventId string `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
 	// The outbox kind: channel, channel_snapshot, video, video_metrics,
-	// post, post_metrics, comment, playlist, author.
+	// post, post_metrics, comment, playlist, author; media, media_ready,
+	// media_deleted.
 	Kind string `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
 	// When yts read it; version is that in microseconds (the highest wins).
 	ObservedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
@@ -2443,6 +2444,182 @@ func (x *AuthorProfile) GetMonitored() bool {
 	return false
 }
 
+// Media is a stored image (topic yt.media.v1; key the media ID,
+// "yt:media:<kind>:<entity_id>:<first 16 hex of sha256>"): sent when it is
+// stored, announced to analysis, and deleted from storage, with the row as
+// it is then. The row stays after the file is gone.
+type Media struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Event *Event `protobuf:"bytes,1,opt,name=event,proto3" json:"event,omitempty"`
+	// thumb, avatar, banner, author_avatar.
+	Kind string `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	// The video, channel or commenter it belongs to.
+	EntityId  string  `protobuf:"bytes,3,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`
+	ChannelId *string `protobuf:"bytes,4,opt,name=channel_id,json=channelId,proto3,oneof" json:"channel_id,omitempty"`
+	Sha256    string  `protobuf:"bytes,5,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	// The key in storage, without the store's prefix.
+	ObjectKey   string                 `protobuf:"bytes,6,opt,name=object_key,json=objectKey,proto3" json:"object_key,omitempty"`
+	SourceUrl   string                 `protobuf:"bytes,7,opt,name=source_url,json=sourceUrl,proto3" json:"source_url,omitempty"`
+	ContentType string                 `protobuf:"bytes,8,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
+	Bytes       int64                  `protobuf:"varint,9,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	FirstSeen   *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=first_seen,json=firstSeen,proto3" json:"first_seen,omitempty"`
+	LastSeen    *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	// The hand-off (content.media.ready.v1): first announced, the deadline,
+	// and how many announcements (1, and up to 3 more after retryable
+	// failures).
+	AnnouncedAt *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=announced_at,json=announcedAt,proto3" json:"announced_at,omitempty"`
+	DeleteAfter *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=delete_after,json=deleteAfter,proto3" json:"delete_after,omitempty"`
+	Attempt     int32                  `protobuf:"varint,14,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	// The file was deleted from storage: processed or expired.
+	DeletedAt    *timestamppb.Timestamp `protobuf:"bytes,15,opt,name=deleted_at,json=deletedAt,proto3" json:"deleted_at,omitempty"`
+	DeleteReason *string                `protobuf:"bytes,16,opt,name=delete_reason,json=deleteReason,proto3,oneof" json:"delete_reason,omitempty"`
+}
+
+func (x *Media) Reset() {
+	*x = Media{}
+	mi := &file_securebrand_yt_v1_yt_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Media) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Media) ProtoMessage() {}
+
+func (x *Media) ProtoReflect() protoreflect.Message {
+	mi := &file_securebrand_yt_v1_yt_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Media.ProtoReflect.Descriptor instead.
+func (*Media) Descriptor() ([]byte, []int) {
+	return file_securebrand_yt_v1_yt_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *Media) GetEvent() *Event {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *Media) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *Media) GetEntityId() string {
+	if x != nil {
+		return x.EntityId
+	}
+	return ""
+}
+
+func (x *Media) GetChannelId() string {
+	if x != nil && x.ChannelId != nil {
+		return *x.ChannelId
+	}
+	return ""
+}
+
+func (x *Media) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+func (x *Media) GetObjectKey() string {
+	if x != nil {
+		return x.ObjectKey
+	}
+	return ""
+}
+
+func (x *Media) GetSourceUrl() string {
+	if x != nil {
+		return x.SourceUrl
+	}
+	return ""
+}
+
+func (x *Media) GetContentType() string {
+	if x != nil {
+		return x.ContentType
+	}
+	return ""
+}
+
+func (x *Media) GetBytes() int64 {
+	if x != nil {
+		return x.Bytes
+	}
+	return 0
+}
+
+func (x *Media) GetFirstSeen() *timestamppb.Timestamp {
+	if x != nil {
+		return x.FirstSeen
+	}
+	return nil
+}
+
+func (x *Media) GetLastSeen() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastSeen
+	}
+	return nil
+}
+
+func (x *Media) GetAnnouncedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AnnouncedAt
+	}
+	return nil
+}
+
+func (x *Media) GetDeleteAfter() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DeleteAfter
+	}
+	return nil
+}
+
+func (x *Media) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *Media) GetDeletedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DeletedAt
+	}
+	return nil
+}
+
+func (x *Media) GetDeleteReason() string {
+	if x != nil && x.DeleteReason != nil {
+		return *x.DeleteReason
+	}
+	return ""
+}
+
 var File_securebrand_yt_v1_yt_proto protoreflect.FileDescriptor
 
 var file_securebrand_yt_v1_yt_proto_rawDesc = []byte{
@@ -3097,7 +3274,50 @@ var file_securebrand_yt_v1_yt_proto_rawDesc = []byte{
 	0x6d, 0x65, 0x42, 0x0d, 0x0a, 0x0b, 0x5f, 0x61, 0x76, 0x61, 0x74, 0x61, 0x72, 0x5f, 0x75, 0x72,
 	0x6c, 0x42, 0x10, 0x0a, 0x0e, 0x5f, 0x63, 0x6f, 0x6d, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x5f, 0x73,
 	0x65, 0x65, 0x6e, 0x42, 0x14, 0x0a, 0x12, 0x5f, 0x72, 0x65, 0x6c, 0x65, 0x76, 0x61, 0x6e, 0x74,
-	0x5f, 0x63, 0x6f, 0x6d, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x42, 0x58, 0x5a, 0x56, 0x67, 0x69, 0x74,
+	0x5f, 0x63, 0x6f, 0x6d, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x22, 0xad, 0x05, 0x0a, 0x05, 0x4d, 0x65,
+	0x64, 0x69, 0x61, 0x12, 0x2e, 0x0a, 0x05, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x18, 0x2e, 0x73, 0x65, 0x63, 0x75, 0x72, 0x65, 0x62, 0x72, 0x61, 0x6e, 0x64,
+	0x2e, 0x79, 0x74, 0x2e, 0x76, 0x31, 0x2e, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x52, 0x05, 0x65, 0x76,
+	0x65, 0x6e, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x6b, 0x69, 0x6e, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x04, 0x6b, 0x69, 0x6e, 0x64, 0x12, 0x1b, 0x0a, 0x09, 0x65, 0x6e, 0x74, 0x69, 0x74,
+	0x79, 0x5f, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x65, 0x6e, 0x74, 0x69,
+	0x74, 0x79, 0x49, 0x64, 0x12, 0x22, 0x0a, 0x0a, 0x63, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x5f,
+	0x69, 0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x48, 0x00, 0x52, 0x09, 0x63, 0x68, 0x61, 0x6e,
+	0x6e, 0x65, 0x6c, 0x49, 0x64, 0x88, 0x01, 0x01, 0x12, 0x16, 0x0a, 0x06, 0x73, 0x68, 0x61, 0x32,
+	0x35, 0x36, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x68, 0x61, 0x32, 0x35, 0x36,
+	0x12, 0x1d, 0x0a, 0x0a, 0x6f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x06,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x6f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x4b, 0x65, 0x79, 0x12,
+	0x1d, 0x0a, 0x0a, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x5f, 0x75, 0x72, 0x6c, 0x18, 0x07, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x09, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x55, 0x72, 0x6c, 0x12, 0x21,
+	0x0a, 0x0c, 0x63, 0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x5f, 0x74, 0x79, 0x70, 0x65, 0x18, 0x08,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x63, 0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x54, 0x79, 0x70,
+	0x65, 0x12, 0x14, 0x0a, 0x05, 0x62, 0x79, 0x74, 0x65, 0x73, 0x18, 0x09, 0x20, 0x01, 0x28, 0x03,
+	0x52, 0x05, 0x62, 0x79, 0x74, 0x65, 0x73, 0x12, 0x39, 0x0a, 0x0a, 0x66, 0x69, 0x72, 0x73, 0x74,
+	0x5f, 0x73, 0x65, 0x65, 0x6e, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f,
+	0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x54, 0x69,
+	0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52, 0x09, 0x66, 0x69, 0x72, 0x73, 0x74, 0x53, 0x65,
+	0x65, 0x6e, 0x12, 0x37, 0x0a, 0x09, 0x6c, 0x61, 0x73, 0x74, 0x5f, 0x73, 0x65, 0x65, 0x6e, 0x18,
+	0x0b, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70,
+	0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d,
+	0x70, 0x52, 0x08, 0x6c, 0x61, 0x73, 0x74, 0x53, 0x65, 0x65, 0x6e, 0x12, 0x3d, 0x0a, 0x0c, 0x61,
+	0x6e, 0x6e, 0x6f, 0x75, 0x6e, 0x63, 0x65, 0x64, 0x5f, 0x61, 0x74, 0x18, 0x0c, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f,
+	0x62, 0x75, 0x66, 0x2e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52, 0x0b, 0x61,
+	0x6e, 0x6e, 0x6f, 0x75, 0x6e, 0x63, 0x65, 0x64, 0x41, 0x74, 0x12, 0x3d, 0x0a, 0x0c, 0x64, 0x65,
+	0x6c, 0x65, 0x74, 0x65, 0x5f, 0x61, 0x66, 0x74, 0x65, 0x72, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x0b,
+	0x32, 0x1a, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62,
+	0x75, 0x66, 0x2e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52, 0x0b, 0x64, 0x65,
+	0x6c, 0x65, 0x74, 0x65, 0x41, 0x66, 0x74, 0x65, 0x72, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x74, 0x74,
+	0x65, 0x6d, 0x70, 0x74, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x05, 0x52, 0x07, 0x61, 0x74, 0x74, 0x65,
+	0x6d, 0x70, 0x74, 0x12, 0x39, 0x0a, 0x0a, 0x64, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x5f, 0x61,
+	0x74, 0x18, 0x0f, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65,
+	0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74,
+	0x61, 0x6d, 0x70, 0x52, 0x09, 0x64, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x41, 0x74, 0x12, 0x28,
+	0x0a, 0x0d, 0x64, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x5f, 0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x18,
+	0x10, 0x20, 0x01, 0x28, 0x09, 0x48, 0x01, 0x52, 0x0c, 0x64, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x52,
+	0x65, 0x61, 0x73, 0x6f, 0x6e, 0x88, 0x01, 0x01, 0x42, 0x0d, 0x0a, 0x0b, 0x5f, 0x63, 0x68, 0x61,
+	0x6e, 0x6e, 0x65, 0x6c, 0x5f, 0x69, 0x64, 0x42, 0x10, 0x0a, 0x0e, 0x5f, 0x64, 0x65, 0x6c, 0x65,
+	0x74, 0x65, 0x5f, 0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x42, 0x58, 0x5a, 0x56, 0x67, 0x69, 0x74,
 	0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x41, 0x62, 0x64, 0x75, 0x6c, 0x6c, 0x61, 0x68,
 	0x39, 0x35, 0x6b, 0x2f, 0x73, 0x65, 0x63, 0x75, 0x72, 0x65, 0x62, 0x72, 0x61, 0x6e, 0x64, 0x2d,
 	0x6d, 0x69, 0x63, 0x72, 0x6f, 0x73, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x73, 0x2d, 0x79, 0x6f,
@@ -3118,7 +3338,7 @@ func file_securebrand_yt_v1_yt_proto_rawDescGZIP() []byte {
 	return file_securebrand_yt_v1_yt_proto_rawDescData
 }
 
-var file_securebrand_yt_v1_yt_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_securebrand_yt_v1_yt_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_securebrand_yt_v1_yt_proto_goTypes = []any{
 	(*Event)(nil),                 // 0: securebrand.yt.v1.Event
 	(*Provenance)(nil),            // 1: securebrand.yt.v1.Provenance
@@ -3139,72 +3359,79 @@ var file_securebrand_yt_v1_yt_proto_goTypes = []any{
 	(*Playlist)(nil),              // 16: securebrand.yt.v1.Playlist
 	(*Profile)(nil),               // 17: securebrand.yt.v1.Profile
 	(*AuthorProfile)(nil),         // 18: securebrand.yt.v1.AuthorProfile
-	(*timestamppb.Timestamp)(nil), // 19: google.protobuf.Timestamp
-	(*structpb.Value)(nil),        // 20: google.protobuf.Value
+	(*Media)(nil),                 // 19: securebrand.yt.v1.Media
+	(*timestamppb.Timestamp)(nil), // 20: google.protobuf.Timestamp
+	(*structpb.Value)(nil),        // 21: google.protobuf.Value
 }
 var file_securebrand_yt_v1_yt_proto_depIdxs = []int32{
-	19, // 0: securebrand.yt.v1.Event.observed_at:type_name -> google.protobuf.Timestamp
+	20, // 0: securebrand.yt.v1.Event.observed_at:type_name -> google.protobuf.Timestamp
 	1,  // 1: securebrand.yt.v1.Event.provenance:type_name -> securebrand.yt.v1.Provenance
 	0,  // 2: securebrand.yt.v1.Channel.event:type_name -> securebrand.yt.v1.Event
 	2,  // 3: securebrand.yt.v1.Channel.links:type_name -> securebrand.yt.v1.Link
-	19, // 4: securebrand.yt.v1.Channel.backfill_until:type_name -> google.protobuf.Timestamp
-	19, // 5: securebrand.yt.v1.Channel.backfill_done_at:type_name -> google.protobuf.Timestamp
-	19, // 6: securebrand.yt.v1.Channel.first_seen:type_name -> google.protobuf.Timestamp
-	19, // 7: securebrand.yt.v1.Channel.last_checked:type_name -> google.protobuf.Timestamp
-	19, // 8: securebrand.yt.v1.Channel.removed_at:type_name -> google.protobuf.Timestamp
-	19, // 9: securebrand.yt.v1.ChannelCounts.taken_at:type_name -> google.protobuf.Timestamp
+	20, // 4: securebrand.yt.v1.Channel.backfill_until:type_name -> google.protobuf.Timestamp
+	20, // 5: securebrand.yt.v1.Channel.backfill_done_at:type_name -> google.protobuf.Timestamp
+	20, // 6: securebrand.yt.v1.Channel.first_seen:type_name -> google.protobuf.Timestamp
+	20, // 7: securebrand.yt.v1.Channel.last_checked:type_name -> google.protobuf.Timestamp
+	20, // 8: securebrand.yt.v1.Channel.removed_at:type_name -> google.protobuf.Timestamp
+	20, // 9: securebrand.yt.v1.ChannelCounts.taken_at:type_name -> google.protobuf.Timestamp
 	0,  // 10: securebrand.yt.v1.ChannelSnapshot.event:type_name -> securebrand.yt.v1.Event
 	4,  // 11: securebrand.yt.v1.ChannelSnapshot.counts:type_name -> securebrand.yt.v1.ChannelCounts
 	4,  // 12: securebrand.yt.v1.ChannelSnapshot.observed:type_name -> securebrand.yt.v1.ChannelCounts
-	19, // 13: securebrand.yt.v1.ChannelSnapshot.removed_at:type_name -> google.protobuf.Timestamp
+	20, // 13: securebrand.yt.v1.ChannelSnapshot.removed_at:type_name -> google.protobuf.Timestamp
 	0,  // 14: securebrand.yt.v1.Video.event:type_name -> securebrand.yt.v1.Event
-	19, // 15: securebrand.yt.v1.Video.published_at:type_name -> google.protobuf.Timestamp
-	19, // 16: securebrand.yt.v1.Video.scheduled_start:type_name -> google.protobuf.Timestamp
-	19, // 17: securebrand.yt.v1.Video.first_seen:type_name -> google.protobuf.Timestamp
-	19, // 18: securebrand.yt.v1.Video.last_checked:type_name -> google.protobuf.Timestamp
-	19, // 19: securebrand.yt.v1.Video.removed_at:type_name -> google.protobuf.Timestamp
+	20, // 15: securebrand.yt.v1.Video.published_at:type_name -> google.protobuf.Timestamp
+	20, // 16: securebrand.yt.v1.Video.scheduled_start:type_name -> google.protobuf.Timestamp
+	20, // 17: securebrand.yt.v1.Video.first_seen:type_name -> google.protobuf.Timestamp
+	20, // 18: securebrand.yt.v1.Video.last_checked:type_name -> google.protobuf.Timestamp
+	20, // 19: securebrand.yt.v1.Video.removed_at:type_name -> google.protobuf.Timestamp
 	6,  // 20: securebrand.yt.v1.Video.chapters:type_name -> securebrand.yt.v1.Chapter
-	19, // 21: securebrand.yt.v1.VideoCounts.taken_at:type_name -> google.protobuf.Timestamp
+	20, // 21: securebrand.yt.v1.VideoCounts.taken_at:type_name -> google.protobuf.Timestamp
 	0,  // 22: securebrand.yt.v1.VideoMetrics.event:type_name -> securebrand.yt.v1.Event
 	8,  // 23: securebrand.yt.v1.VideoMetrics.counts:type_name -> securebrand.yt.v1.VideoCounts
 	8,  // 24: securebrand.yt.v1.VideoMetrics.observed:type_name -> securebrand.yt.v1.VideoCounts
 	0,  // 25: securebrand.yt.v1.Post.event:type_name -> securebrand.yt.v1.Event
-	20, // 26: securebrand.yt.v1.Post.attachments:type_name -> google.protobuf.Value
-	19, // 27: securebrand.yt.v1.Post.published_at:type_name -> google.protobuf.Timestamp
-	19, // 28: securebrand.yt.v1.Post.first_seen:type_name -> google.protobuf.Timestamp
-	19, // 29: securebrand.yt.v1.Post.last_checked:type_name -> google.protobuf.Timestamp
-	19, // 30: securebrand.yt.v1.Post.removed_at:type_name -> google.protobuf.Timestamp
-	19, // 31: securebrand.yt.v1.Post.comments_read_at:type_name -> google.protobuf.Timestamp
-	19, // 32: securebrand.yt.v1.PostCounts.taken_at:type_name -> google.protobuf.Timestamp
+	21, // 26: securebrand.yt.v1.Post.attachments:type_name -> google.protobuf.Value
+	20, // 27: securebrand.yt.v1.Post.published_at:type_name -> google.protobuf.Timestamp
+	20, // 28: securebrand.yt.v1.Post.first_seen:type_name -> google.protobuf.Timestamp
+	20, // 29: securebrand.yt.v1.Post.last_checked:type_name -> google.protobuf.Timestamp
+	20, // 30: securebrand.yt.v1.Post.removed_at:type_name -> google.protobuf.Timestamp
+	20, // 31: securebrand.yt.v1.Post.comments_read_at:type_name -> google.protobuf.Timestamp
+	20, // 32: securebrand.yt.v1.PostCounts.taken_at:type_name -> google.protobuf.Timestamp
 	0,  // 33: securebrand.yt.v1.PostMetrics.event:type_name -> securebrand.yt.v1.Event
 	11, // 34: securebrand.yt.v1.PostMetrics.counts:type_name -> securebrand.yt.v1.PostCounts
 	11, // 35: securebrand.yt.v1.PostMetrics.observed:type_name -> securebrand.yt.v1.PostCounts
 	0,  // 36: securebrand.yt.v1.Comment.event:type_name -> securebrand.yt.v1.Event
 	13, // 37: securebrand.yt.v1.Comment.author_badges:type_name -> securebrand.yt.v1.AuthorBadges
-	19, // 38: securebrand.yt.v1.Comment.published_at:type_name -> google.protobuf.Timestamp
-	19, // 39: securebrand.yt.v1.Comment.first_seen:type_name -> google.protobuf.Timestamp
-	19, // 40: securebrand.yt.v1.Comment.last_seen:type_name -> google.protobuf.Timestamp
-	19, // 41: securebrand.yt.v1.Comment.deleted_at:type_name -> google.protobuf.Timestamp
-	19, // 42: securebrand.yt.v1.PlaylistItem.first_seen:type_name -> google.protobuf.Timestamp
-	19, // 43: securebrand.yt.v1.PlaylistItem.last_seen:type_name -> google.protobuf.Timestamp
-	19, // 44: securebrand.yt.v1.PlaylistItem.removed_at:type_name -> google.protobuf.Timestamp
+	20, // 38: securebrand.yt.v1.Comment.published_at:type_name -> google.protobuf.Timestamp
+	20, // 39: securebrand.yt.v1.Comment.first_seen:type_name -> google.protobuf.Timestamp
+	20, // 40: securebrand.yt.v1.Comment.last_seen:type_name -> google.protobuf.Timestamp
+	20, // 41: securebrand.yt.v1.Comment.deleted_at:type_name -> google.protobuf.Timestamp
+	20, // 42: securebrand.yt.v1.PlaylistItem.first_seen:type_name -> google.protobuf.Timestamp
+	20, // 43: securebrand.yt.v1.PlaylistItem.last_seen:type_name -> google.protobuf.Timestamp
+	20, // 44: securebrand.yt.v1.PlaylistItem.removed_at:type_name -> google.protobuf.Timestamp
 	0,  // 45: securebrand.yt.v1.Playlist.event:type_name -> securebrand.yt.v1.Event
-	19, // 46: securebrand.yt.v1.Playlist.first_seen:type_name -> google.protobuf.Timestamp
-	19, // 47: securebrand.yt.v1.Playlist.last_checked:type_name -> google.protobuf.Timestamp
-	19, // 48: securebrand.yt.v1.Playlist.removed_at:type_name -> google.protobuf.Timestamp
+	20, // 46: securebrand.yt.v1.Playlist.first_seen:type_name -> google.protobuf.Timestamp
+	20, // 47: securebrand.yt.v1.Playlist.last_checked:type_name -> google.protobuf.Timestamp
+	20, // 48: securebrand.yt.v1.Playlist.removed_at:type_name -> google.protobuf.Timestamp
 	15, // 49: securebrand.yt.v1.Playlist.items:type_name -> securebrand.yt.v1.PlaylistItem
-	19, // 50: securebrand.yt.v1.Profile.fetched_at:type_name -> google.protobuf.Timestamp
+	20, // 50: securebrand.yt.v1.Profile.fetched_at:type_name -> google.protobuf.Timestamp
 	2,  // 51: securebrand.yt.v1.Profile.links:type_name -> securebrand.yt.v1.Link
 	0,  // 52: securebrand.yt.v1.AuthorProfile.event:type_name -> securebrand.yt.v1.Event
-	19, // 53: securebrand.yt.v1.AuthorProfile.first_seen:type_name -> google.protobuf.Timestamp
-	19, // 54: securebrand.yt.v1.AuthorProfile.last_seen:type_name -> google.protobuf.Timestamp
-	19, // 55: securebrand.yt.v1.AuthorProfile.enriched_at:type_name -> google.protobuf.Timestamp
+	20, // 53: securebrand.yt.v1.AuthorProfile.first_seen:type_name -> google.protobuf.Timestamp
+	20, // 54: securebrand.yt.v1.AuthorProfile.last_seen:type_name -> google.protobuf.Timestamp
+	20, // 55: securebrand.yt.v1.AuthorProfile.enriched_at:type_name -> google.protobuf.Timestamp
 	17, // 56: securebrand.yt.v1.AuthorProfile.profile:type_name -> securebrand.yt.v1.Profile
-	57, // [57:57] is the sub-list for method output_type
-	57, // [57:57] is the sub-list for method input_type
-	57, // [57:57] is the sub-list for extension type_name
-	57, // [57:57] is the sub-list for extension extendee
-	0,  // [0:57] is the sub-list for field type_name
+	0,  // 57: securebrand.yt.v1.Media.event:type_name -> securebrand.yt.v1.Event
+	20, // 58: securebrand.yt.v1.Media.first_seen:type_name -> google.protobuf.Timestamp
+	20, // 59: securebrand.yt.v1.Media.last_seen:type_name -> google.protobuf.Timestamp
+	20, // 60: securebrand.yt.v1.Media.announced_at:type_name -> google.protobuf.Timestamp
+	20, // 61: securebrand.yt.v1.Media.delete_after:type_name -> google.protobuf.Timestamp
+	20, // 62: securebrand.yt.v1.Media.deleted_at:type_name -> google.protobuf.Timestamp
+	63, // [63:63] is the sub-list for method output_type
+	63, // [63:63] is the sub-list for method input_type
+	63, // [63:63] is the sub-list for extension type_name
+	63, // [63:63] is the sub-list for extension extendee
+	0,  // [0:63] is the sub-list for field type_name
 }
 
 func init() { file_securebrand_yt_v1_yt_proto_init() }
@@ -3225,13 +3452,14 @@ func file_securebrand_yt_v1_yt_proto_init() {
 	file_securebrand_yt_v1_yt_proto_msgTypes[16].OneofWrappers = []any{}
 	file_securebrand_yt_v1_yt_proto_msgTypes[17].OneofWrappers = []any{}
 	file_securebrand_yt_v1_yt_proto_msgTypes[18].OneofWrappers = []any{}
+	file_securebrand_yt_v1_yt_proto_msgTypes[19].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_securebrand_yt_v1_yt_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

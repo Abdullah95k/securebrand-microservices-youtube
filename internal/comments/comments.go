@@ -13,7 +13,9 @@
 //   - completeness = collected ÷ the displayed count.
 //
 // Comments by erased authors, and erased comments, are dropped before they
-// are stored. New commenters are queued for enrichment (P4).
+// are stored. New commenters are queued for enrichment (P4). Every write
+// adds its events (comments, their counts, commenters) to the outbox in the
+// same transaction (fix 12).
 package comments
 
 import (
@@ -23,6 +25,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -30,6 +34,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fill"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
@@ -370,12 +375,14 @@ func (e *Engine) readReplies(ctx context.Context, token, prefer string) ([]ytpar
 	return out, nil
 }
 
-// store writes comments, their versions and their authors in one
-// transaction.
+// store writes comments, their versions and their authors, and their
+// events, in one transaction.
 func (e *Engine) store(ctx context.Context, v video, cs []ytparse.Comment, knownIDs map[string]*known, seen map[string]bool) (stored, fresh int, err error) {
 	now := e.now()
 	b := &pgx.Batch{}
 	newAuthors := map[string]bool{}
+	var ids []string
+	authors := map[string]bool{}
 	for _, c := range cs {
 		if seen[c.ID] {
 			continue
@@ -388,6 +395,7 @@ func (e *Engine) store(ctx context.Context, v video, cs []ytparse.Comment, known
 			continue
 		}
 		stored++
+		ids = append(ids, c.ID)
 		h := textHash(c.Text)
 		var thread *string
 		if c.IsReply && c.ParentID != "" {
@@ -439,6 +447,7 @@ func (e *Engine) store(ctx context.Context, v video, cs []ytparse.Comment, known
 				published, precision)
 		}
 		if c.AuthorChannelID != "" {
+			authors[c.AuthorChannelID] = true
 			rel := 0
 			if v.relevant {
 				rel = 1
@@ -468,8 +477,16 @@ func (e *Engine) store(ctx context.Context, v video, cs []ytparse.Comment, known
 	if b.Len() == 0 {
 		return stored, fresh, nil
 	}
+	ev := outbox.New(ctx, now)
 	err = pgx.BeginFunc(ctx, e.Pool, func(tx pgx.Tx) error {
-		return tx.SendBatch(ctx, b).Close()
+		if err := tx.SendBatch(ctx, b).Close(); err != nil {
+			return err
+		}
+		if err := ev.Write(ctx, tx, outbox.Comments, ids...); err != nil {
+			return err
+		}
+		_, err := ev.Content(ctx, tx, outbox.Authors, slices.Collect(maps.Keys(authors))...)
+		return err
 	})
 	if err != nil {
 		return stored, fresh, fmt.Errorf("storing comments: %w", err)
@@ -629,10 +646,17 @@ func (e *Engine) markMissing(ctx context.Context, videoID string, seen map[strin
 	if err := rows.Err(); err != nil || len(missing) == 0 {
 		return err
 	}
-	_, err = e.Pool.Exec(ctx, `UPDATE comments SET missed_sweeps = missed_sweeps + 1,
-		deleted_at = CASE WHEN missed_sweeps + 1 >= 2 THEN $2::timestamptz ELSE NULL END
-		WHERE id = ANY($1)`, missing, e.now())
-	return err
+	now := e.now()
+	ev := outbox.New(ctx, now)
+	return pgx.BeginFunc(ctx, e.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE comments SET missed_sweeps = missed_sweeps + 1,
+			deleted_at = CASE WHEN missed_sweeps + 1 >= 2 THEN $2::timestamptz ELSE NULL END
+			WHERE id = ANY($1)`, missing, now); err != nil {
+			return err
+		}
+		_, err := ev.Content(ctx, tx, outbox.Comments, missing...) // deletions, on the second miss
+		return err
+	})
 }
 
 // scanPost reads a community post's comments: everything the first time,

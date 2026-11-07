@@ -17,6 +17,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/provenance"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
@@ -68,7 +69,7 @@ func newRig(t *testing.T) *rig {
 	t.Cleanup(yt.Close)
 	px := fakeyt.NewForwardProxy("a")
 	t.Cleanup(px.Close)
-	ps, _ := proxypool.ParseList([]string{px.ProxyLine()})
+	ps, _ := proxypool.ParseList([]string{px.ProxyLine() + " country=IQ"})
 	pp := proxypool.New(ps, proxypool.Config{MinInterval: time.Millisecond, Jitter: 1e-12, DisableBrake: true}, 1)
 	pool := dbtest.New(t)
 	ctx := context.Background()
@@ -93,7 +94,8 @@ func newRig(t *testing.T) *rig {
 
 func (r *rig) run(t *testing.T, kind string) time.Time {
 	t.Helper()
-	next, err := r.eng.Handlers()[kind](context.Background(), queue.Job{Kind: kind, EntityID: vid, ChannelID: ch})
+	ctx, _ := provenance.With(context.Background(), provenance.Job{ID: kind + "/" + vid + "/1", Kind: kind})
+	next, err := r.eng.Handlers()[kind](ctx, queue.Job{Kind: kind, EntityID: vid, ChannelID: ch})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +109,33 @@ func (r *rig) count(t *testing.T, sql string, args ...any) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// events counts the outbox events by kind.
+func (r *rig) events(t *testing.T) map[string]int {
+	t.Helper()
+	rows, err := r.pool.Query(context.Background(), `SELECT kind, count(*) FROM event_outbox GROUP BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var k string
+		var n int
+		if err := rows.Scan(&k, &n); err != nil {
+			t.Fatal(err)
+		}
+		out[k] = n
+	}
+	return out
+}
+
+func sameCounts(t *testing.T, what string, got map[string]int, want map[string]int) {
+	t.Helper()
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("%s: outbox events %v, want %v", what, got, want)
+	}
 }
 
 func (r *rig) pagesRead(prefix string) int {
@@ -159,6 +188,16 @@ func TestFirstReadScansEditsRepliesAndDeletions(t *testing.T) {
 	if d := time.Until(next); d < 55*time.Minute || d > 61*time.Minute {
 		t.Errorf("next scan in %v; tier A, new video: 1 hour", d)
 	}
+	// Every stored comment, its counts and every commenter go out, keyed by
+	// the video, with where they came from.
+	sameCounts(t, "first read", r.events(t), map[string]int{"author": 10, "comment": 10, "comment_metrics": 10})
+	if n := r.count(t, `SELECT count(*) FROM event_outbox WHERE kind LIKE 'comment%' AND partition_key <> $1`, vid); n != 0 {
+		t.Errorf("%d comment events not keyed by their video", n)
+	}
+	if n := r.count(t, `SELECT count(*) FROM event_outbox WHERE provenance->>'job_id' = 'comments/' || $1 || '/1'
+		AND provenance->'operations' ? 'next' AND provenance->'exit_countries' ? 'IQ'`, vid); n != 30 {
+		t.Errorf("%d of 30 events carry the job, the operation and the exit country", n)
+	}
 
 	// New comment on top, an edit on page 2, a new reply: the scan stops early.
 	cs = append([]fakeyt.FakeComment{{ID: "fakeCnew", Text: "fresh", Author: author(99), Ago: "1 minute ago", Likes: "0"}}, cs...)
@@ -180,6 +219,14 @@ func TestFirstReadScansEditsRepliesAndDeletions(t *testing.T) {
 	if r.pagesRead("NEWEST_"+vid+"_4") != before || r.pagesRead("NEWEST_"+vid+"_5") != 0 {
 		t.Error("the scan must stop after the first all-known page plus one, not read to the end")
 	}
+	// The new comment and reply (with their counts and commenters), the
+	// edit, and the thread's grown reply count; comments seen again
+	// unchanged add nothing.
+	sameCounts(t, "scan", r.events(t), map[string]int{"author": 12, "comment": 13, "comment_metrics": 13})
+	if n := r.count(t, `SELECT count(*) FROM event_outbox WHERE kind = 'comment_metrics' AND entity_id = 'fakeC01'
+		AND payload->'counts'->>'reply_count' = '2'`); n != 1 {
+		t.Error("the thread's new reply count must go out")
+	}
 
 	// One comment disappears: the first sweep marks it missed, the second deleted.
 	gone := cs[6].ID
@@ -194,6 +241,12 @@ func TestFirstReadScansEditsRepliesAndDeletions(t *testing.T) {
 	}
 	if n := r.count(t, `SELECT count(*) FROM comments WHERE deleted_at IS NOT NULL`); n != 1 {
 		t.Error("only the missing comment may be marked deleted")
+	}
+	// The deletion goes out; the first miss and the comments read again
+	// do not.
+	sameCounts(t, "sweeps", r.events(t), map[string]int{"author": 12, "comment": 14, "comment_metrics": 13})
+	if n := r.count(t, `SELECT count(*) FROM event_outbox WHERE kind = 'comment' AND entity_id = $1 AND payload->>'deleted_at' IS NOT NULL`, gone); n != 1 {
+		t.Error("the deletion event must carry deleted_at")
 	}
 }
 

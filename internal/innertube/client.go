@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/jsonx"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/provenance"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/rawstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
@@ -297,6 +298,10 @@ func (c *Client) do(ctx context.Context, cl proxypool.Class, build func(*proxypo
 		}
 		if outcome == proxypool.OK {
 			out = r
+			if cl != proxypool.ClassCDN {
+				// Where the data came from, for the outbox's events.
+				provenance.From(ctx).Record(label, r.RawRef, px.Country())
+			}
 		}
 		return outcome, err
 	})

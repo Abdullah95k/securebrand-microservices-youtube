@@ -23,6 +23,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/metrics"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/monitor"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ops"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
@@ -198,8 +199,8 @@ func switchCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer, args []st
 
 // schedulerCmd runs the maintenance loop: partitions ahead of time and the
 // official-API hit purge (daily), missing recurring jobs, the search
-// rotation and the database size (hourly), the commenter graph (daily) and
-// tier recompute (weekly).
+// rotation, the database size and the sent outbox events (hourly), the
+// commenter graph (daily) and tier recompute (weekly).
 func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("scheduler", flag.ContinueOnError)
 	metricsAddr := fs.String("metrics-addr", ":9102", "the ops port: /metrics, /healthz and /readyz (empty: off)")
@@ -295,6 +296,15 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			return err
 		}},
 		{name: "database size", every: time.Hour, run: func() error { return usage.SampleSize(ctx, pool, time.Now()) }},
+		{name: "outbox prune", every: time.Hour, run: func() error {
+			// Sent events are copies made for sending: they go after 7 days
+			// (the owner, 7 November). Unsent ones stay until sent.
+			n, err := outbox.Prune(ctx, pool, time.Now().Add(-outbox.Keep))
+			if n > 0 {
+				log.Info("sent outbox events deleted", "rows", n)
+			}
+			return err
+		}},
 		{name: "capacity", every: time.Hour, run: func() error {
 			r, err := capacity.Plan(ctx, pool, time.Now())
 			if err == nil {

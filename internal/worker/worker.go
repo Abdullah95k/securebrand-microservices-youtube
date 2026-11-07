@@ -9,6 +9,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/provenance"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/rawstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
@@ -206,6 +208,8 @@ func (w *Worker) run(ctx context.Context, j queue.Job) {
 	}()
 	jctx, meter := usage.With(ctx)
 	jctx, _ = rawstore.WithJob(jctx) // a parse failure keeps the job's latest raw answers
+	// Where each write's data came from, for the outbox's events (fix 12).
+	jctx, _ = provenance.With(jctx, provenance.Job{ID: fmt.Sprintf("%s/%s/%d", j.Kind, j.EntityID, start.UnixMilli()), Kind: j.Kind})
 	next, err := safe(jctx, h, j)
 	stopHB()
 	took := time.Since(start)

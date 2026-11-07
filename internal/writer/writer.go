@@ -2,7 +2,8 @@
 // upserts keyed by YouTube IDs (re-runs are safe), a snapshot of the
 // numbers on every check, a change log of edited fields, and the keyword
 // matcher run on all new text. Anything on the suppression list (erased)
-// is dropped before it is written.
+// is dropped before it is written. Every write adds its events to the
+// outbox in the same transaction (fix 12).
 package writer
 
 import (
@@ -19,6 +20,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fill"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytparse"
 )
@@ -129,6 +131,7 @@ func (w *Writer) Channel(ctx context.Context, c Channel) ([]string, error) {
 	vids, _ := count(c.Videos)
 	views, _ := count(c.Views)
 	var changed []string
+	ev := outbox.New(ctx, now)
 	err := pgx.BeginFunc(ctx, w.Pool, func(tx pgx.Tx) error {
 		var old struct{ handle, title, desc, kw, country, avatar, banner *string }
 		err := tx.QueryRow(ctx, `SELECT handle, title, description, keywords, country, avatar_url, banner_url
@@ -182,9 +185,11 @@ func (w *Writer) Channel(ctx context.Context, c Channel) ([]string, error) {
 			str(c.AvatarURL), str(c.BannerURL), c.FamilySafe, links, subs, subsText, vids, views, now); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO channel_snapshots (channel_id, taken_at, subscribers_min, subscribers_text, videos_min, views_min)
-			VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`, c.ID, now, subs, subsText, vids, views)
-		return err
+		if _, err := tx.Exec(ctx, `INSERT INTO channel_snapshots (channel_id, taken_at, subscribers_min, subscribers_text, videos_min, views_min)
+			VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`, c.ID, now, subs, subsText, vids, views); err != nil {
+			return err
+		}
+		return ev.Write(ctx, tx, outbox.Channels, c.ID)
 	})
 	return changed, err
 }
@@ -194,10 +199,18 @@ func (w *Writer) Channel(ctx context.Context, c Channel) ([]string, error) {
 // returns true.
 func (w *Writer) ChannelMissing(ctx context.Context, id string) (removed bool, err error) {
 	var misses int
-	err = w.Pool.QueryRow(ctx, `UPDATE channels SET missed_checks = missed_checks + 1, last_checked = $2,
-			removed_at = CASE WHEN missed_checks + 1 >= 2 THEN COALESCE(removed_at, $2) ELSE removed_at END,
-			status = CASE WHEN missed_checks + 1 >= 2 THEN 'removed' ELSE status END
-		WHERE id = $1 RETURNING missed_checks`, id, w.now()).Scan(&misses)
+	now := w.now()
+	ev := outbox.New(ctx, now)
+	err = pgx.BeginFunc(ctx, w.Pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `UPDATE channels SET missed_checks = missed_checks + 1, last_checked = $2,
+				removed_at = CASE WHEN missed_checks + 1 >= 2 THEN COALESCE(removed_at, $2) ELSE removed_at END,
+				status = CASE WHEN missed_checks + 1 >= 2 THEN 'removed' ELSE status END
+			WHERE id = $1 RETURNING missed_checks`, id, now).Scan(&misses); err != nil {
+			return err
+		}
+		_, err := ev.Content(ctx, tx, outbox.Channels, id) // the removal, on the second miss
+		return err
+	})
 	return misses >= 2, err
 }
 
@@ -253,20 +266,33 @@ func (w *Writer) ListedVia(ctx context.Context, channelID string, it ytparse.Vid
 	if it.DurationSec > 0 {
 		dur = &it.DurationSec
 	}
-	tag, err := w.Pool.Exec(ctx, `INSERT INTO videos (id, channel_id, kind, title, published_at, published_precision_s, published_text,
-			duration_s, views, live_status, relevant, matched_keywords, first_seen, source)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		ON CONFLICT (id) DO NOTHING`,
-		it.VideoID, channelID, kind, str(it.Title), published, precision, str(it.PublishedText), dur,
-		nullCount(it.Views), live, relevant, nonNil(kws), w.now(), source)
+	now := w.now()
+	ev := outbox.New(ctx, now)
+	var isNew bool
+	err := pgx.BeginFunc(ctx, w.Pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `INSERT INTO videos (id, channel_id, kind, title, published_at, published_precision_s, published_text,
+				duration_s, views, live_status, relevant, matched_keywords, first_seen, source)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			ON CONFLICT (id) DO NOTHING`,
+			it.VideoID, channelID, kind, str(it.Title), published, precision, str(it.PublishedText), dur,
+			nullCount(it.Views), live, relevant, nonNil(kws), now, source)
+		if err != nil {
+			return err
+		}
+		isNew = tag.RowsAffected() == 1
+		if !isNew {
+			return nil
+		}
+		if w.Media {
+			if err := media.QueueNew(ctx, tx, media.Thumb, it.VideoID, now); err != nil {
+				return err
+			}
+		}
+		// A new upload goes out at once, before its first full check.
+		return ev.Write(ctx, tx, outbox.Videos, it.VideoID)
+	})
 	if err != nil {
 		return false, err
-	}
-	isNew := tag.RowsAffected() == 1
-	if isNew && w.Media {
-		if err := media.QueueNew(ctx, w.Pool, media.Thumb, it.VideoID, w.now()); err != nil {
-			return true, err
-		}
 	}
 	return isNew, nil
 }
@@ -401,6 +427,7 @@ func (w *Writer) Video(ctx context.Context, v Video) (VideoOutcome, error) {
 	if live == "live" {
 		liveViewers = nullCount(v.Watch.LiveViewers)
 	}
+	ev := outbox.New(ctx, now)
 	err := pgx.BeginFunc(ctx, w.Pool, func(tx pgx.Tx) error {
 		var old struct {
 			title, desc, cat *string
@@ -480,9 +507,11 @@ func (w *Writer) Video(ctx context.Context, v Video) (VideoOutcome, error) {
 			v.SkippedPlayer); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO video_snapshots (video_id, taken_at, views, likes_min, comments_min, live_viewers)
-			VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`, v.ID, now, views, likes, comments, liveViewers)
-		return err
+		if _, err := tx.Exec(ctx, `INSERT INTO video_snapshots (video_id, taken_at, views, likes_min, comments_min, live_viewers)
+			VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`, v.ID, now, views, likes, comments, liveViewers); err != nil {
+			return err
+		}
+		return ev.Write(ctx, tx, outbox.Videos, v.ID)
 	})
 	return out, err
 }
@@ -513,9 +542,17 @@ func familySafe(v Video) *bool {
 // marks it removed (its stored content is kept, D18).
 func (w *Writer) VideoMissing(ctx context.Context, id string) (removed bool, err error) {
 	var misses int
-	err = w.Pool.QueryRow(ctx, `UPDATE videos SET missed_checks = missed_checks + 1, last_checked = $2,
-			removed_at = CASE WHEN missed_checks + 1 >= 2 THEN COALESCE(removed_at, $2) ELSE removed_at END
-		WHERE id = $1 RETURNING missed_checks`, id, w.now()).Scan(&misses)
+	now := w.now()
+	ev := outbox.New(ctx, now)
+	err = pgx.BeginFunc(ctx, w.Pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `UPDATE videos SET missed_checks = missed_checks + 1, last_checked = $2,
+				removed_at = CASE WHEN missed_checks + 1 >= 2 THEN COALESCE(removed_at, $2) ELSE removed_at END
+			WHERE id = $1 RETURNING missed_checks`, id, now).Scan(&misses); err != nil {
+			return err
+		}
+		_, err := ev.Content(ctx, tx, outbox.Videos, id) // the removal, on the second miss
+		return err
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

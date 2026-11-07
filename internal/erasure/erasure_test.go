@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db/dbtest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/erasure"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
@@ -50,6 +53,32 @@ func seed(t *testing.T, pool *pgxpool.Pool) {
 			t.Fatalf("%s: %v", sql, err)
 		}
 	}
+	// Their outbox events (fix 12), as the writers add them.
+	ev := outbox.New(ctx, time.Now())
+	for tb, ids := range map[*outbox.Table][]string{&outbox.Channels: {ch}, &outbox.Videos: {"fakeEv1"}, &outbox.Posts: {"UgkxFAKEERASE"},
+		&outbox.Comments: {"fakeEc1", "fakeEc2", "fakeEc3"}, &outbox.Authors: {authorX, authorY}} {
+		if err := ev.Write(ctx, pool, *tb, ids...); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// outboxLeft lists the entities that still have outbox events, and those
+// that still have outbox state.
+func outboxLeft(t *testing.T, pool *pgxpool.Pool) (events, state string) {
+	t.Helper()
+	var e, st *string
+	if err := pool.QueryRow(context.Background(), `SELECT (SELECT string_agg(DISTINCT entity_id, ' ' ORDER BY entity_id) FROM event_outbox),
+		(SELECT string_agg(DISTINCT entity_id, ' ' ORDER BY entity_id) FROM outbox_state)`).Scan(&e, &st); err != nil {
+		t.Fatal(err)
+	}
+	if e != nil {
+		events = *e
+	}
+	if st != nil {
+		state = *st
+	}
+	return events, state
 }
 
 func service(t *testing.T, pool *pgxpool.Pool) *erasure.Service {
@@ -107,6 +136,14 @@ func TestEraseAuthorByHandle(t *testing.T) {
 	if !s.Sup.Suppressed(privacy.Author, authorX) {
 		t.Error("the author is suppressed")
 	}
+	// Their events, and their comments' events, go too (unsent ones would
+	// otherwise be published later).
+	left := []string{ch, authorY, "UgkxFAKEERASE", "fakeEc2", "fakeEv1"}
+	slices.Sort(left)
+	want := strings.Join(left, " ")
+	if ev, st := outboxLeft(t, pool); ev != want || st != want {
+		t.Errorf("outbox events left for %q and state for %q, want %q", ev, st, want)
+	}
 
 	// A restore brings a comment back: the daily audit erases it again.
 	_, _ = pool.Exec(ctx, `INSERT INTO comments (id, parent_kind, parent_id, channel_id, author_id, text, text_hash, first_seen, last_seen)
@@ -141,6 +178,12 @@ func TestEraseChannel(t *testing.T) {
 	}
 	if n := count(t, pool, `SELECT count(*) FROM schedule WHERE channel_id = $1 AND kind <> $2`, ch, erasure.KindErasure); n != 0 {
 		t.Error("the channel's jobs must go")
+	}
+	// The channel's, its videos', posts' and comments' events go; the
+	// commenters are not this erasure's.
+	want := authorX + " " + authorY
+	if ev, st := outboxLeft(t, pool); ev != want || st != want {
+		t.Errorf("outbox events left for %q and state for %q, want %q", ev, st, want)
 	}
 	if err := registry.List(ctx, pool, s.Sup, ch, registry.Input{Input: ch, AddedBy: "discovery"}); !errors.Is(err, registry.ErrSuppressed) {
 		t.Errorf("an erased channel must not be listed again: %v", err)

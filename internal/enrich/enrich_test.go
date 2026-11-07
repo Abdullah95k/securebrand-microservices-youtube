@@ -76,6 +76,12 @@ func TestEnrichProfilesAndCandidates(t *testing.T) {
 	if n != 1 {
 		t.Error("a commenter with uploads goes to the candidate check")
 	}
+	// The commenter goes out with the profile (fix 12).
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM event_outbox WHERE kind = 'author' AND entity_id = $1
+		AND payload->'profile'->>'country' = 'Iraq'`, uploader).Scan(&n)
+	if n != 1 {
+		t.Error("the enriched commenter's event must carry the profile")
+	}
 	if next := run(quietOne); time.Until(next) < 360*24*time.Hour {
 		t.Error("a channel that is not found is still recorded, and an inactive commenter waits a year")
 	}
@@ -85,5 +91,9 @@ func TestEnrichProfilesAndCandidates(t *testing.T) {
 	_ = pool.QueryRow(ctx, `SELECT count(*) FROM author_profiles WHERE author_id = $1`, erased).Scan(&n)
 	if n != 0 {
 		t.Error("no profile for an erased author")
+	}
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM event_outbox WHERE entity_id IN ($1, $2)`, quietOne, erased).Scan(&n)
+	if n != 0 {
+		t.Error("no event for a commenter not found, or erased")
 	}
 }

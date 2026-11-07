@@ -189,6 +189,10 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 	switch kind {
 	case privacy.Author:
 		steps = []step{
+			{"outbox events", `DELETE FROM event_outbox WHERE kind = 'author' AND entity_id = $1
+				OR kind IN ('comment', 'comment_metrics') AND entity_id IN (SELECT id FROM comments WHERE author_id = $1)`},
+			{"outbox state", `DELETE FROM outbox_state WHERE kind = 'author' AND entity_id = $1
+				OR kind = 'comment' AND entity_id IN (SELECT id FROM comments WHERE author_id = $1)`},
 			{"comment versions", `DELETE FROM comment_versions WHERE comment_id IN (SELECT id FROM comments WHERE author_id = $1)`},
 			{"comments", `DELETE FROM comments WHERE author_id = $1`},
 			{"author profiles", `DELETE FROM author_profiles WHERE author_id = $1`},
@@ -201,6 +205,16 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 		}
 	case privacy.Channel:
 		steps = []step{
+			// The channel's events, and its videos', posts', playlists' and
+			// their comments' (keyed by their post).
+			{"outbox events", `DELETE FROM event_outbox WHERE partition_key = $1 OR partition_key IN (
+				SELECT id FROM videos WHERE channel_id = $1 UNION ALL SELECT id FROM posts WHERE channel_id = $1
+				UNION ALL SELECT id FROM playlists WHERE channel_id = $1)`},
+			{"outbox state", `DELETE FROM outbox_state WHERE kind = 'channel' AND entity_id = $1
+				OR kind = 'video' AND entity_id IN (SELECT id FROM videos WHERE channel_id = $1)
+				OR kind = 'post' AND entity_id IN (SELECT id FROM posts WHERE channel_id = $1)
+				OR kind = 'playlist' AND entity_id IN (SELECT id FROM playlists WHERE channel_id = $1)
+				OR kind = 'comment' AND entity_id IN (SELECT id FROM comments WHERE channel_id = $1)`},
 			{"comment versions", `DELETE FROM comment_versions WHERE comment_id IN (SELECT id FROM comments WHERE channel_id = $1)`},
 			{"comments", `DELETE FROM comments WHERE channel_id = $1`},
 			{"video snapshots", `DELETE FROM video_snapshots WHERE video_id IN (SELECT id FROM videos WHERE channel_id = $1)`},
@@ -227,6 +241,9 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 		}
 	case privacy.Video:
 		steps = []step{
+			{"outbox events", `DELETE FROM event_outbox WHERE partition_key = $1`}, // the video, its counts, its comments
+			{"outbox state", `DELETE FROM outbox_state WHERE kind = 'video' AND entity_id = $1
+				OR kind = 'comment' AND entity_id IN (SELECT id FROM comments WHERE parent_kind = 'video' AND parent_id = $1)`},
 			{"comment versions", `DELETE FROM comment_versions WHERE comment_id IN (SELECT id FROM comments WHERE parent_kind = 'video' AND parent_id = $1)`},
 			{"comments", `DELETE FROM comments WHERE parent_kind = 'video' AND parent_id = $1`},
 			{"video snapshots", `DELETE FROM video_snapshots WHERE video_id = $1`},
@@ -240,11 +257,16 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 		}
 	case privacy.Comment:
 		steps = []step{
+			{"outbox events", `DELETE FROM event_outbox WHERE kind IN ('comment', 'comment_metrics') AND entity_id = $1`},
+			{"outbox state", `DELETE FROM outbox_state WHERE kind = 'comment' AND entity_id = $1`},
 			{"comment versions", `DELETE FROM comment_versions WHERE comment_id = $1`},
 			{"comment", `DELETE FROM comments WHERE id = $1`},
 		}
 	case privacy.Post:
 		steps = []step{
+			{"outbox events", `DELETE FROM event_outbox WHERE partition_key = $1`}, // the post, its counts, its comments
+			{"outbox state", `DELETE FROM outbox_state WHERE kind = 'post' AND entity_id = $1
+				OR kind = 'comment' AND entity_id IN (SELECT id FROM comments WHERE parent_kind = 'post' AND parent_id = $1)`},
 			{"comment versions", `DELETE FROM comment_versions WHERE comment_id IN (SELECT id FROM comments WHERE parent_kind = 'post' AND parent_id = $1)`},
 			{"comments", `DELETE FROM comments WHERE parent_kind = 'post' AND parent_id = $1`},
 			{"post snapshots", `DELETE FROM post_snapshots WHERE post_id = $1`},

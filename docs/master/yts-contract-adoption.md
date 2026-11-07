@@ -2,7 +2,7 @@
 
 Written by the yts session on 6 November 2026 (Iraq time), from `main` `9a0e248`. A plan: the outbox and relay (fix 12) and the
 `content.*` mapping (REQ-021) are built from it in small PRs, in the order of section 7. **Updated 7 November:** the owner's two
-answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5. PR 4 (the relay) built: section 4. PR 5 (the chart) built: section 7. PR 6 (candidates and coverage) built: section 7. PR 7 (the media hand-off) built: section 7; fix 12 is complete.
+answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5. PR 4 (the relay) built: section 4. PR 5 (the chart) built: section 7. PR 6 (candidates and coverage) built: section 7. PR 7 (the media hand-off) built: section 7. All seven PRs are merged (#60–#66): fix 12 is complete.
 
 **Contract version:** v1.2.0 (`github.com/abdullah95k/securebrand-contracts`). The owner approved v1.0.0 (D-016); v1.1.0 and v1.2.0 only
 add fields and checks, and the master agreed to v1.2.0 (6 November). Every message goes out with `sb-contract: 1.2.0`.

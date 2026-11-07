@@ -13,8 +13,8 @@ The current state of the YouTube collector, for the owner and the master session
 - **Now building:** the owner's fix list (REQ-010) and the contract adoption (REQ-021), approved on 6 November. Progress, one row per
   fix: [`master/yts-fixes.md`](master/yts-fixes.md).
   - **Done:** every fix before the pilot: 1 to 10, 13 (non-root image), 14 (Helm chart), 16 (pinned bases, image scan, releases)
-    and 17 (database TLS and roles), plus the proxy `country=` tag and PostgreSQL 18.
-  - **Building now:** the outbox and relay (fix 12), in 7 PRs planned in
+    and 17 (database TLS and roles), plus the proxy `country=` tag and PostgreSQL 18; and fix 12 (below).
+  - **Fix 12, the outbox and relay, is done:** all 7 PRs merged on 7 November, as planned in
     [`master/yts-contract-adoption.md`](master/yts-contract-adoption.md). The owner answered on 7 November: sent outbox rows go
     after 7 days, and the code generator may run here. **PR 1, the outbox, is merged**
     ([#60](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/60)): every write adds its events in the same
@@ -24,7 +24,8 @@ The current state of the YouTube collector, for the owner and the master session
     merged** ([#63](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/63)): `ytcollect relay` sends the outbox to Kafka, both message sets in one transaction. **PR 5, the relay in the
     chart, is merged** ([#64](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/64)): off until Kafka is there; `relay.enabled=true` turns it on. **PR 6, discovery candidates
     and hourly coverage, is merged** ([#65](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/65)); it also stops a video first seen through the official API from going out before its
-    website read. **PR 7, the media hand-off, is in review:** thumbnails are announced to analysis, and each file is deleted once
+    website read. **PR 7, the media hand-off, is merged**
+    ([#66](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/66)): thumbnails are announced to analysis, and each file is deleted once
     analysis acknowledges it, or at its 72-hour deadline; the record stays. It runs in the relay, so the pilot (no Kafka) keeps
     every image.
   - **Next:** the pilot (fix 11) when the platform is ready (below). Until the relay runs, events wait in the outbox (roughly
@@ -137,6 +138,12 @@ In [`docs/master/`](master/):
 | `yts-fixes.md` | REQ-010 progress, one row per fix |
 
 Waiting: `ytprobe-detect`'s memory (REQ-004 §5), from the owner's `docker stats` readings.
+
+**Open questions (7 November):**
+- For the master: may yts's Kafka user use consumer group `yts-media` to read `content.media.processed.v1` (the media
+  acknowledgements)? The relay reads it only once Kafka is there.
+- For the owner: yts also downloads channel avatars, banners and commenters' avatars, and keeps them. Only thumbnails are handed
+  to analysis and deleted after it (and post images once fix 21 collects them). Keep downloading the others, or stop?
 
 ## Standing rules (from the owner, 5 November)
 

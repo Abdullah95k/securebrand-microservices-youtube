@@ -49,7 +49,7 @@ func TestHealthAndReadiness(t *testing.T) {
 		t.Errorf("failed = %v; want only the slow check", body["failed"])
 	}
 
-	h2 := &ops.Health{}
+	h2 := &ops.Health{Every: -1} // checked on every request
 	h2.Add("database", func(context.Context) error {
 		if !dbUp {
 			return errors.New("dial tcp fakehost:5432: connection refused")
@@ -100,4 +100,48 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// The checks run at most once a minute: in between, /readyz answers from
+// the last result, a failure included. A probe that gives up first can't
+// cancel a check into a false failure.
+func TestReadinessIsCached(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	calls := 0
+	up := true
+	h := &ops.Health{Timeout: time.Second, Now: func() time.Time { return now }}
+	h.Add("database", func(ctx context.Context) error {
+		calls++
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond): // slower than the probe below
+		}
+		if !up {
+			return errors.New("down")
+		}
+		return nil
+	})
+	probe := func() []string {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+		defer cancel()
+		return h.Failed(ctx)
+	}
+	if f := probe(); len(f) != 0 || calls != 1 {
+		t.Fatalf("first probe: failed %v after %d calls; the probe's own timeout must not fail the check", f, calls)
+	}
+	up = false
+	now = now.Add(59 * time.Second)
+	if f := probe(); len(f) != 0 || calls != 1 {
+		t.Errorf("within the minute: failed %v, %d calls; want the cached result", f, calls)
+	}
+	now = now.Add(2 * time.Second)
+	if f := probe(); len(f) != 1 || calls != 2 {
+		t.Errorf("after the minute: failed %v, %d calls", f, calls)
+	}
+	up = true
+	now = now.Add(30 * time.Second)
+	if f := probe(); len(f) != 1 || calls != 2 {
+		t.Errorf("a failure is cached too: failed %v, %d calls", f, calls)
+	}
 }

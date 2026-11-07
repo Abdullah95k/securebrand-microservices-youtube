@@ -707,6 +707,10 @@ ytcollect outbox check
 stopped. Its log says why ("sending a batch failed"); `yt_relay_transactions_total` shows aborted or failed transactions. Kafka down
 or a topic missing (the platform creates them; the relay never does) keeps events waiting; they go when it is fixed.
 
+One relay sends at a time: it holds a lease (a row in the `leases` table, renewed every 5 seconds). A second relay stands by and
+tries every 15 seconds; it takes over within about 15 seconds of the first one stopping or losing the lease. While nothing waits,
+the relay looks for new events less often, from every second up to every 30 seconds.
+
 **Alert `OutboxRefused`**: some events will not be sent until something changes: the contract refused them (a bug in yts's mapping,
 or data the contract can't express), or Kafka can't take them (too large). `ytcollect outbox check` shows each with its reason.
 After the fix is deployed, the relay's restart tries them again.
@@ -733,3 +737,23 @@ What the relay has done, by kind and state (`stored`, `announced`, `deleted_proc
 **Alert `MediaPastDeadline`**: files are still in storage an hour after their deadline. The relay could not delete them (its log
 says "deleting an analysed file failed", with the storage's answer), or the relay is stopped. When storage answers again, the
 next round deletes them.
+
+## 18. The database through PgBouncer
+
+On the platform, PostgreSQL is reached only through PgBouncer in transaction mode, with 50 connections shared by every service
+(REQ-023, REQ-024). yts is built for that:
+
+- **Connections:** each process opens at most 4. It sends no startup parameters and prepares no statements on the server, and no
+  setting outlives a transaction. One-at-a-time work uses a lease row (the relay) or a lock that ends with its transaction (the
+  migrations, new partitions), never a session lock.
+- **When the database is full** (no free connection: PostgreSQL's "too many connections", or PgBouncer's `query_wait_timeout`,
+  "server login has been failing" or "no more connections allowed"), yts waits and tries again, logging each wait ("the database
+  has no free connection; waiting"): the migrations for up to 45 minutes (`migrate.waitForSlot` in the chart; give `helm upgrade` a
+  `--timeout` of 60 minutes), the services for up to 10 minutes at start-up, a command run by hand for a minute. A wrong password,
+  or any other error, fails at once.
+- **While idle:** `/readyz` checks the database at most once a minute and answers from the last result in between; `/healthz`
+  doesn't touch it. The worker, the relay and the webhooks look for work less often while they find none, from every second up
+  to every 30 seconds, and at once again when work turns up. An idle process touches PostgreSQL about once every few seconds at
+  most, so PgBouncer can give its server connection back.
+
+If the database is full for longer than the wait, the migrate Job fails and the deploy stops; run it again once there is room.

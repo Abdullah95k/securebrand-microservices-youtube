@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/poll"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/provenance"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/rawstore"
@@ -34,7 +35,10 @@ type Worker struct {
 	Handlers    map[string]Handler
 	Concurrency int
 	Lease       time.Duration // how long a job may run before others may take it
-	Idle        time.Duration // wait when nothing is due
+	// Idle is the longest wait when nothing is due (default 30s): one loop
+	// leases for all of a pod's job slots, and while it finds nothing it
+	// waits 1s, then twice as long each time up to Idle (REQ-024).
+	Idle time.Duration
 	// Drain is how long running jobs may keep working after Run's context
 	// ends (the shutdown signal) before they are interrupted and handed
 	// back. Zero interrupts them at once. Keep it below the pod's
@@ -112,7 +116,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		w.Lease = 15 * time.Minute
 	}
 	if w.Idle <= 0 {
-		w.Idle = 5 * time.Second
+		w.Idle = poll.DefaultMax
 	}
 	if w.Log == nil {
 		w.Log = slog.Default()
@@ -124,6 +128,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	slots := make(chan struct{}, w.Concurrency)
 	var wg sync.WaitGroup
 	defer w.stop(&wg, interrupt)
+	idle := poll.Backoff{Max: w.Idle}
 	for ctx.Err() == nil {
 		free := w.Concurrency - len(slots)
 		kinds := w.kinds(ctx)
@@ -136,12 +141,10 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 		}
 		if len(jobs) == 0 {
-			select {
-			case <-ctx.Done():
-			case <-time.After(w.Idle):
-			}
+			idle.Wait(ctx)
 			continue
 		}
+		idle.Reset()
 		for _, j := range jobs {
 			slots <- struct{}{}
 			wg.Add(1)

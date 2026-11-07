@@ -11,8 +11,9 @@ metadata:
     {{- include "yts.labels" . | nindent 4 }}
     app.kubernetes.io/component: relay
 spec:
-  # One relay sends at a time (a Postgres advisory lock keeps the outbox's
-  # order); a second would only wait. Replaced, never doubled, on an update.
+  # One relay sends at a time (a lease row in Postgres keeps the outbox's
+  # order); a second would only stand by. Replaced, never doubled, on an
+  # update.
   replicas: 1
   strategy:
     type: Recreate

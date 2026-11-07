@@ -73,10 +73,12 @@ kubectl -n yts rollout restart deploy/yts-worker
 The platform's pipeline builds the image and runs (the image keys are `image.repository`, and `image.digest` or `image.tag`):
 
 ```bash
-helm upgrade --install yts deploy/helm/yts -n yts -f deploy/helm/yts/values-production.yaml --set image.repository=REGISTRY/yts --set image.digest=sha256:DIGEST
+helm upgrade --install yts deploy/helm/yts -n yts -f deploy/helm/yts/values-production.yaml --set image.repository=REGISTRY/yts --set image.digest=sha256:DIGEST --timeout 60m
 ```
 
-The migrations run first; the services start only if they succeed.
+The migrations run first; the services start only if they succeed. When the shared database is full, the migrations wait for a free
+connection for up to 45 minutes (`migrate.waitForSlot`), logging each wait, so the `--timeout` is 60 minutes. A wrong password, or any
+other error, fails at once.
 
 ## Admin commands
 

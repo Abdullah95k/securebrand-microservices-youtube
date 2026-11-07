@@ -88,21 +88,34 @@ func main() {
 	var err error
 	switch cmd {
 	case "migrate":
+		// The migrations wait for a free connection when the shared
+		// database is full, for up to -wait (REQ-024): the deploy's hook
+		// then runs once there is room instead of failing.
+		wait := fs.Duration("wait", 45*time.Minute, "how long to wait for a free database connection when the database is full")
 		fs.Parse(args)
-		pool := mustDB(ctx, log, db.RoleOwner)
+		pool := mustDB(ctx, log, db.RoleOwner, *wait)
 		defer pool.Close()
-		var applied []string
-		applied, err = db.Migrate(ctx, pool)
-		if err == nil {
+		err = db.WaitWhileFull(ctx, *wait, log, "the migrations", func(ctx context.Context) error {
+			applied, err := db.Migrate(ctx, pool)
+			if err != nil {
+				return err
+			}
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
-			err = grantPlatformRoles(ctx, pool, log)
-		}
+			return grantPlatformRoles(ctx, pool, log)
+		})
 	case "channels", "keywords", "health", "jobs", "report", "outbox", "switch", "scheduler", "worker", "websub", "relay", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
 		switch cmd {
 		case "scheduler", "worker", "websub", "relay":
 			log.Info("starting", "command", cmd, "version", version.Version, "revision", version.Revision)
 		}
-		pool := mustDB(ctx, log, roleFor(cmd))
+		// A long-running service waits up to 10 minutes for a free
+		// connection at start-up; a command run by hand, a minute.
+		wait := time.Minute
+		switch cmd {
+		case "scheduler", "worker", "websub", "relay":
+			wait = 10 * time.Minute
+		}
+		pool := mustDB(ctx, log, roleFor(cmd), wait)
 		defer pool.Close()
 		switch cmd {
 		case "channels":
@@ -163,15 +176,22 @@ func pathFromEnv(env, def string) string {
 	return def
 }
 
-func mustDB(ctx context.Context, log *slog.Logger, role db.Role) *pgxpool.Pool {
+// mustDB connects as role, waiting up to wait while the database is full
+// (db.Full: no free connection slot); any other failure ends the program.
+func mustDB(ctx context.Context, log *slog.Logger, role db.Role, wait time.Duration) *pgxpool.Pool {
 	url, err := databaseURL(role)
 	if err != nil {
 		log.Error("database settings", "err", err)
 		os.Exit(2)
 	}
-	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	pool, err := db.Open(cctx, url, "")
+	var pool *pgxpool.Pool
+	err = db.WaitWhileFull(ctx, wait, log, "connecting", func(ctx context.Context) error {
+		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		var err error
+		pool, err = db.Open(cctx, url)
+		return err
+	})
 	if err != nil {
 		log.Error("database", "err", err, "role", string(role))
 		os.Exit(2)

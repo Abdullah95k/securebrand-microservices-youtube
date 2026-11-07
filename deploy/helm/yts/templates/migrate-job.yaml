@@ -39,7 +39,7 @@ spec:
           image: {{ include "yts.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/usr/local/bin/ytcollect"]
-          args: ["migrate"]
+          args: ["migrate", "-wait={{ .Values.migrate.waitForSlot }}"]
           env:
             {{- if .Values.database.platformCredentials }}
             - name: YT_POSTGRES_DIR

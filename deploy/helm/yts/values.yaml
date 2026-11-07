@@ -179,7 +179,11 @@ websub:
 migrate:
   enabled: true
   backoffLimit: 2
-  activeDeadlineSeconds: 900
+  # When the shared database is full, the migrations wait for a free
+  # connection for up to waitForSlot (REQ-024); the Job's deadline leaves
+  # room for that. Give "helm upgrade" a --timeout as long (60m).
+  waitForSlot: 45m
+  activeDeadlineSeconds: 3600
   goMemLimit: 200MiB
   resources:
     requests: {cpu: 100m, memory: 64Mi}

@@ -7,7 +7,11 @@ The current state of the YouTube collector, for the owner and the master session
 - **Built and merged:** every production step of the plan (1–20). That is the collector, comments, posts and playlists, discovery,
   capacity planning, privacy tools (dormant), images, the archive, webhooks, and the Docker Compose deployment, all with tests. See
   [plan.md](plan.md) §10.
-- **Not running anywhere:** the production collector (`ytcollect`). It has only run against the fake YouTube in tests.
+- **Deployed to production (7 November, the master):** on the platform's cluster through Argo CD, at `9a4700d`, then pinned to
+  `145e68c` (no overrides left but the image and the worker count). The migrations ran (PreSync hook) and the scheduler is
+  running and ready. **The worker is held at 0** until the proxies are bought (the owner is buying 10 IPs), so nothing is
+  collected from YouTube yet. The relay and push stay off (no Kafka for the pilot). The two fixes the deploy needed are
+  merged: the London VPC (`10.30.0.0/16`, ports 5432 and 25073) and the registry's pull secret in `values-production.yaml`.
 - **Phase 0:** has ended (the owner, 6 November). The census of 5 November was not run: there are no new long runs on the shared
   server (D-026). The final numbers come from the 4 November report and the 5 November discovery, into `docs/phase0-results.md`.
 - **Now building:** the owner's fix list (REQ-010) and the contract adoption (REQ-021), approved on 6 November. Progress, one row per

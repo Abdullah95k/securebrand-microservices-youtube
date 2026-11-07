@@ -1,8 +1,9 @@
 // Package contract maps yts's outbox events to the platform's unified
 // contract (REQ-021, contract v1.2.0, github.com/abdullah95k/securebrand-contracts):
 // content.account, content.account_snapshot, content.post, content.comment,
-// content.metrics and content.playlist messages, each checked by the
-// contract's conformance package before it may be published.
+// content.metrics and content.playlist messages, discovery.candidate and
+// collection.coverage, each checked by the contract's conformance package
+// (where it has a check) before it may be published.
 //
 // The rules it follows (the contract README, "The rules collectors
 // follow"):
@@ -33,6 +34,8 @@ import (
 
 	"github.com/abdullah95k/securebrand-contracts/conformance"
 	contentv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/content/v1"
+	coveragev1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/coverage/v1"
+	discoveryv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/discovery/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -123,6 +126,10 @@ func (m *Mapper) Map(r outbox.Row) ([]Message, error) {
 		msgs, err = b.playlist()
 	case outbox.KindAuthor:
 		msgs, err = b.author()
+	case outbox.KindCandidate:
+		msgs, err = b.candidate()
+	case outbox.KindCoverage:
+		msgs, err = b.coverage()
 	default:
 		return nil, fmt.Errorf("%w %q (event %d)", ErrUnknownKind, r.Kind, r.ID)
 	}
@@ -151,6 +158,10 @@ func (m *Mapper) check(msg Message) error {
 		return conformance.Metrics(v, m.Options)
 	case *contentv1.Playlist:
 		return conformance.Playlist(v, m.Options)
+	case *discoveryv1.Candidate:
+		return conformance.Candidate(v, m.Options)
+	case *coveragev1.JobCoverage:
+		return nil // the contract has no check for it
 	}
 	return fmt.Errorf("no check for %s", msg.Type())
 }

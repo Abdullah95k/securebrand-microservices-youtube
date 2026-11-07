@@ -15,6 +15,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/keywords"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
@@ -275,6 +276,12 @@ func TestExpireAPIData(t *testing.T) {
 			c.id, c.first, c.sources, c.status)
 		exec(`INSERT INTO schedule (kind, entity_id, channel_id, priority, due_at) VALUES ('candidate', $1, $1, 3, now() + interval '1 day')`, c.id)
 	}
+	// Their outbox events (fix 12), as discovery writes them.
+	cands := []string{"UCfakeCandOld000000000001", "UCfakeCandMid000000000001", "UCfakeCandNew000000000001",
+		"UCfakeCandChk000000000001", "UCfakeCandWeb000000000001"}
+	if _, err := outbox.New(ctx, now).Content(ctx, pool, outbox.Candidates, cands...); err != nil {
+		t.Fatal(err)
+	}
 	exec(`INSERT INTO search_hits (engine, video_id, channel_id, title, found_at) VALUES
 		('api', 'fakeApiOld', 'UCfake0000000000000001', 'example title', $1),
 		('api', 'fakeApiNew', 'UCfake0000000000000001', 'example title', $2),
@@ -312,6 +319,12 @@ func TestExpireAPIData(t *testing.T) {
 	}
 	if exists("candidates", "channel_id", "UCfakeCandOld000000000001") || exists("schedule", "entity_id", "UCfakeCandOld000000000001") {
 		t.Error("an API-only candidate unchecked after 30 days must go, with its job")
+	}
+	if exists("event_outbox", "entity_id", "UCfakeCandOld000000000001") || exists("outbox_state", "entity_id", "UCfakeCandOld000000000001") {
+		t.Error("its unsent outbox event and state must go too: nothing from the API outlives 30 days")
+	}
+	if !exists("event_outbox", "entity_id", "UCfakeCandWeb000000000001") {
+		t.Error("the other candidates' events stay")
 	}
 	for _, id := range []string{"UCfakeCandMid000000000001", "UCfakeCandNew000000000001", "UCfakeCandChk000000000001", "UCfakeCandWeb000000000001"} {
 		if !exists("candidates", "channel_id", id) {

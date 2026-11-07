@@ -296,6 +296,17 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			return err
 		}},
 		{name: "database size", every: time.Hour, run: func() error { return usage.SampleSize(ctx, pool, time.Now()) }},
+		{name: "coverage roll-up", every: time.Hour, run: func() error {
+			// One JobCoverage per job kind and finished hour (fix 12), from
+			// the usage tables; hours that ended 10 minutes ago or more, so
+			// the hour's last jobs are in; two days back, once each.
+			now := time.Now()
+			n, err := outbox.New(ctx, now).Coverage(ctx, pool, now.Add(-48*time.Hour), now.Add(-10*time.Minute))
+			if n > 0 {
+				log.Info("coverage roll-ups added to the outbox", "events", n)
+			}
+			return err
+		}},
 		{name: "outbox prune", every: time.Hour, run: func() error {
 			// Sent events are copies made for sending: they go after 7 days
 			// (the owner, 7 November). Unsent ones stay until sent.

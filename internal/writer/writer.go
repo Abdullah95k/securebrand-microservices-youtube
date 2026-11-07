@@ -288,7 +288,13 @@ func (w *Writer) ListedVia(ctx context.Context, channelID string, it ytparse.Vid
 				return err
 			}
 		}
-		// A new upload goes out at once, before its first full check.
+		// A new upload goes out at once, before its first full check;
+		// except one first seen through the official API, whose title and
+		// time are the API's: its first website read sends it (the API's
+		// data never reaches the platform's events).
+		if source == "api_search" {
+			return nil
+		}
 		return ev.Write(ctx, tx, outbox.Videos, it.VideoID)
 	})
 	if err != nil {

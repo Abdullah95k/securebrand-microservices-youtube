@@ -134,6 +134,9 @@ func (b *builder) video() ([]Message, error) {
 		return nil, err
 	}
 	id := postID(v.ID)
+	if fromAPI(v) && v.RemovedAt == nil {
+		return nil, nil // the API's title and time: never sent; its website read sends it
+	}
 	// Removed: the keys and the status. Not yet dated (a Short seen in its
 	// tab): what is known, as a partial event.
 	removed := v.RemovedAt != nil
@@ -413,4 +416,11 @@ func (b *builder) author() ([]Message, error) {
 	m.Envelope = b.envelope("account", id, a.ID, m.Handle == "" && m.DisplayName == "")
 	finish(m.Envelope, m, true)
 	return []Message{{Topic: TopicAccount, Key: id, Msg: m}}, nil
+}
+
+// fromAPI: a video first stored from an official-API search hit and never
+// read on the website, whose title and time are still the API's (the
+// YouTube terms: the API's data never reaches the platform's events).
+func fromAPI(v videoRow) bool {
+	return v.Source != nil && *v.Source == "api_search" && v.LastChecked == nil
 }

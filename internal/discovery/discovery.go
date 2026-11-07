@@ -30,6 +30,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
@@ -178,13 +179,17 @@ func ExpireAPIData(ctx context.Context, q db.Querier, now time.Time) (APIExpiry,
 		return e, err
 	}
 	e.Videos = tag.RowsAffected()
-	// One statement, so a candidate and its job go together.
+	// One statement, so a candidate, its job and its unsent outbox copies
+	// (fix 12) go together: nothing learned from the API outlives 30 days.
 	err = q.QueryRow(ctx, `WITH gone AS (
 			DELETE FROM candidates
 			WHERE status = 'new' AND sources = ARRAY['api_search']::text[] AND first_found < $1
 			RETURNING channel_id),
-		jobs AS (DELETE FROM schedule WHERE kind = $2 AND entity_id IN (SELECT channel_id FROM gone) RETURNING 1)
-		SELECT (SELECT count(*) FROM gone), (SELECT count(*) FROM jobs)`, cutoff, queue.KindCandidate).Scan(&e.Candidates, new(int64))
+		jobs AS (DELETE FROM schedule WHERE kind = $2 AND entity_id IN (SELECT channel_id FROM gone) RETURNING 1),
+		events AS (DELETE FROM event_outbox WHERE kind = 'candidate' AND entity_id IN (SELECT channel_id FROM gone) RETURNING 1),
+		state AS (DELETE FROM outbox_state WHERE kind = 'candidate' AND entity_id IN (SELECT channel_id FROM gone) RETURNING 1)
+		SELECT (SELECT count(*) FROM gone), (SELECT count(*) FROM jobs), (SELECT count(*) FROM events), (SELECT count(*) FROM state)`,
+		cutoff, queue.KindCandidate).Scan(&e.Candidates, new(int64), new(int64), new(int64))
 	if err != nil {
 		return e, err
 	}
@@ -373,7 +378,7 @@ func (r *Runner) record(ctx context.Context, engine string, keywordID int64, hs 
 			// Known but not listed (unlisted by you, or removed): leave it.
 		case errors.Is(err, pgx.ErrNoRows):
 			src := engine + "_search"
-			if _, err := r.Pool.Exec(ctx, `INSERT INTO candidates (channel_id, sources) VALUES ($1, ARRAY[$2])
+			if err := r.decide(ctx, h.channelID, `INSERT INTO candidates (channel_id, sources) VALUES ($1, ARRAY[$2])
 				ON CONFLICT (channel_id) DO UPDATE SET hits = candidates.hits + 1, last_found = now(),
 					sources = CASE WHEN $2 = ANY(candidates.sources) THEN candidates.sources ELSE array_append(candidates.sources, $2::text) END`,
 				h.channelID, src); err != nil {
@@ -478,14 +483,13 @@ func (r *Runner) candidate(ctx context.Context, j queue.Job) (time.Time, error) 
 	}
 	var status string
 	if err := r.Pool.QueryRow(ctx, `SELECT status FROM channels WHERE id = $1`, id).Scan(&status); err == nil && status == "listed" {
-		_, err := r.Pool.Exec(ctx, `UPDATE candidates SET status = 'listed', checked_at = now() WHERE channel_id = $1`, id)
-		return time.Time{}, err
+		return time.Time{}, r.decide(ctx, id, `UPDATE candidates SET status = 'listed', checked_at = now() WHERE channel_id = $1`, id)
 	}
 	var cost phase0.Cost
 	ch, err := r.Fetch.Channel(ctx, id, &cost)
 	if errors.Is(err, innertube.ErrNotFound) {
-		_, err := r.Pool.Exec(ctx, `UPDATE candidates SET status = 'no_match', checked_at = now(), decision = 'channel not found' WHERE channel_id = $1`, id)
-		return time.Time{}, err
+		return time.Time{}, r.decide(ctx, id, `UPDATE candidates SET status = 'no_match', checked_at = now(), decision = 'channel not found'
+			WHERE channel_id = $1`, id)
 	}
 	if err != nil {
 		return time.Time{}, err
@@ -521,8 +525,8 @@ func (r *Runner) candidate(ctx context.Context, j queue.Job) (time.Time, error) 
 	}
 	d := Classify(ch.About.Country, own, recent, hitTitles, match, subs, newest, r.now())
 	if !d.List {
-		_, err := r.Pool.Exec(ctx, `UPDATE candidates SET status = 'no_match', checked_at = now(), decision = $2 WHERE channel_id = $1`, id, d.Why)
-		if err != nil {
+		if err := r.decide(ctx, id, `UPDATE candidates SET status = 'no_match', checked_at = now(), decision = $2 WHERE channel_id = $1`,
+			id, d.Why); err != nil {
 			return time.Time{}, err
 		}
 		return r.now().Add(90 * 24 * time.Hour), nil // check again later (plan §5.4)
@@ -534,12 +538,25 @@ func (r *Runner) candidate(ctx context.Context, j queue.Job) (time.Time, error) 
 	if err != nil {
 		return time.Time{}, err
 	}
-	if _, err := r.Pool.Exec(ctx, `UPDATE candidates SET status = 'listed', checked_at = now(), decision = $2 WHERE channel_id = $1`,
+	if err := r.decide(ctx, id, `UPDATE candidates SET status = 'listed', checked_at = now(), decision = $2 WHERE channel_id = $1`,
 		id, d.Kind+": "+d.Why); err != nil {
 		return time.Time{}, err
 	}
 	r.Log.Info("discovery listed a channel", "channel", id, "kind", d.Kind, "tier", string(d.Tier), "why", d.Why)
 	return time.Time{}, nil
+}
+
+// decide writes a candidate (found, or decided) and its outbox event in
+// one transaction (fix 12).
+func (r *Runner) decide(ctx context.Context, id, sql string, args ...any) error {
+	ev := outbox.New(ctx, r.now())
+	return pgx.BeginFunc(ctx, r.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, sql, args...); err != nil {
+			return err
+		}
+		_, err := ev.Content(ctx, tx, outbox.Candidates, id)
+		return err
+	})
 }
 
 // RecomputeTiers re-assigns the tier of every listed core channel whose

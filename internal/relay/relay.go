@@ -323,7 +323,7 @@ func (r *Relay) set(name, help string, labels map[string]string, v float64) {
 // Topics are every topic the relay publishes to, for the readiness check.
 func Topics() []string {
 	t := []string{contract.TopicAccount, contract.TopicAccountSnapshot, contract.TopicPost, contract.TopicComment,
-		contract.TopicMetrics, contract.TopicPlaylist}
+		contract.TopicMetrics, contract.TopicPlaylist, contract.TopicCandidate, contract.TopicCoverage}
 	t = append(t, ytevents.Topics()...)
 	return t
 }

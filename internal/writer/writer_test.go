@@ -132,6 +132,12 @@ func TestVideosRelevancePrecisionAndSuppression(t *testing.T) {
 	if n := r.count(t, `SELECT count(*) FROM videos WHERE id = 'fakeVIDw01' AND relevant AND published_precision_s = 43200`); n != 1 {
 		t.Error("the listing must store the relevance and the date estimate")
 	}
+	// A video first seen through the official API is stored, but its
+	// events wait for its website read (the API's title never goes out).
+	if isNew, err := r.w.ListedVia(ctx, ch, ytparse.VideoItem{VideoID: "fakeVIDapi", Title: "an API title"}, "api_search"); err != nil || !isNew {
+		t.Fatalf("API listing: new %v, err %v", isNew, err)
+	}
+	sameEvents(t, "API-sourced listing", r.events(t, "fakeVIDapi"))
 	// The video check: exact publish date from the player wins; numbers snapshot.
 	v := writer.Video{ID: "fakeVIDw01", ChannelID: ch, HasPlayer: true,
 		Watch:  ytparse.WatchInfo{Title: "أخبار بغداد", Description: "d", Likes: ytparse.ParseCount("1.5K"), CommentCount: ytparse.ParseCount("12"), CommentsToken: "tok"},

@@ -2,7 +2,7 @@
 
 Written by the yts session on 6 November 2026 (Iraq time), from `main` `9a0e248`. A plan: the outbox and relay (fix 12) and the
 `content.*` mapping (REQ-021) are built from it in small PRs, in the order of section 7. **Updated 7 November:** the owner's two
-answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5. PR 4 (the relay) built: section 4. PR 5 (the chart) built: section 7.
+answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5. PR 4 (the relay) built: section 4. PR 5 (the chart) built: section 7. PR 6 (candidates and coverage) built: section 7.
 
 **Contract version:** v1.2.0 (`github.com/abdullah95k/securebrand-contracts`). The owner approved v1.0.0 (D-016); v1.1.0 and v1.2.0 only
 add fields and checks, and the master agreed to v1.2.0 (6 November). Every message goes out with `sb-contract: 1.2.0`.
@@ -204,8 +204,24 @@ checks it matches.
 | 3 | The `yt.*` protos and their mapping. **Built** | 4 days |
 | 4 | The relay: franz-go transactions, leases, metrics, alerts; end-to-end tests against an in-memory Kafka. **Built** | 4 days |
 | 5 | The chart: the relay Deployment, its credentials, the network policy to Kafka and the registry. **Built:** `yts-relay` (off by default and in `values-production.yaml`, for the pilot without Kafka; `relay.enabled=true` turns it on, `relay.canary=true` while the canary runs), one replica, `Recreate`, the platform's credentials mounted for the `KAFKA_*` files, ops port 9103 scraped and allowed from monitoring; Kafka's ports come from `KAFKA_BROKERS` at install, as before. The registry isn't needed: the relay reads nothing from it | 1 day |
-| 6 | Discovery candidates and the hourly coverage roll-ups | 2 days |
+| 6 | Discovery candidates and the hourly coverage roll-ups. **Built:** see below | 2 days |
 | 7 | The media hand-off: media ready; a consumer of `content.media.processed.v1` (yts's own consumer group); deleting each file once acknowledged or at its deadline, with `content.media.deleted.v1`; metrics and an alert for files past their deadline | 3 days |
+
+**PR 6, as built:**
+- **Candidates** (`discovery.candidate.v1`, key the account ID, checked by the contract's `Candidate` rule): an event when discovery
+  finds a channel, when one gains a source, and when the check decides; more sightings alone are not a change. Source from how it
+  was first found (website search, official-API search, commenter); outcome pending, added (or added for relevant items only, for a
+  mention channel), already listed, not relevant, or unavailable ("gone"); `decided_at`; the evidence: the keyword, and for website
+  hits the video and when it was made (day precision). **Official-API hits give their keyword only, never the API's video IDs or
+  fields**, and a candidate only the API found carries `terms_expire_at` (30 days after it was found). The daily API expiry also
+  deletes the unsent outbox copies of the candidates it removes, so nothing from the API outlives 30 days.
+- **Coverage** (`collection.coverage.v1`, key the job ID `yts:<kind>@<hour>`): the scheduler adds, hourly, one `JobCoverage` per job
+  kind and finished hour from the usage tables (fix 5), once each: `job_count` jobs, counters `requests`, `bytes`, `blocked` and
+  `yt.jobs`, `yt.failures`, `yt.run_ms`; status completed, partial or failed; reasons `rate_limited` (blocks) and `failed`.
+- Neither has a `yt.*` topic: the contract's message carries everything.
+- **A fix to PR 1:** a video first seen through an official-API search hit is stored with the API's title and time, and PR 1 sent it
+  at once. It now waits for its first website read, which sends it with the website's data; both mappings also refuse such a video
+  as a guard. The API's data never reaches the platform's events.
 
 About 4–5 weeks in all, matching the contract README's estimate for yts (4–5 weeks with the new fields of fixes 19–21). The owner
 answered both open points on 7 November: sent rows go after 7 days, and `buf generate` may run here.

@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **6 November 2026, 19:43 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **7 November 2026, 03:52 (Iraq time)**.
 
 ## Where it stands
 
@@ -14,10 +14,13 @@ The current state of the YouTube collector, for the owner and the master session
   fix: [`master/yts-fixes.md`](master/yts-fixes.md).
   - **Done:** every fix before the pilot: 1 to 10, 13 (non-root image), 14 (Helm chart), 16 (pinned bases, image scan, releases)
     and 17 (database TLS and roles), plus the proxy `country=` tag and PostgreSQL 18.
-  - **Next:** the pilot (fix 11) when the platform is ready (below); the outbox and relay (fix 12) alongside it, planned in
-    [`master/yts-contract-adoption.md`](master/yts-contract-adoption.md) (merged 6 November). Building starts after two owner
-    answers: whether sent outbox rows are deleted after 7 days, and whether this session may run the code generator for the
-    `yt.*` protos.
+  - **Building now:** the outbox and relay (fix 12), in 7 PRs planned in
+    [`master/yts-contract-adoption.md`](master/yts-contract-adoption.md). The owner answered on 7 November: sent outbox rows go
+    after 7 days, and the code generator may run here. **PR 1, the outbox, is in review**
+    ([#60](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/60)): every write adds its events in the same
+    transaction as the data; no Kafka yet.
+  - **Next:** the pilot (fix 11) when the platform is ready (below). Until the relay runs, events wait in the outbox (roughly
+    100 MB a day at 1,000 channels).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
 
 ## Ready for the pilot (fix 11)
@@ -75,6 +78,10 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- Fix 12, PR 1 ([#60](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/60), in review): two tables
+  (`event_outbox`, `outbox_state`) in migration `0012`; no existing table changed. The scheduler deletes sent outbox rows 7 days
+  after sending (the owner's answer); unsent rows stay. Metrics `yt_outbox_unsent` and `yt_outbox_oldest_unsent_seconds`. Erasure
+  also deletes an item's outbox rows.
 - Fix 16: `ytcollect version`, the metric `yt_build_info`, OCI labels on the image, and a release workflow that publishes
   `ghcr.io/<owner>/yts` only when a `v*` tag is pushed.
 - Fix 14: the Helm chart; a storage `prefix` setting (media under `yts/`); a `runbook_url` on every alert.

@@ -18,7 +18,7 @@ The current state of the YouTube collector, for the owner and the master session
     [`master/yts-contract-adoption.md`](master/yts-contract-adoption.md). The owner answered on 7 November: sent outbox rows go
     after 7 days, and the code generator may run here. **PR 1, the outbox, is merged**
     ([#60](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/60)): every write adds its events in the same
-    transaction as the data; no Kafka yet. **PR 2, the contract mapping, is in review:** every event becomes a contract v1.2.0
+    transaction as the data; no Kafka yet. **PR 2, the contract mapping, is in review** ([#61](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/61)): every event becomes a contract v1.2.0
     message checked by the contract's conformance package; `ytcollect outbox check` runs the checks on real events.
   - **Next:** the pilot (fix 11) when the platform is ready (below). Until the relay runs, events wait in the outbox (roughly
     100 MB a day at 1,000 channels).

@@ -68,8 +68,10 @@ func seed(t *testing.T, pool *pgxpool.Pool) {
 func outboxLeft(t *testing.T, pool *pgxpool.Pool) (events, state string) {
 	t.Helper()
 	var e, st *string
-	if err := pool.QueryRow(context.Background(), `SELECT (SELECT string_agg(DISTINCT entity_id, ' ' ORDER BY entity_id) FROM event_outbox),
-		(SELECT string_agg(DISTINCT entity_id, ' ' ORDER BY entity_id) FROM outbox_state)`).Scan(&e, &st); err != nil {
+	// Byte order (COLLATE "C"), as slices.Sort: not the database's locale.
+	if err := pool.QueryRow(context.Background(), `SELECT
+		(SELECT string_agg(DISTINCT entity_id COLLATE "C", ' ' ORDER BY entity_id COLLATE "C") FROM event_outbox),
+		(SELECT string_agg(DISTINCT entity_id COLLATE "C", ' ' ORDER BY entity_id COLLATE "C") FROM outbox_state)`).Scan(&e, &st); err != nil {
 		t.Fatal(err)
 	}
 	if e != nil {

@@ -90,7 +90,7 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 - The contract is at v1.2.0 (additions and checks only). The master wants, when REQ-010 is done: the commit, the image details,
   the chart path and values file, the Helm image keys, and the outbox topics with their retention.
 
-- Network: the managed services sit in the production VPC (`10.20.0.0/16`) on the ports in their secret; the schema registry in
+- Network: the managed services sit in the production VPC (`10.30.0.0/16`, London since 7 November: D-030) on PgBouncer's 5432 and Kafka's 25073; the schema registry in
   namespace `platform`; HTTPS anywhere; the proxy exits once bought. The chart's network policy now follows this.
 - Prometheus picks up every ServiceMonitor and PrometheusRule; no labels needed. Alerts go to the owner's Telegram.
 

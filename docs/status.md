@@ -28,7 +28,9 @@ The current state of the YouTube collector, for the owner and the master session
     ([#66](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/66)): thumbnails are announced to analysis, and each file is deleted once
     analysis acknowledges it, or at its 72-hour deadline; the record stays. It runs in the relay, so the pilot (no Kafka) keeps
     every image.
-  - **REQ-023 and REQ-024 (the owner, 7 November): in review.** yts now fits the platform's PostgreSQL behind PgBouncer in
+  - **REQ-023 and REQ-024 (the owner, 7 November): done**, merged in
+    [#68](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/68) (merge commit `7f9677ca5fe853160821b2b9226f6e4deea4396c`,
+    sent to the master on 7 November with the test method and the idle numbers). yts now fits the platform's PostgreSQL behind PgBouncer in
     transaction mode: no session locks (the relay holds a lease row; the migrations and new partitions use locks that end with
     their transaction), no statements prepared on the server, no startup parameters, at most 4 connections per process, and a
     wait for a free connection when the database is full (45 minutes for the migrations). While idle it touches the database far

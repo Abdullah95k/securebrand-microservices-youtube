@@ -11,6 +11,7 @@ import (
 	contentv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/content/v1"
 	coveragev1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/coverage/v1"
 	discoveryv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/discovery/v1"
+	mediav1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/media/v1"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/collecttest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/contract"
@@ -55,13 +56,13 @@ func TestEveryEventConformsEndToEnd(t *testing.T) {
 		}
 	}
 	for _, k := range []string{"channel", "channel_snapshot", "video", "video_metrics", "post", "post_metrics", "comment",
-		"comment_metrics", "playlist", "author"} {
+		"comment_metrics", "playlist", "author", "media"} {
 		if kinds[k] == 0 {
 			t.Errorf("no %s events (events by kind: %v)", k, kinds)
 		}
 	}
 	for _, tp := range []string{contract.TopicAccount, contract.TopicAccountSnapshot, contract.TopicPost, contract.TopicComment,
-		contract.TopicMetrics, contract.TopicPlaylist} {
+		contract.TopicMetrics, contract.TopicPlaylist, contract.TopicMedia} {
 		if topics[tp] == 0 {
 			t.Errorf("no %s messages (by topic: %v)", tp, topics)
 		}
@@ -130,6 +131,8 @@ func envelopeOf(t *testing.T, msg contract.Message) *contentv1.Envelope {
 	case *contentv1.Metrics:
 		return v.GetEnvelope()
 	case *contentv1.Playlist:
+		return v.GetEnvelope()
+	case *contentv1.Media:
 		return v.GetEnvelope()
 	}
 	t.Fatalf("unexpected %s", msg.Type())
@@ -288,5 +291,78 @@ func TestCoverage(t *testing.T) {
 		c.GetStatus() != coveragev1.JobStatus_JOB_STATUS_PARTIAL || c.GetCounters()["requests"] != 120 || c.GetCounters()["blocked"] != 2 ||
 		len(c.GetReasons()) != 2 || c.GetWindowTo().AsTime().Sub(c.GetWindowFrom().AsTime()) != time.Hour {
 		t.Errorf("coverage %s %v", msgs[0].Key, c)
+	}
+}
+
+// A stored image: its record (content.media, kept forever), its
+// announcement to analysis with its object, deadline and consumers, and
+// its deletion. Every one passes the contract's check.
+func TestMedia(t *testing.T) {
+	m := &contract.Mapper{Options: prod, MediaBucket: "sb-media", MediaPrefix: "yts/"}
+	const sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	base := `"kind":"thumb","entity_id":"fakeMEDv1","channel_id":"` + chID + `","sha256":"` + sha + `",
+		"object_key":"thumb/fakeMEDv1/` + sha + `.jpg","source_url":"https://i.ytimg.com/vi/fakeMEDv1/hqdefault.jpg",
+		"content_type":"image/jpeg","bytes":20000,"first_seen":"2026-11-07T08:00:00+00:00"`
+	const id = "yt:media:thumb:fakeMEDv1:0123456789abcdef"
+
+	msgs, err := m.Map(row("media", "thumb:fakeMEDv1:0123456789abcdef", "", `{`+base+`,"attempt":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := msgs[0].Msg.(*contentv1.Media)
+	if msgs[0].Topic != contract.TopicMedia || msgs[0].Key != id || rec.GetEnvelope().GetId() != id ||
+		rec.GetOwnerId() != "yt:post:fakeMEDv1" || rec.GetOwnerKind() != "post" || rec.GetRole() != contentv1.MediaRole_MEDIA_ROLE_THUMBNAIL ||
+		rec.GetType() != contentv1.MediaType_MEDIA_TYPE_IMAGE || rec.GetSizeBytes() != 20000 || rec.GetEnvelope().GetContentHash() == "" {
+		t.Errorf("media %s %v", msgs[0].Key, rec)
+	}
+
+	msgs, err = m.Map(row("media_ready", "thumb:fakeMEDv1:0123456789abcdef", "",
+		`{`+base+`,"announced_at":"2026-11-07T09:00:00+00:00","delete_after":"2026-11-10T09:00:00+00:00","attempt":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := msgs[0].Msg.(*mediav1.MediaReady)
+	if msgs[0].Topic != contract.TopicMediaReady || msgs[0].Key != id || ready.GetAccountId() != "yt:account:"+chID ||
+		ready.GetObject().GetBucket() != "sb-media" || ready.GetObject().GetKey() != "yts/thumb/fakeMEDv1/"+sha+".jpg" ||
+		ready.GetObject().GetSha256() != sha || ready.GetAttempt() != 1 || !contains(ready.GetRequiredConsumers(), "sb-analysis") ||
+		ready.GetDeleteAfter().AsTime().Sub(ready.GetStoredAt().AsTime()) != 73*time.Hour {
+		t.Errorf("media_ready %s %v", msgs[0].Key, ready)
+	}
+	// Without a bucket nothing can be announced.
+	if _, err := (&contract.Mapper{Options: prod}).Map(row("media_ready", "x", "", `{`+base+`,"attempt":1}`)); err == nil {
+		t.Error("an announcement without a bucket must fail")
+	}
+	// A deadline under 24 hours after the file was stored is refused.
+	var rej *contract.Rejected
+	if _, err := m.Map(row("media_ready", "x", "", `{`+base+`,"delete_after":"2026-11-07T09:00:00+00:00","attempt":1}`)); !errors.As(err, &rej) {
+		t.Errorf("a deadline an hour after storing: %v", err)
+	}
+
+	for reason, want := range map[string]mediav1.DeleteReason{"processed": mediav1.DeleteReason_DELETE_REASON_PROCESSED,
+		"expired": mediav1.DeleteReason_DELETE_REASON_EXPIRED} {
+		msgs, err = m.Map(row("media_deleted", "thumb:fakeMEDv1:0123456789abcdef", "",
+			`{`+base+`,"attempt":1,"deleted_at":"2026-11-08T09:00:00+00:00","delete_reason":"`+reason+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		del := msgs[0].Msg.(*mediav1.MediaDeleted)
+		if msgs[0].Topic != contract.TopicMediaDeleted || msgs[0].Key != id || del.GetReason() != want || del.GetDeletedAt() == nil {
+			t.Errorf("media_deleted %s %v", reason, del)
+		}
+	}
+
+	// Avatars and banners belong to their channel; a commenter's avatar to
+	// the commenter.
+	for kind, role := range map[string]contentv1.MediaRole{"avatar": contentv1.MediaRole_MEDIA_ROLE_PROFILE_PICTURE,
+		"banner": contentv1.MediaRole_MEDIA_ROLE_BANNER, "author_avatar": contentv1.MediaRole_MEDIA_ROLE_PROFILE_PICTURE} {
+		msgs, err := m.Map(row("media", kind, "", `{"kind":"`+kind+`","entity_id":"UCfakeMEDAUTHOR000000001","sha256":"`+sha+`",
+			"object_key":"k","source_url":"https://yt3.ggpht.com/fake","content_type":"image/jpeg","bytes":1,"first_seen":"2026-11-07T08:00:00+00:00"}`))
+		if err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		rec := msgs[0].Msg.(*contentv1.Media)
+		if rec.GetOwnerId() != "yt:account:UCfakeMEDAUTHOR000000001" || rec.GetOwnerKind() != "account" || rec.GetRole() != role {
+			t.Errorf("%s: %v", kind, rec)
+		}
 	}
 }

@@ -2,7 +2,8 @@
 // tests that need real stored data and outbox events (the contract and
 // yt.* mappings, fix 12): one fake channel with videos, a Short, comments
 // and a reply, a community post, a playlist and commenters, collected by
-// the real worker with the comment engine and enrichment.
+// the real worker with the comment engine, enrichment and the media
+// downloads (thumbnails, into a temporary folder: Result.Store).
 package collecttest
 
 import (
@@ -21,6 +22,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fakeyt"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
@@ -54,10 +56,12 @@ func Channel() fakeyt.FakeChannel {
 	}
 }
 
-// Result is the database after the run, and the keyword matcher.
+// Result is the database after the run, the keyword matcher, and the
+// stored images.
 type Result struct {
-	Pool *pgxpool.Pool
-	Live *kwstore.Live
+	Pool  *pgxpool.Pool
+	Live  *kwstore.Live
+	Store media.FileStore
 }
 
 // Run lists the fake channel and runs the collector, the comment engine
@@ -94,12 +98,16 @@ func Run(t testing.TB) Result {
 	k, _ := privacy.NewKeyer([]byte("test-secret-0123456789abcdef-0123456789"))
 	sup := privacy.NewSuppressor(k)
 	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: quiet, WithPlayer: true,
-		Write: &writer.Writer{Pool: pool, Sup: sup, KW: live}}
+		Write: &writer.Writer{Pool: pool, Sup: sup, KW: live, Media: true}}
 	h := svc.Handlers()
 	for kind, f := range (&comments.Engine{Pool: pool, Client: client, Sup: sup, Log: quiet}).Handlers() {
 		h[kind] = f
 	}
 	for kind, f := range (&enrich.Enricher{Pool: pool, Sup: sup, Log: quiet, Fetch: fetch}).Handlers() {
+		h[kind] = f
+	}
+	store := media.FileStore{Dir: t.TempDir()}
+	for kind, f := range (&media.Service{Pool: pool, Images: client, Store: store, Sup: sup, Log: quiet, CDNBase: yt.URL}).Handlers() {
 		h[kind] = f
 	}
 	if err := registry.AddInput(ctx, pool, registry.Input{Input: "@fakecontract", Tier: policy.A}); err != nil {
@@ -109,5 +117,5 @@ func Run(t testing.TB) Result {
 	wctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	_ = w.Run(wctx)
-	return Result{Pool: pool, Live: live}
+	return Result{Pool: pool, Live: live, Store: store}
 }

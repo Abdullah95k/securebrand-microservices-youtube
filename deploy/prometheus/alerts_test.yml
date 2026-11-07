@@ -71,3 +71,18 @@ tests:
               summary: "Events have waited more than 30 minutes for Kafka (the oldest: 1h 0m 0s)"
               description: "The relay is behind, failing or stopped: see its log and yt_relay_transactions_total; 'ytcollect outbox' shows what waits."
               runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#16-the-outbox-and-the-relay"
+  - interval: 1m
+    input_series:
+      - series: 'yt_media_past_deadline'
+        values: '0x5 2x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: MediaPastDeadline
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: MediaPastDeadline
+        exp_alerts:
+          - exp_annotations:
+              summary: "2 image(s) still stored past their deadline"
+              description: "The relay could not delete them (its log: 'deleting an analysed file failed'), or it is stopped; yt_media_delete_failures_total counts the failures."
+              runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#17-the-media-hand-off"

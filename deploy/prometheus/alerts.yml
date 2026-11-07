@@ -152,3 +152,13 @@ groups:
           runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#16-the-outbox-and-the-relay"
           summary: "{{ $value }} outbox event(s) refused: not sent to Kafka"
           description: "'ytcollect outbox check' lists them with the reason; after the fix, restarting the relay tries them again."
+      # The media hand-off (contract R5): an announced image must be gone
+      # from storage by its deadline. The relay deletes what is due every 10
+      # minutes; still there an hour later, deleting is failing or stopped.
+      - alert: MediaPastDeadline
+        expr: sum(yt_media_past_deadline) > 0
+        for: 30m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#17-the-media-hand-off"
+          summary: "{{ $value }} image(s) still stored past their deadline"
+          description: "The relay could not delete them (its log: 'deleting an analysed file failed'), or it is stopped; yt_media_delete_failures_total counts the failures."

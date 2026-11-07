@@ -43,6 +43,10 @@ spec:
             {{- if .Values.relay.canary }}
             - -canary
             {{- end }}
+            - -media-handoff={{ .Values.relay.media.handoff }}
+            - -media-keep={{ .Values.relay.media.keep }}
+            - -media-group={{ .Values.relay.media.group }}
+            - -media-consumers={{ join "," .Values.relay.media.consumers }}
             {{- range .Values.relay.extraArgs }}
             - {{ . | quote }}
             {{- end }}

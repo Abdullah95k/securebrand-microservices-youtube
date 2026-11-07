@@ -689,7 +689,7 @@ The files stay as they are (JSON lines, readable with any tool), next to the pro
 Every change yts stores also goes into an outbox table, in the same save (REQ-010 fix 12). The relay (`ytcollect relay`, its own
 service on the cluster) sends the outbox to the platform's Kafka: each event as the contract's message (`content.*`, checked first)
 and as yts's own (`yt.*`), in one Kafka transaction per batch. Sent events are deleted after 7 days; unsent ones stay until sent.
-Until the relay runs (the pilot has no Kafka), events wait in the outbox.
+While the relay is off or Kafka is down, events wait in the outbox and go when it is back.
 
 What is waiting, by kind:
 
@@ -737,8 +737,8 @@ Kafka are both there:
 3. Every 10 minutes it deletes each file that analysis has acknowledged (processed, skipped, or failed for good), and each file
    whose deadline has passed, and says so on `content.media.deleted.v1`.
 
-The record of every image (its row, and `content.media.v1`) stays forever; only the file goes. Without Kafka (the pilot) nothing
-is announced and nothing is deleted. Avatars and banners are never handed off: they stay as before.
+The record of every image (its row, and `content.media.v1`) stays forever; only the file goes. With the hand-off off
+(`relay.media.handoff: false`, or without Kafka) nothing is announced and nothing is deleted. Avatars and banners are never handed off: they stay as before.
 
 What the relay has done, by kind and state (`stored`, `announced`, `deleted_processed`, `deleted_expired`), is the metric
 `yt_media_handoff`. Files deleted without analysis (`deleted_expired`) mean analysis did not answer within the deadline.

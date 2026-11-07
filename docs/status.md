@@ -15,11 +15,14 @@ The current state of the YouTube collector, for the owner and the master session
   7 November to 18:29 on 9 November; then `docs/master/yts-pilot-report.md`.
 - **Deployed to production (7 November, the master):** on the platform's cluster through Argo CD, at `9a4700d`, then pinned to
   `145e68c` (no overrides left but the image and the worker count). The migrations ran (PreSync hook) and the scheduler is
-  running and ready. **The worker is held at 0** until the proxies are bought (the owner is buying 10 IPs), so nothing is
-  collected from YouTube yet. Push stays off. The master is turning the relay on in production (canary checks on, media
-  hand-off off). If Kafka's access rules can't grant the transactional ID `yts-relay`, `relay.transactions: false` makes the
-  relay send without transactions (runbook §16). The two fixes the deploy needed are merged: the London VPC (`10.30.0.0/16`,
-  ports 5432 and 25073) and the registry's pull secret in `values-production.yaml`.
+  running and ready. The worker was held at 0 until the pilot (above) started, on igs's shared IPs until yts's own are bought.
+  Push stays off. The two fixes the deploy needed are merged: the London VPC (`10.30.0.0/16`, ports 5432 and 25073) and the
+  registry's pull secret in `values-production.yaml`.
+- **The relay is live** (the master, 20:24Z on 7 November): `yts-relay` running since 20:17Z, canary checks on, the media hand-off
+  off until the owner decides. Kafka granted the transactional ID `yts-relay`, so batches go in transactions. In its first 8
+  minutes the platform's writer took 273,387 yt events into ClickHouse (posts, comments, metrics, accounts, media, discovery
+  candidates, coverage) with 0 dead letters and no insert errors. Should Kafka ever refuse the transactional ID,
+  `relay.transactions: false` sends without transactions (runbook §16).
 - **Phase 0:** has ended (the owner, 6 November). The census of 5 November was not run: there are no new long runs on the shared
   server (D-026). The final numbers come from the 4 November report and the 5 November discovery, into `docs/phase0-results.md`.
 - **Now building:** the owner's fix list (REQ-010) and the contract adoption (REQ-021), approved on 6 November. Progress, one row per
@@ -38,8 +41,8 @@ The current state of the YouTube collector, for the owner and the master session
     and hourly coverage, is merged** ([#65](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/65)); it also stops a video first seen through the official API from going out before its
     website read. **PR 7, the media hand-off, is merged**
     ([#66](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/66)): thumbnails are announced to analysis, and each file is deleted once
-    analysis acknowledges it, or at its 72-hour deadline; the record stays. It runs in the relay, so the pilot (no Kafka) keeps
-    every image.
+    analysis acknowledges it, or at its 72-hour deadline; the record stays. It runs in the relay; the
+    master keeps it off until the owner decides, so every image is kept.
   - **REQ-023 and REQ-024 (the owner, 7 November): done**, merged in
     [#68](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/68) (merge commit `7f9677ca5fe853160821b2b9226f6e4deea4396c`,
     sent to the master on 7 November with the test method and the idle numbers). yts now fits the platform's PostgreSQL behind PgBouncer in
@@ -50,8 +53,7 @@ The current state of the YouTube collector, for the owner and the master session
     Idle queries per minute through PgBouncer, before and after: worker 60 → 12, scheduler 45 → 36 (one burst a minute, the
     gauges), relay 67 → 16 (12 of them the lease renewal every 5 seconds the platform asks for). The test suite runs through
     PgBouncer in transaction mode with prepared statements off, here and in CI.
-  - **Next:** the pilot (fix 11) when the platform is ready (below). Until the relay runs, events wait in the outbox (roughly
-    100 MB a day at 1,000 channels).
+  - **Next:** the pilot report (fix 11) after 18:29 on 9 November. The relay sends the outbox as it fills (above).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
 
 ## Ready for the pilot (fix 11)
@@ -82,8 +84,8 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 
 1. **Production and the 48-hour pilot run on the platform's Kubernetes cluster** (D-012, D-026), once the owner confirms it is
    ready. Nothing is bought for yts; no new long runs on the shared server.
-2. **Order:** fixes 13, 14, 16 and 17 (non-root image, Helm chart, releases, Postgres TLS) come before the pilot. The pilot runs
-   without Kafka; discovery runs during it at low priority.
+2. **Order:** fixes 13, 14, 16 and 17 (non-root image, Helm chart, releases, Postgres TLS) come before the pilot. The pilot began
+   without Kafka; the relay joined it at 23:17 Iraq time on 7 November. Discovery runs during it at low priority.
 3. **Proxies:** the owner confirms with the purchase whether yts gets its own IPs, with a country for each.
 4. **Media for analysis:** thumbnails and community-post images, kept until analysed. No audio, video or transcripts.
 5. **The contract v1.0.0 is published** (D-016). The `content.*` mapping follows the outbox (fix 12).

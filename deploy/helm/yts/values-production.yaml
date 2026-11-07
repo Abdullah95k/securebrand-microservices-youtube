@@ -55,8 +55,14 @@ networkPolicy:
   monitoringNamespace: monitoring
   egress:
     httpsCIDRs: ["0.0.0.0/0"]
+    # The production VPC in London (the master, 7 November: D-030; it was
+    # Frankfurt's 10.20.0.0/16). The ports are given here because Argo CD
+    # renders the chart with "helm template", where the chart can't read
+    # them from platform-credentials: 5432 is PgBouncer (the only PostgreSQL
+    # port), 25073 Kafka. yts uses no Valkey.
     managedServices:
-      cidrs: ["10.20.0.0/16"]
+      cidrs: ["10.30.0.0/16"]
+      ports: [5432, 25073]
     schemaRegistry:
       enabled: true
     proxies:

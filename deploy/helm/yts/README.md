@@ -14,7 +14,7 @@ The Helm chart for the YouTube collector (REQ-010 fix 14). Docker Compose on one
 | `yts-migrate` Job | The migrations, a hook before every install and upgrade, then the grants for the app and read-only roles | — |
 | ServiceMonitor | Scrapes `/metrics` on the worker (`:9101`), the scheduler (`:9102`) and the relay (`:9103`) | — |
 | PrometheusRule | The 21 alerts of `deploy/prometheus/alerts.yml`, each with a runbook link | — |
-| NetworkPolicy | In: the monitoring namespace on the ops ports. Out: DNS; HTTPS; the managed PostgreSQL, Kafka and Valkey in the VPC (`10.20.0.0/16`) on the ports read from `platform-credentials` at install; the schema registry (namespace `platform`, `app: schema-registry`, port 8080); the proxy exits on the ports read from `proxies.yaml` at install | — |
+| NetworkPolicy | In: the monitoring namespace on the ops ports. Out: DNS; HTTPS; the managed PostgreSQL and Kafka in the VPC (`10.30.0.0/16`, London) on the ports read from `platform-credentials` at install, or given in the values (`5432`, `25073`) when the chart is rendered without the cluster (Argo CD); the schema registry (namespace `platform`, `app: schema-registry`, port 8080); the proxy exits on the ports read from `proxies.yaml` at install | — |
 
 Every pod runs as user and group 65532, never root, with a read-only root filesystem, no capabilities and no service-account
 token. Probes: `/healthz` (alive) and `/readyz` (the database answers; for the worker, at least one proxy isn't quarantined; for the

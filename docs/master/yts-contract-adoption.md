@@ -2,7 +2,7 @@
 
 Written by the yts session on 6 November 2026 (Iraq time), from `main` `9a0e248`. A plan: the outbox and relay (fix 12) and the
 `content.*` mapping (REQ-021) are built from it in small PRs, in the order of section 7. **Updated 7 November:** the owner's two
-answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5.
+answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5. PR 4 (the relay) built: section 4.
 
 **Contract version:** v1.2.0 (`github.com/abdullah95k/securebrand-contracts`). The owner approved v1.0.0 (D-016); v1.1.0 and v1.2.0 only
 add fields and checks, and the master agreed to v1.2.0 (6 November). Every message goes out with `sb-contract: 1.2.0`.
@@ -123,7 +123,28 @@ what is waiting.
   This is bookkeeping only: how yts reaches YouTube is unchanged.
 - **The relay** (`ytcollect relay`, its own Deployment in the chart): leases outbox rows in order, builds the `yt.*` message and its
   `content.*` mapping, checks them, and publishes both in **one Kafka transaction** with an idempotent producer (franz-go). Keys as in
-  section 1, so a post's comments and counts stay in order. At-least-once; consumers drop repeats by `event_id` (a ULID).
+  section 1, so a post's comments and counts stay in order. At-least-once; consumers drop repeats by `event_id`.
+
+  **Built (PR 4, `internal/relay`):**
+  - One relay sends at a time (a Postgres advisory lock), so the outbox's order holds. It reads batches of unsent events in order
+    (500 by default), maps each to its `content.*` messages and its `yt.*` message, and publishes the batch in one Kafka transaction
+    (transactional ID `yts-relay`, all in-sync replicas, keys hashed as Kafka's own clients do). It marks the events sent after the
+    commit; a stop in between sends the batch again, with the same event IDs.
+  - Headers: `sb-type` on every message, `sb-contract: 1.2.0` on `content.*`.
+  - An event the contract refuses, or that Kafka can't take (too large), is set aside with its reason (`event_outbox.failure`), so it
+    can't block the rest; it is tried again when the relay restarts, after a fix. Anything else (Kafka down, a topic missing) aborts
+    the batch, which goes again with back-off.
+  - It never creates a topic and registers nothing.
+  - Kafka settings from the platform's files (`KAFKA_BROKERS`, `KAFKA_USER`, `KAFKA_PASSWORD`, `KAFKA_SASL_MECHANISM`,
+    `KAFKA_TLS`, `KAFKA_CA_CERT`; folder `YT_KAFKA_DIR`, else the platform's credentials); credentials are refused without TLS to
+    another machine.
+  - Ops port 9103: `/healthz`, `/readyz` (the database and Kafka), `/metrics`: `yt_relay_published_total` by topic,
+    `yt_relay_refused_total` by kind, `yt_relay_transactions_total` by result, `yt_relay_last_commit_timestamp_seconds`,
+    `yt_relay_up`. The scheduler adds `yt_outbox_failed`.
+  - Alerts `OutboxBacklog` (events waiting over 30 minutes, once a relay has run in the last day, so the pilot doesn't alert) and
+    `OutboxRefused`, with a runbook section.
+  - **A change from the plan:** the end-to-end tests run against franz-go's in-memory Kafka (`kfake`, with transactions) inside
+    `go test`, not a Redpanda container in CI: the same checks, no extra service.
 - **Credentials:** `KAFKA_BROKERS`, `KAFKA_USER`, `KAFKA_PASSWORD`, `KAFKA_SASL_MECHANISM` (SCRAM-SHA-256), `KAFKA_TLS` and
   `KAFKA_CA_CERT` from `platform-credentials`, as files. The schema registry at `SCHEMA_REGISTRY_URL`, read only.
 - **Metrics and alerts:** outbox depth by kind and the oldest unsent row (`yt_outbox_unsent`, `yt_outbox_oldest_unsent_seconds`,
@@ -181,7 +202,7 @@ checks it matches.
 | 1 | Migration `0012` and the outbox writer; events written in the same transaction (no Kafka yet). **Built** | 3 days |
 | 2 | The `content.*` mapping from outbox rows, with the conformance checks and tests from the fake YouTube. **Built** | 5 days |
 | 3 | The `yt.*` protos and their mapping. **Built** | 4 days |
-| 4 | The relay: franz-go transactions, leases, metrics, alerts; an end-to-end test with Redpanda in CI | 4 days |
+| 4 | The relay: franz-go transactions, leases, metrics, alerts; end-to-end tests against an in-memory Kafka. **Built** | 4 days |
 | 5 | The chart: the relay Deployment, its credentials, the network policy to Kafka and the registry | 1 day |
 | 6 | Discovery candidates and the hourly coverage roll-ups | 2 days |
 | 7 | The media hand-off: media ready; a consumer of `content.media.processed.v1` (yts's own consumer group); deleting each file once acknowledged or at its deadline, with `content.media.deleted.v1`; metrics and an alert for files past their deadline | 3 days |

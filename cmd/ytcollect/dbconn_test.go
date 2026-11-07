@@ -11,7 +11,7 @@ import (
 func TestRoleFor(t *testing.T) {
 	for cmd, want := range map[string]db.Role{
 		"migrate": db.RoleOwner, "scheduler": db.RoleOwner, "archive": db.RoleOwner,
-		"worker": db.RoleApp, "websub": db.RoleApp, "channels": db.RoleApp, "jobs": db.RoleApp, "erase": db.RoleApp,
+		"worker": db.RoleApp, "websub": db.RoleApp, "relay": db.RoleApp, "channels": db.RoleApp, "jobs": db.RoleApp, "erase": db.RoleApp,
 		"report": db.RoleReadOnly, "health": db.RoleReadOnly, "erasures": db.RoleReadOnly, "export": db.RoleReadOnly,
 		"outbox": db.RoleReadOnly,
 	} {

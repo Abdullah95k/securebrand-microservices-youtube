@@ -116,3 +116,56 @@ func TestKurdishAndSulaymaniyah(t *testing.T) {
 		t.Error("an unrelated Arabic title must not count")
 	}
 }
+
+// The contract's keyword IDs (REQ-021): group, the matched spelling's
+// language, and that spelling as stored, folded.
+func TestContractIDs(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	if _, err := kwstore.ImportSeed(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kwstore.Add(ctx, pool, kwstore.New{Label: "Fake Brand", Kind: "brand", Variants: []string{"fakebrand"}, Lang: "en"}); err != nil {
+		t.Fatal(err)
+	}
+	var live kwstore.Live
+	if _, err := live.Refresh(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	m := live.Matcher()
+	for _, tc := range []struct {
+		text string
+		want string
+	}{
+		{"أخبار بغداد اليوم", "baghdad:ar:بغداد"},
+		{"news from Baghdad", "baghdad:en:baghdad"},
+		{"هەولێر ئەمڕۆ", "erbil:ckb:ههولێر"},
+		{"Hewlêr û Bexda", "baghdad:en:bexda erbil:kmr:hewler"},
+		{"fakebrand launch in Erbil", "brand:en:fakebrand erbil:en:erbil"},
+	} {
+		_, matched := m.Match(tc.text)
+		if got := strings.Join(m.ContractIDs(tc.text, matched), " "); got != tc.want {
+			t.Errorf("%q: %q, want %q (matched %v)", tc.text, got, tc.want, matched)
+		}
+	}
+	// Only the keywords the stored match names, and never a rule.
+	if got := m.ContractIDs("بغداد", []string{"lang-ckb"}); got != nil {
+		t.Errorf("a rule is not a keyword: %v", got)
+	}
+}
+
+func TestVariantLanguage(t *testing.T) {
+	for _, tc := range []struct{ variant, langs, want string }{
+		{"بغداد", "ar,ckb,kmr,en", "ar"},
+		{"بەغدا", "ar,ckb,kmr,en", "ckb"},
+		{"Baghdad", "ar,ckb,kmr,en", "en"},
+		{"Hewlêr", "ar,ckb,kmr,en", "kmr"},
+		{"Irak", "tr", "tr"},
+		{"بغداد", "", "ar"},
+		{"123", "", "und"},
+	} {
+		if got := kwstore.VariantLanguage(tc.variant, tc.langs); got != tc.want {
+			t.Errorf("VariantLanguage(%q, %q) = %q, want %q", tc.variant, tc.langs, got, tc.want)
+		}
+	}
+}

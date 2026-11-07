@@ -24,8 +24,14 @@ func TestTrail(t *testing.T) {
 	if !slices.Equal(s.Operations, []string{"browse", "next"}) || !slices.Equal(s.ExitCountries, []string{"IQ", "DE"}) || len(s.RawRefs) != 2 {
 		t.Errorf("read: %+v", s)
 	}
-	if s := tr.Take(); s.JobID != "channel/UCfake/1" || s.Operations != nil || s.RawRefs != nil {
-		t.Errorf("a second Take starts afresh but keeps the job: %+v", s)
+	// Another write from the same answers (nothing read since): the same.
+	if s := tr.Take(); s.JobID != "channel/UCfake/1" || !slices.Equal(s.Operations, []string{"browse", "next"}) || len(s.RawRefs) != 2 {
+		t.Errorf("a second write from the same answers: %+v", s)
+	}
+	// A new read: only it.
+	tr.Record("player", "", "IQ")
+	if s := tr.Take(); !slices.Equal(s.Operations, []string{"player"}) || s.RawRefs != nil {
+		t.Errorf("after a new read: %+v", s)
 	}
 }
 

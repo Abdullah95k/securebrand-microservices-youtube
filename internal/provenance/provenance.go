@@ -5,8 +5,10 @@
 //
 // The worker puts a Trail in each job's context; the InnerTube client
 // records every answer it reads into it; each write takes what was read
-// since the previous write. A context without a Trail records nothing, so
-// callers outside a job need no check.
+// since the previous write, or, when nothing was read since (several
+// writes from one answer: the videos of one tab page), the same as the
+// previous write. A context without a Trail records nothing, so callers
+// outside a job need no check.
 package provenance
 
 import (
@@ -35,7 +37,8 @@ type Source struct {
 type Trail struct {
 	job  Job
 	mu   sync.Mutex
-	read Source
+	read Source // since the last Take
+	last Source // what the last Take returned
 }
 
 type trailKey struct{}
@@ -75,15 +78,18 @@ func addOnce(list *[]string, v string) {
 }
 
 // Take returns the job and what was read since the last Take, and starts
-// afresh. A nil Trail returns an empty Source.
+// afresh; when nothing was read since, what the last Take returned. A nil
+// Trail returns an empty Source.
 func (t *Trail) Take() Source {
 	if t == nil {
 		return Source{}
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	s := t.read
-	t.read = Source{}
+	if len(t.read.Operations) > 0 {
+		t.last, t.read = t.read, Source{}
+	}
+	s := t.last
 	s.JobID, s.JobKind = t.job.ID, t.job.Kind
 	return s
 }

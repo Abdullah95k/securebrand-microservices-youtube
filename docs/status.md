@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **7 November 2026, 03:52 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **7 November 2026, 04:11 (Iraq time)**.
 
 ## Where it stands
 
@@ -16,9 +16,10 @@ The current state of the YouTube collector, for the owner and the master session
     and 17 (database TLS and roles), plus the proxy `country=` tag and PostgreSQL 18.
   - **Building now:** the outbox and relay (fix 12), in 7 PRs planned in
     [`master/yts-contract-adoption.md`](master/yts-contract-adoption.md). The owner answered on 7 November: sent outbox rows go
-    after 7 days, and the code generator may run here. **PR 1, the outbox, is in review**
+    after 7 days, and the code generator may run here. **PR 1, the outbox, is merged**
     ([#60](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/60)): every write adds its events in the same
-    transaction as the data; no Kafka yet.
+    transaction as the data; no Kafka yet. **PR 2, the contract mapping, is in review:** every event becomes a contract v1.2.0
+    message checked by the contract's conformance package; `ytcollect outbox check` runs the checks on real events.
   - **Next:** the pilot (fix 11) when the platform is ready (below). Until the relay runs, events wait in the outbox (roughly
     100 MB a day at 1,000 channels).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
@@ -78,7 +79,9 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
-- Fix 12, PR 1 ([#60](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/60), in review): two tables
+- Fix 12, PR 2: the command `ytcollect outbox` (and `outbox check`), read-only; the Go dependency
+  `github.com/abdullah95k/securebrand-contracts` v1.2.0 (the platform contract, with the Protobuf library it needs).
+- Fix 12, PR 1 ([#60](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/60), merged): two tables
   (`event_outbox`, `outbox_state`) in migration `0012`; no existing table changed. The scheduler deletes sent outbox rows 7 days
   after sending (the owner's answer); unsent rows stay. Metrics `yt_outbox_unsent` and `yt_outbox_oldest_unsent_seconds`. Erasure
   also deletes an item's outbox rows.

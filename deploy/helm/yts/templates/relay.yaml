@@ -1,0 +1,111 @@
+{{- /* The relay (REQ-010 fix 12): publishes the outbox to the platform's
+Kafka, content.* and yt.* in one transaction per batch. Off until Kafka is
+there (the pilot runs without it). */ -}}
+{{- if .Values.relay.enabled -}}
+{{- $c := dict "ctx" . "component" "relay" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "yts.fullname" . }}-relay
+  labels:
+    {{- include "yts.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relay
+spec:
+  # One relay sends at a time (a Postgres advisory lock keeps the outbox's
+  # order); a second would only wait. Replaced, never doubled, on an update.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "yts.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "yts.labels" . | nindent 8 }}
+        app.kubernetes.io/component: relay
+      {{- with .Values.relay.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "yts.podSpec" . | nindent 6 }}
+      terminationGracePeriodSeconds: {{ .Values.relay.terminationGracePeriodSeconds }}
+      containers:
+        - name: relay
+          image: {{ include "yts.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/ytcollect"]
+          args:
+            - relay
+            - -metrics-addr=:{{ .Values.relay.opsPort }}
+            - -batch={{ .Values.relay.batch }}
+            {{- if .Values.relay.canary }}
+            - -canary
+            {{- end }}
+            {{- range .Values.relay.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            {{- include "yts.env" . | nindent 12 }}
+            # The platform's KAFKA_* files (REQ-010 fix 12).
+            - name: YT_KAFKA_DIR
+              value: /etc/platform-credentials
+            - name: GOMEMLIMIT
+              value: {{ .Values.relay.goMemLimit | quote }}
+          ports:
+            - name: ops
+              containerPort: {{ .Values.relay.opsPort }}
+              protocol: TCP
+          startupProbe:
+            httpGet: {path: /healthz, port: ops}
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet: {path: /healthz, port: ops}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /readyz, port: ops}
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.relay.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            {{- include "yts.volumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "yts.volumes" . | nindent 8 }}
+      {{- with .Values.relay.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.relay.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.relay.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "yts.fullname" . }}-relay
+  labels:
+    {{- include "yts.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relay
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "yts.selector" $c | nindent 4 }}
+  ports:
+    - name: ops
+      port: {{ .Values.relay.opsPort }}
+      targetPort: ops
+      protocol: TCP
+{{- end }}

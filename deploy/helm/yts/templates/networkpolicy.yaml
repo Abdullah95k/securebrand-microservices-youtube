@@ -32,7 +32,8 @@ each line's URL (scheme://user:password@host:port …). Only ports are read. */ 
 {{- if not $proxyPorts -}}{{- $proxyPorts = $np.egress.proxies.ports -}}{{- end }}
 # Every yts pod. In: the monitoring namespace on the ops ports (and the
 # ingress namespace on the push receiver when it is on). Out: DNS, HTTPS,
-# the managed services, the schema registry and the proxy exits
+# the managed services (PostgreSQL, Valkey, and Kafka for the relay), the
+# schema registry and the proxy exits
 # (yts-operations.md §6; the master's ranges of 6 November).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -56,6 +57,10 @@ spec:
           protocol: TCP
         - port: {{ .Values.scheduler.opsPort }}
           protocol: TCP
+        {{- if .Values.relay.enabled }}
+        - port: {{ .Values.relay.opsPort }}
+          protocol: TCP
+        {{- end }}
     {{- if .Values.websub.enabled }}
     - from:
         - namespaceSelector:

@@ -2,7 +2,7 @@
 
 Written by the yts session on 6 November 2026 (Iraq time), from `main` `9a0e248`. A plan: the outbox and relay (fix 12) and the
 `content.*` mapping (REQ-021) are built from it in small PRs, in the order of section 7. **Updated 7 November:** the owner's two
-answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5. PR 4 (the relay) built: section 4.
+answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5. PR 4 (the relay) built: section 4. PR 5 (the chart) built: section 7.
 
 **Contract version:** v1.2.0 (`github.com/abdullah95k/securebrand-contracts`). The owner approved v1.0.0 (D-016); v1.1.0 and v1.2.0 only
 add fields and checks, and the master agreed to v1.2.0 (6 November). Every message goes out with `sb-contract: 1.2.0`.
@@ -203,7 +203,7 @@ checks it matches.
 | 2 | The `content.*` mapping from outbox rows, with the conformance checks and tests from the fake YouTube. **Built** | 5 days |
 | 3 | The `yt.*` protos and their mapping. **Built** | 4 days |
 | 4 | The relay: franz-go transactions, leases, metrics, alerts; end-to-end tests against an in-memory Kafka. **Built** | 4 days |
-| 5 | The chart: the relay Deployment, its credentials, the network policy to Kafka and the registry | 1 day |
+| 5 | The chart: the relay Deployment, its credentials, the network policy to Kafka and the registry. **Built:** `yts-relay` (off by default and in `values-production.yaml`, for the pilot without Kafka; `relay.enabled=true` turns it on, `relay.canary=true` while the canary runs), one replica, `Recreate`, the platform's credentials mounted for the `KAFKA_*` files, ops port 9103 scraped and allowed from monitoring; Kafka's ports come from `KAFKA_BROKERS` at install, as before. The registry isn't needed: the relay reads nothing from it | 1 day |
 | 6 | Discovery candidates and the hourly coverage roll-ups | 2 days |
 | 7 | The media hand-off: media ready; a consumer of `content.media.processed.v1` (yts's own consumer group); deleting each file once acknowledged or at its deadline, with `content.media.deleted.v1`; metrics and an alert for files past their deadline | 3 days |
 

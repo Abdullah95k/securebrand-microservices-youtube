@@ -153,7 +153,11 @@ jobs:
             --set storage.media.endpoint=https://s3.invalid --set storage.media.region=x --set storage.media.bucket=media \
             --set storage.raw.enabled=true \
             --set database.platformCredentials=false --set 'networkPolicy.egress.proxies.ports={8080,3128}' \
-            --set 'networkPolicy.egress.managedServices.ports={25060,25073}' --set networkPolicy.egress.schemaRegistry.enabled=true > out/everything.yaml
+            --set 'networkPolicy.egress.managedServices.ports={25060,25073}' --set networkPolicy.egress.schemaRegistry.enabled=true \
+            --set relay.enabled=true --set relay.canary=true > out/everything.yaml
+          # The relay: off in the production values (the pilot has no Kafka), there when switched on.
+          if grep -q 'name: yts-relay$' out/production.yaml; then echo "the relay must be off in values-production.yaml"; exit 1; fi
+          grep -q 'name: yts-relay$' out/everything.yaml || { echo "relay.enabled=true rendered no relay"; exit 1; }
       - name: the chart refuses unsafe or incomplete values
         run: |
           refuses() { if helm template yts deploy/helm/yts "$@" >/dev/null 2>&1; then echo "rendered, but must refuse: $*"; exit 1; fi; }

@@ -62,11 +62,12 @@ from the platform's credentials). */}}
 {{- end -}}
 {{- end -}}
 
-{{/* Whether pods mount the platform's credentials: for the database, or for
-a store that takes its settings from them. Prints "true" or nothing. */}}
+{{/* Whether pods mount the platform's credentials: for the database, for
+a store that takes its settings from them, or for the relay's Kafka. Prints
+"true" or nothing. */}}
 {{- define "yts.platformCredentials" -}}
 {{- $s := .Values.storage -}}
-{{- if or .Values.database.platformCredentials (and $s.media.enabled $s.media.fromPlatformCredentials) (and $s.raw.enabled $s.raw.fromPlatformCredentials) -}}
+{{- if or .Values.database.platformCredentials (and $s.media.enabled $s.media.fromPlatformCredentials) (and $s.raw.enabled $s.raw.fromPlatformCredentials) .Values.relay.enabled -}}
 true
 {{- end -}}
 {{- end -}}

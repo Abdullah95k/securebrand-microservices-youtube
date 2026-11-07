@@ -132,11 +132,13 @@ var (
 			FROM playlist_items i WHERE i.playlist_id = t.id), '[]'::jsonb))`,
 	})
 	// A commenter's event carries their latest About-panel profile, once
-	// enriched.
+	// enriched, and whether they are a listed channel too (whose own events
+	// then describe the account).
 	Authors = build(Table{
 		name: "authors", kind: KindAuthor, key: "t.id",
 		payload: `to_jsonb(t) || jsonb_build_object('profile', (SELECT to_jsonb(p) - 'author_id' FROM author_profiles p
-			WHERE p.author_id = t.id ORDER BY p.fetched_at DESC LIMIT 1))`,
+			WHERE p.author_id = t.id ORDER BY p.fetched_at DESC LIMIT 1),
+			'monitored', EXISTS (SELECT 1 FROM channels c WHERE c.id = t.id AND c.status = 'listed'))`,
 		compare: `(to_jsonb(t) - ARRAY['last_seen', 'comments_seen', 'relevant_comments', 'enriched_at'])
 			|| jsonb_build_object('profile', (SELECT to_jsonb(p) - ARRAY['author_id', 'fetched_at', 'subscribers_min', 'videos_min']
 			FROM author_profiles p WHERE p.author_id = t.id ORDER BY p.fetched_at DESC LIMIT 1))`,
@@ -268,4 +270,35 @@ func Prune(ctx context.Context, q db.Querier, cutoff time.Time) (int64, error) {
 			return total, ctx.Err()
 		}
 	}
+}
+
+// Row is one outbox event as stored.
+type Row struct {
+	ID           int64
+	Kind         string
+	EntityID     string
+	PartitionKey string
+	ObservedAt   time.Time
+	Payload      []byte // JSON
+	Provenance   []byte // JSON: Provenance
+}
+
+// Unsent returns up to limit events not yet sent, after id after, oldest
+// first.
+func Unsent(ctx context.Context, q db.Querier, after int64, limit int) ([]Row, error) {
+	rows, err := q.Query(ctx, `SELECT id, kind, entity_id, partition_key, observed_at, payload, provenance
+		FROM event_outbox WHERE published_at IS NULL AND id > $1 ORDER BY id LIMIT $2`, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("outbox: reading unsent events: %w", err)
+	}
+	defer rows.Close()
+	var out []Row
+	for rows.Next() {
+		var r Row
+		if err := rows.Scan(&r.ID, &r.Kind, &r.EntityID, &r.PartitionKey, &r.ObservedAt, &r.Payload, &r.Provenance); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

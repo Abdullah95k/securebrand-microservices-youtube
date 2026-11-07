@@ -284,9 +284,9 @@ func TestProvenance(t *testing.T) {
 	if c := p["exit_countries"].([]any); len(c) != 1 || c[0] != "IQ" {
 		t.Errorf("exit countries: %v", p["exit_countries"])
 	}
-	// The next write starts afresh.
-	if s := trail.Take(); len(s.Operations) != 0 || s.JobID != "video/fakeVideo01/1" {
-		t.Errorf("after a write: %+v", s)
+	// The next write, with nothing read since, came from the same answers.
+	if s := trail.Take(); len(s.Operations) != 2 || s.JobID != "video/fakeVideo01/1" {
+		t.Errorf("a second write from the same answers: %+v", s)
 	}
 }
 

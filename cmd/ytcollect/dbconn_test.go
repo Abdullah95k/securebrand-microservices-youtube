@@ -13,6 +13,7 @@ func TestRoleFor(t *testing.T) {
 		"migrate": db.RoleOwner, "scheduler": db.RoleOwner, "archive": db.RoleOwner,
 		"worker": db.RoleApp, "websub": db.RoleApp, "channels": db.RoleApp, "jobs": db.RoleApp, "erase": db.RoleApp,
 		"report": db.RoleReadOnly, "health": db.RoleReadOnly, "erasures": db.RoleReadOnly, "export": db.RoleReadOnly,
+		"outbox": db.RoleReadOnly,
 	} {
 		if got := roleFor(cmd); got != want {
 			t.Errorf("roleFor(%s) = %s; want %s", cmd, got, want)

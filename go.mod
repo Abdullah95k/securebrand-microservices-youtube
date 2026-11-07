@@ -3,8 +3,10 @@ module github.com/Abdullah95k/securebrand-microservices-youtube
 go 1.27.3
 
 require (
+	github.com/abdullah95k/securebrand-contracts v1.2.0
 	github.com/anthropics/anthropic-sdk-go v1.82.0
 	github.com/jackc/pgx/v5 v5.11.0
+	google.golang.org/protobuf v1.35.2
 )
 
 require (
@@ -29,4 +31,5 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

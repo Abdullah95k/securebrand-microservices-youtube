@@ -57,6 +57,7 @@ Usage: ytcollect <command> [flags]
   health     the job queue by kind and priority, and switched-off features
   jobs       dead jobs (too many failures): list them, or requeue them once the cause is fixed
   report     measured cost per channel per day and in total, projected to 1,000 and 10,000 channels with the IPs needed
+  outbox     events waiting for Kafka; "outbox check" maps them to the platform contract and lists any it refuses
   erase      record an erasure request (author, channel, video, comment or post); a worker carries it out
   erasures   list erasure requests and their status
   privacy-audit  check that nothing erased is in the database (the scheduler runs it daily)
@@ -95,7 +96,7 @@ func main() {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
 			err = grantPlatformRoles(ctx, pool, log)
 		}
-	case "channels", "keywords", "health", "jobs", "report", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
+	case "channels", "keywords", "health", "jobs", "report", "outbox", "switch", "scheduler", "worker", "websub", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
 		switch cmd {
 		case "scheduler", "worker", "websub":
 			log.Info("starting", "command", cmd, "version", version.Version, "revision", version.Revision)
@@ -113,6 +114,8 @@ func main() {
 			err = jobsCmd(ctx, pool, os.Stdout, args)
 		case "report":
 			err = reportCmd(ctx, pool, os.Stdout, args, time.Now())
+		case "outbox":
+			err = outboxCmd(ctx, pool, os.Stdout, args)
 		case "switch":
 			err = switchCmd(ctx, pool, os.Stdout, args)
 		case "scheduler":
@@ -189,7 +192,7 @@ func roleFor(cmd string) db.Role {
 	switch cmd {
 	case "migrate", "scheduler", "archive":
 		return db.RoleOwner
-	case "report", "health", "erasures", "export":
+	case "report", "health", "erasures", "export", "outbox":
 		return db.RoleReadOnly
 	}
 	return db.RoleApp

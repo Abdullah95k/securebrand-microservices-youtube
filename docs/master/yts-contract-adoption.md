@@ -2,7 +2,7 @@
 
 Written by the yts session on 6 November 2026 (Iraq time), from `main` `9a0e248`. A plan: the outbox and relay (fix 12) and the
 `content.*` mapping (REQ-021) are built from it in small PRs, in the order of section 7. **Updated 7 November:** the owner's two
-answers, and PR 1 (the outbox) built; section 4 describes it as built.
+answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3.
 
 **Contract version:** v1.2.0 (`github.com/abdullah95k/securebrand-contracts`). The owner approved v1.0.0 (D-016); v1.1.0 and v1.2.0 only
 add fields and checks, and the master agreed to v1.2.0 (6 November). Every message goes out with `sb-contract: 1.2.0`.
@@ -59,11 +59,38 @@ From the README's rules (section "The rules collectors follow") and the field ma
 **Provenance on every message:** collector `yts` and its version (`internal/version`), `parser_version` (`ytparse.Version`), the
 source operation (`browse`, `next`, `player`…), the job ID, `raw_ref` (fix 8) and `exit_country` (the proxy's `country=`).
 
+**Built (PR 2, `internal/contract`):** every outbox kind maps to its message, with these choices where the contract leaves room:
+- **IDs and keys:** `yt:account:`, `yt:post:`, `yt:comment:`, `yt:playlist:` plus the YouTube ID; Kafka keys are those IDs (the post's
+  for comments and counts).
+- **Version and event ID:** the version is the read time in microseconds; the event ID is a SHA-256 of the ID, the version, the
+  message kind and the content hash, so a message sent twice has the same event ID. The content hash leaves out counts and coverage.
+- **Times (D-013):** minutes and hours at the start of the minute or hour; days and longer at 00:00 Iraq time; `displayed` keeps the
+  text ("3 days ago").
+- **Counts:** a count YouTube abbreviated ("1.2K") is `ROUNDED`, a plain number `EXACT`; a video's views are exact from its own check
+  and a lower bound from a listing; channel video and view totals are lower bounds.
+- **Partial events:** a removal (two misses) is the keys and `UNAVAILABLE` (logged out, YouTube's deleted, private and removed look
+  alike); a comment missing from two complete re-reads is `DELETED`. An item whose publish time isn't known yet (a Short seen in its
+  tab) is partial until its own check.
+- **Keyword IDs:** `contracts.KeywordID(group, language, the stored spelling that matched)`. The seed list gives each keyword its
+  languages, not each spelling's, so the spelling's script decides: Arabic script with a Sorani letter is `ckb`, else `ar`; Latin with
+  a Kurmanji letter (ê î û ç ş) is `kmr`, else `en`. A best effort: "Bexda" counts as English. The Kurdish-language rule goes in
+  `matched_rules` as `lang-ckb`. Keywords you add without a group use their kind as the group.
+- **Commenters:** `NOT_MONITORED` accounts; one who is also a listed channel adds no account message, so the channel's own scope
+  stands.
+- **Playlists:** item positions from 0, as in the contract's example (yts counts from 1); a video that left the list stays, as
+  `UNAVAILABLE`, `removed_from_playlist`.
+
 ## 3. Conformance
 
 Every message the relay builds goes through the contract's `conformance` checks with `Options{Production: true, Canary: true}`
 while the canary runs, then `Canary: false`. A message that fails is not published: it stays in the outbox with its reason, counted
 and alerted, and a test case is added. CI runs the checks on events built from the fake YouTube, end to end.
+
+**Built (PR 2):** `contract.Mapper.Map` checks every message before returning it; a refusal is a `contract.Rejected` with the
+reason. The end-to-end test collects a fake channel (videos, a Short, comments and a reply, a community post, a playlist,
+commenters) through the real worker, and every one of its events passes in production mode. During the pilot, with no Kafka,
+`ytcollect outbox check` runs the same checks on the real events and lists any refused, with the reason; `ytcollect outbox` shows
+what is waiting.
 
 ## 4. The outbox and the relay
 
@@ -137,7 +164,7 @@ checks it matches.
 | # | PR | Effort |
 |---|---|---|
 | 1 | Migration `0012` and the outbox writer; events written in the same transaction (no Kafka yet). **Built** | 3 days |
-| 2 | The `content.*` mapping from outbox rows, with the conformance checks and tests from the fake YouTube | 5 days |
+| 2 | The `content.*` mapping from outbox rows, with the conformance checks and tests from the fake YouTube. **Built** | 5 days |
 | 3 | The `yt.*` protos and their mapping | 4 days |
 | 4 | The relay: franz-go transactions, leases, metrics, alerts; an end-to-end test with Redpanda in CI | 4 days |
 | 5 | The chart: the relay Deployment, its credentials, the network policy to Kafka and the registry | 1 day |

@@ -12,12 +12,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
+	contracts "github.com/abdullah95k/securebrand-contracts"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
@@ -111,7 +114,10 @@ type Keyword struct {
 	Group     string
 	Note      string
 	Variants  []string
-	ExpiresAt *time.Time
+	// VariantLangs are the languages each variant covers ("ar,ckb,en" for a
+	// seed keyword), in Variants' order; "" when not stated.
+	VariantLangs []string
+	ExpiresAt    *time.Time
 }
 
 // New is a keyword you add.
@@ -209,7 +215,8 @@ func Remove(ctx context.Context, q db.Querier, id int64) error {
 func List(ctx context.Context, q db.Querier) ([]Keyword, error) {
 	rows, err := q.Query(ctx, `SELECT k.id, k.label, k.kind, k.ambiguous, k.active, k.searched, k.source,
 			COALESCE(k.grp, ''), COALESCE(k.note, ''),
-			COALESCE(array_agg(v.variant ORDER BY v.variant) FILTER (WHERE v.variant IS NOT NULL), '{}'), k.expires_at
+			COALESCE(array_agg(v.variant ORDER BY v.variant) FILTER (WHERE v.variant IS NOT NULL), '{}'),
+			COALESCE(array_agg(COALESCE(v.lang, '') ORDER BY v.variant) FILTER (WHERE v.variant IS NOT NULL), '{}'), k.expires_at
 		FROM keywords k LEFT JOIN keyword_variants v ON v.keyword_id = k.id
 		GROUP BY k.id ORDER BY k.source DESC, k.kind, k.label`)
 	if err != nil {
@@ -217,7 +224,8 @@ func List(ctx context.Context, q db.Querier) ([]Keyword, error) {
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Keyword, error) {
 		var k Keyword
-		err := r.Scan(&k.ID, &k.Label, &k.Kind, &k.Ambiguous, &k.Active, &k.Searched, &k.Source, &k.Group, &k.Note, &k.Variants, &k.ExpiresAt)
+		err := r.Scan(&k.ID, &k.Label, &k.Kind, &k.Ambiguous, &k.Active, &k.Searched, &k.Source, &k.Group, &k.Note, &k.Variants,
+			&k.VariantLangs, &k.ExpiresAt)
 		return k, err
 	})
 }
@@ -238,12 +246,19 @@ type Matcher struct {
 	m         *keywords.Matcher
 	ambiguous map[string]bool
 	labels    map[string]string
+	contract  map[string]contractInfo // by match ID
+}
+
+// contractInfo is what the platform contract's keyword ID needs.
+type contractInfo struct {
+	group string
+	langs map[string]string // variant → the languages it covers
 }
 
 // NewMatcher builds a matcher from active keywords.
 func NewMatcher(kws []Keyword) *Matcher {
 	var in []keywords.Keyword
-	mt := &Matcher{ambiguous: map[string]bool{}, labels: map[string]string{}}
+	mt := &Matcher{ambiguous: map[string]bool{}, labels: map[string]string{}, contract: map[string]contractInfo{}}
 	for _, k := range kws {
 		if !k.Active || k.ExpiresAt != nil && k.ExpiresAt.Before(time.Now()) {
 			continue
@@ -252,6 +267,13 @@ func NewMatcher(kws []Keyword) *Matcher {
 		in = append(in, keywords.Keyword{ID: id, Kind: k.Kind, Variants: k.Variants, Ambiguous: k.Ambiguous})
 		mt.ambiguous[id] = k.Ambiguous
 		mt.labels[id] = k.Label
+		ci := contractInfo{group: contractGroup(k.Group, k.Kind), langs: map[string]string{}}
+		for i, v := range k.Variants {
+			if i < len(k.VariantLangs) {
+				ci.langs[v] = k.VariantLangs[i]
+			}
+		}
+		mt.contract[id] = ci
 	}
 	mt.m = keywords.NewMatcher(in)
 	return mt
@@ -283,6 +305,122 @@ func (mt *Matcher) Match(text string) (relevant bool, ids []string) {
 		}
 	}
 	return len(ids) >= 2, ids
+}
+
+// ContractIDs returns the platform contract's keyword IDs (REQ-021,
+// contracts.KeywordID) for the keywords in matched that text contains: the
+// keyword's group, the language of the spelling that matched, and that
+// spelling as the keyword list stores it, never the text. Rules such as
+// the Kurdish-language one are not keywords and are left out.
+func (mt *Matcher) ContractIDs(text string, matched []string) []string {
+	if mt == nil || len(matched) == 0 {
+		return nil
+	}
+	want := map[string]bool{}
+	for _, id := range matched {
+		want[id] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, h := range mt.m.Match(text) {
+		ci, ok := mt.contract[h.KeywordID]
+		if !ok || !want[h.KeywordID] {
+			continue
+		}
+		id := contracts.KeywordID(ci.group, VariantLanguage(h.Variant, ci.langs[h.Variant]), h.Variant)
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// contractGroup is a keyword's group as the contract's ID wants it: lower
+// case ASCII letters, digits, "-" and "_". A keyword without a group (one
+// you added) uses its kind.
+func contractGroup(group, kind string) string {
+	g := strings.ToLower(strings.TrimSpace(group))
+	if g == "" {
+		g = kind
+	}
+	var b strings.Builder
+	for _, r := range g {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "keyword"
+	}
+	return b.String()
+}
+
+// kurdishLetters are Sorani letters Arabic doesn't use; kurmanjiLetters
+// are Latin letters Kurmanji uses and English doesn't.
+const (
+	kurdishLetters  = "ڕڵۆێەڤ"
+	kurmanjiLetters = "êîûçşÊÎÛÇŞ"
+)
+
+// VariantLanguage picks a spelling's language from the languages its
+// keyword covers ("ar,ckb,en"), by its script and letters: Arabic script
+// with a Sorani letter is Sorani, otherwise Arabic; Latin script with a
+// Kurmanji letter (ê î û ç ş) is Kurmanji, otherwise English. Each only
+// when listed, else the first listed language of that script. With no list
+// it goes by the script alone; "und" when it can't tell. A best effort:
+// Kurmanji spelled without those letters ("Bexda") counts as English.
+func VariantLanguage(variant, langs string) string {
+	var list []string
+	for _, l := range strings.Split(langs, ",") {
+		if l = strings.ToLower(strings.TrimSpace(l)); l != "" {
+			list = append(list, l)
+		}
+	}
+	has := func(l string) bool { return slices.Contains(list, l) }
+	arabicScript, latin := false, false
+	for _, r := range variant {
+		switch {
+		case unicode.Is(unicode.Arabic, r):
+			arabicScript = true
+		case unicode.Is(unicode.Latin, r):
+			latin = true
+		}
+	}
+	switch {
+	case arabicScript:
+		if strings.ContainsAny(variant, kurdishLetters) && (has("ckb") || len(list) == 0) {
+			return "ckb"
+		}
+		if has("ar") || len(list) == 0 {
+			return "ar"
+		}
+		for _, l := range list {
+			if l == "ckb" || l == "fa" {
+				return l
+			}
+		}
+	case latin:
+		if strings.ContainsAny(variant, kurmanjiLetters) && (has("kmr") || len(list) == 0) {
+			return "kmr"
+		}
+		if has("en") || len(list) == 0 {
+			return "en"
+		}
+		for _, l := range list {
+			if l == "kmr" || l == "tr" {
+				return l
+			}
+		}
+	}
+	if len(list) > 0 {
+		return list[0]
+	}
+	return "und"
 }
 
 // Live keeps a Matcher in step with the database.

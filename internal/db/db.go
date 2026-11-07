@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,18 +36,42 @@ var Partitioned = []struct{ Table, Column string }{
 	{"author_profiles", "fetched_at"},
 }
 
-// Open connects to url. searchPath, when set, selects a schema (tests use
-// one schema per test).
-func Open(ctx context.Context, url, searchPath string) (*pgxpool.Pool, error) {
+// PoolSize is the most connections one process opens (REQ-023): the
+// platform's PostgreSQL is reached through PgBouncer, with 50 server
+// connections shared by every service.
+const PoolSize = 4
+
+// Config is the pool configuration for url, fit for PgBouncer in
+// transaction mode (REQ-023): statements are described and cached on the
+// client, never prepared on a server session (one transaction may run on
+// a different server session than the last); no startup parameters; at
+// most PoolSize connections; an idle connection is checked before use only
+// after 5 minutes (each check is a query, REQ-024).
+func Config(url string) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		// The parser's message can contain the URL; keep the password out.
 		return nil, errors.New("db: the database URL is not valid")
 	}
-	if searchPath != "" {
-		cfg.ConnConfig.RuntimeParams["search_path"] = searchPath
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
+	cfg.MaxConns = PoolSize
+	cfg.MinConns = 0
+	cfg.MaxConnIdleTime = 5 * time.Minute
+	cfg.ShouldPing = func(_ context.Context, p pgxpool.ShouldPingParams) bool { return p.IdleDuration > 5*time.Minute }
+	return cfg, nil
+}
+
+// Open connects to url (Config).
+func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
+	cfg, err := Config(url)
+	if err != nil {
+		return nil, err
 	}
-	cfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
+	return OpenConfig(ctx, cfg)
+}
+
+// OpenConfig connects with cfg and checks the connection.
+func OpenConfig(ctx context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, error) {
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("db: connecting: %w", err)
@@ -56,6 +81,56 @@ func Open(ctx context.Context, url, searchPath string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("db: connecting: %w", err)
 	}
 	return pool, nil
+}
+
+// Full reports whether err means the database has no connection slot
+// free right now, which passes (REQ-023, REQ-024): PostgreSQL's too many
+// connections (53300), not accepting connections yet (57P03) and
+// insufficient resources (53000); PgBouncer's query_wait_timeout, "server
+// login has been failing" (its cached copy too) and "no more connections
+// allowed". A wrong password, or anything else, is not.
+func Full(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		switch pg.Code {
+		case "53300", "57P03", "53000":
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	for _, s := range []string{"query_wait_timeout", "server login has been failing", "no more connections allowed"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// WaitWhileFull runs fn until it succeeds, fails for a reason other than a
+// full database (Full), or wait has passed; between attempts it waits 1
+// second, doubling up to 15, and logs each wait.
+func WaitWhileFull(ctx context.Context, wait time.Duration, log *slog.Logger, what string, fn func(context.Context) error) error {
+	deadline := time.Now().Add(wait)
+	pause := time.Second
+	for attempt := 1; ; attempt++ {
+		err := fn(ctx)
+		if err == nil || !Full(err) || ctx.Err() != nil || time.Now().Add(pause).After(deadline) {
+			return err
+		}
+		if log != nil {
+			log.Warn("the database has no free connection; waiting", "for", what, "attempt", attempt, "retry_in", pause.String(),
+				"gives_up_in", time.Until(deadline).Round(time.Second).String(), "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(pause):
+		}
+		pause = min(2*pause, 15*time.Second)
+	}
 }
 
 type migration struct {
@@ -92,57 +167,72 @@ func loadMigrations() ([]migration, error) {
 	return out, nil
 }
 
+// migrateLock keeps two processes from applying a migration at once.
+const migrateLock = "securebrand-youtube-migrate"
+
 // Migrate applies the migrations not applied yet, each in its own
-// transaction, under an advisory lock so two processes never migrate at
-// once. It then creates the partitions for this month and the next 3.
+// transaction. Each transaction first takes a transaction-level advisory
+// lock and checks the migration is still missing, so two processes never
+// apply one twice; the lock ends with the transaction, which PgBouncer's
+// transaction pooling allows (a session lock would stay with a shared
+// server session, REQ-023). It then creates the partitions for this month
+// and the next 3.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
 	ms, err := loadMigrations()
 	if err != nil {
 		return nil, err
 	}
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		return nil, err
+	locked := func(fn func(tx pgx.Tx) error) error {
+		return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, migrateLock); err != nil {
+				return err
+			}
+			return fn(tx)
+		})
 	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtext('securebrand-youtube-migrate'))`); err != nil {
-		return nil, err
-	}
-	defer conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext('securebrand-youtube-migrate'))`) //nolint:errcheck
-	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version integer PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
+	if err := locked(func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+			version integer PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	done := map[int]bool{}
-	rows, err := conn.Query(ctx, `SELECT version FROM schema_migrations`)
+	rows, err := pool.Query(ctx, `SELECT version FROM schema_migrations`)
 	if err != nil {
 		return nil, err
 	}
-	for rows.Next() {
-		var v int
-		if err := rows.Scan(&v); err != nil {
-			rows.Close()
-			return nil, err
-		}
+	versions, err := pgx.CollectRows(rows, pgx.RowTo[int])
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range versions {
 		done[v] = true
 	}
-	rows.Close()
 	var applied []string
 	for _, m := range ms {
 		if done[m.version] {
 			continue
 		}
-		err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		ran := false
+		err := locked(func(tx pgx.Tx) error {
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, m.version).Scan(&exists); err != nil || exists {
+				return err // another process applied it meanwhile
+			}
 			if _, err := tx.Exec(ctx, m.sql); err != nil {
 				return err
 			}
+			ran = true
 			_, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version, name) VALUES ($1, $2)`, m.version, m.name)
 			return err
 		})
 		if err != nil {
 			return applied, fmt.Errorf("db: migration %s: %w", m.name, err)
 		}
-		applied = append(applied, m.name)
+		if ran {
+			applied = append(applied, m.name)
+		}
 	}
 	if err := EnsurePartitions(ctx, pool, time.Now(), 3); err != nil {
 		return applied, err
@@ -150,13 +240,56 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
 	return applied, nil
 }
 
+// partitionLock keeps two processes from creating a partition at once
+// (CREATE TABLE IF NOT EXISTS isn't safe when two run together).
+const partitionLock = "securebrand-youtube-partitions"
+
+// partitionTx runs fn in a transaction holding the partition lock (a
+// transaction-level advisory lock, which PgBouncer's transaction pooling
+// allows). A table another process created meanwhile ("already exists",
+// 42P07) counts as done.
+func partitionTx(ctx context.Context, pool *pgxpool.Pool, fn func(tx pgx.Tx) error) error {
+	err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, partitionLock); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "42P07" {
+		return nil
+	}
+	return err
+}
+
+// tableExists reads the catalog with a plain query (the statement's own
+// snapshot), which sees a table another process created and committed
+// while this one waited for the lock; to_regclass may not.
+func tableExists(ctx context.Context, q Querier, name string) (bool, error) {
+	var ok bool
+	err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relname = $1 AND n.nspname = current_schema())`, name).Scan(&ok)
+	return ok, err
+}
+
+func ensureDefault(ctx context.Context, pool *pgxpool.Pool, table string) error {
+	return partitionTx(ctx, pool, func(tx pgx.Tx) error {
+		if ok, err := tableExists(ctx, tx, table+"_default"); err != nil || ok {
+			return err
+		}
+		_, err := tx.Exec(ctx, fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s_default PARTITION OF %s DEFAULT`, table, table))
+		return err
+	})
+}
+
 // EnsurePartitions creates, for every partitioned table, a default
 // partition and the monthly partitions from the month of now up to ahead
-// months later. It is safe to run repeatedly (the scheduler runs it daily).
+// months later. It is safe to run repeatedly (the scheduler runs it daily),
+// and in several processes at once.
 func EnsurePartitions(ctx context.Context, pool *pgxpool.Pool, now time.Time, ahead int) error {
 	start := time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
 	for _, p := range Partitioned {
-		if _, err := pool.Exec(ctx, fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s_default PARTITION OF %s DEFAULT`, p.Table, p.Table)); err != nil {
+		if err := ensureDefault(ctx, pool, p.Table); err != nil {
 			return fmt.Errorf("db: default partition of %s: %w", p.Table, err)
 		}
 		for i := 0; i <= ahead; i++ {
@@ -180,7 +313,7 @@ func EnsureMonth(ctx context.Context, pool *pgxpool.Pool, table string, month ti
 	if !known {
 		return fmt.Errorf("db: %s is not a partitioned table", table)
 	}
-	if _, err := pool.Exec(ctx, fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s_default PARTITION OF %s DEFAULT`, table, table)); err != nil {
+	if err := ensureDefault(ctx, pool, table); err != nil {
 		return err
 	}
 	m := month.UTC()
@@ -204,8 +337,11 @@ func createMonth(ctx context.Context, pool *pgxpool.Pool, table string, from tim
 	to := from.AddDate(0, 1, 0)
 	// Rows that landed in the default partition for this month must move
 	// into the new partition, or creating it fails: do both in one
-	// transaction.
-	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+	// transaction, under the partition lock, checking again under it.
+	return partitionTx(ctx, pool, func(tx pgx.Tx) error {
+		if ok, err := tableExists(ctx, tx, name); err != nil || ok {
+			return err
+		}
 		lo, hi := from.Format(time.RFC3339), to.Format(time.RFC3339)
 		col := ""
 		for _, p := range Partitioned {

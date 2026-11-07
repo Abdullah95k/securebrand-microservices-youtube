@@ -2,9 +2,11 @@ package relay_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -296,5 +298,78 @@ func TestLoadConfig(t *testing.T) {
 	c.Mechanism = "GSSAPI"
 	if _, err := c.Options(); err == nil {
 		t.Error("an unknown mechanism must be an error")
+	}
+}
+
+// Two relays started together: one takes the lease, sends everything and
+// runs its lead work (the media hand-off); the other stands by.
+func TestOneRelayAtATime(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO videos (id, channel_id, kind, title, live_status, published_at, published_precision_s)
+		VALUES ('fakeR1v1', 'UCfakeRELAYTWO0000000001', 'video', 'one', 'none', '2026-11-07 08:00:00+00', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := outbox.New(ctx, time.Now()).Content(ctx, pool, outbox.Videos, "fakeR1v1"); err != nil {
+		t.Fatal(err)
+	}
+	_, cl1 := kafka(t)
+	var leads [2]int32
+	var mu sync.Mutex
+	regs := [2]*metrics.Registry{metrics.New(), metrics.New()}
+	rctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		r := newRelay(pool, cl1, regs[i])
+		r.Idle = 50 * time.Millisecond
+		r.Holder = fmt.Sprintf("relay-%d", i)
+		r.Lead = func(ctx context.Context) {
+			mu.Lock()
+			leads[i]++
+			mu.Unlock()
+			<-ctx.Done()
+		}
+		go func() { done <- r.Run(rctx) }()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var unsent int
+		_ = pool.QueryRow(ctx, `SELECT count(*) FROM event_outbox WHERE published_at IS NULL`).Scan(&unsent)
+		if unsent == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the outbox was never sent")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	if leads[0]+leads[1] != 1 {
+		t.Errorf("lead work started %v times; want once, by the lease holder", leads)
+	}
+	mu.Unlock()
+	up := 0
+	for _, reg := range regs {
+		var b strings.Builder
+		_, _ = reg.WriteTo(&b)
+		if strings.Contains(b.String(), "yt_relay_up 1") {
+			up++
+		}
+	}
+	if up != 1 {
+		t.Errorf("%d relays report holding the lease", up)
+	}
+	cancel()
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}
+	var holder string
+	_ = pool.QueryRow(ctx, `SELECT holder FROM leases WHERE name = $1 AND until > now()`, relay.LeaseName).Scan(&holder)
+	if holder != "" {
+		t.Errorf("the lease is still held by %s after both stopped", holder)
 	}
 }

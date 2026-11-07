@@ -1,8 +1,9 @@
 // Package relay publishes yts's outbox to Kafka (REQ-010 fix 12): each
 // event's content.* messages (the unified contract, checked) and its yt.*
 // message, in one Kafka transaction per batch, in the outbox's order, then
-// marks the events sent. One relay sends at a time (a Postgres advisory
-// lock), so a post's messages keep their order.
+// marks the events sent. One relay sends at a time (a lease row renewed
+// every 5 seconds: internal/lease; a session advisory lock doesn't work
+// through PgBouncer, REQ-023), so a post's messages keep their order.
 //
 // Delivery is at least once: if the relay stops between Kafka's commit and
 // Postgres's update, the batch goes again with the same event IDs, which
@@ -29,8 +30,10 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/contract"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/lease"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/metrics"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/poll"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytevents"
 )
 
@@ -49,10 +52,15 @@ type Relay struct {
 	Content  *contract.Mapper
 	YT       ytevents.Mapper
 	Batch    int           // events per transaction (default 500)
-	Idle     time.Duration // wait when nothing is pending (default 2s)
+	Idle     time.Duration // the longest wait when nothing is pending (default 30s; waits start at 1s and double)
 	Log      *slog.Logger
 	Metrics  *metrics.Registry // nil: none
 	Now      func() time.Time
+	// Holder names this process for the lease (lease.Holder() when empty).
+	Holder string
+	// Lead, when set, runs while this relay holds the lease (the media
+	// hand-off), and is stopped with it.
+	Lead func(ctx context.Context)
 }
 
 func (r *Relay) now() time.Time {
@@ -69,8 +77,8 @@ func (r *Relay) batch() int {
 	return r.Batch
 }
 
-// lockKey is the advisory lock only one relay holds ("ytsrelay").
-const lockKey int64 = 0x79747372656c6179
+// LeaseName is the lease only one relay holds.
+const LeaseName = "relay"
 
 // Result is one batch's outcome.
 type Result struct {
@@ -79,39 +87,40 @@ type Result struct {
 	Refused  int // events that can't be sent
 }
 
-// Run sends until ctx ends. It waits while another relay holds the lock,
-// clears earlier refusals once it has it (a fix may have come with this
-// version), then sends batch after batch, backing off after an error.
+// Run sends until ctx ends. It stands by while another relay holds the
+// lease (trying every 15 seconds); holding it, it clears earlier refusals
+// (a fix may have come with this version), starts Lead, and sends batch
+// after batch, backing off after an error and while nothing is pending.
+// If the lease is lost, sending stops at once and the relay stands by.
 func (r *Relay) Run(ctx context.Context) error {
-	conn, err := r.Pool.Acquire(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	for {
-		var got bool
-		if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, lockKey).Scan(&got); err != nil {
-			return err
-		}
-		if got {
-			break
-		}
-		r.Log.Info("another relay is sending; waiting")
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(30 * time.Second):
-		}
-	}
-	defer func() { _, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, lockKey) }()
+	l := &lease.Lease{Q: r.Pool, Name: LeaseName, Holder: r.Holder, Log: r.Log,
+		OnChange: func(held bool) {
+			v := 0.0
+			if held {
+				v = 1
+			}
+			r.set("yt_relay_up", "1 while this relay holds the lease and sends.", nil, v)
+		}}
+	return l.Run(ctx, r.send)
+}
+
+// send is the work done while holding the lease.
+func (r *Relay) send(ctx context.Context) error {
 	if n, err := outbox.RetryFailed(ctx, r.Pool); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		return err
 	} else if n > 0 {
 		r.Log.Info("trying refused events again", "events", n)
 	}
-	r.set("yt_relay_up", "1 while this relay holds the lock and sends.", nil, 1)
-	defer r.set("yt_relay_up", "1 while this relay holds the lock and sends.", nil, 0)
+	if r.Lead != nil {
+		done := make(chan struct{})
+		go func() { defer close(done); r.Lead(ctx) }()
+		defer func() { <-done }()
+	}
 	backoff := time.Second
+	idle := poll.Backoff{Max: r.idle()}
 	for ctx.Err() == nil {
 		res, err := r.Once(ctx)
 		switch {
@@ -123,11 +132,12 @@ func (r *Relay) Run(ctx context.Context) error {
 			backoff = min(2*backoff, time.Minute)
 		case res.Sent == 0 && res.Refused == 0:
 			backoff = time.Second
-			if !sleep(ctx, r.idle()) {
+			if !idle.Wait(ctx) {
 				return nil
 			}
 		default:
 			backoff = time.Second
+			idle.Reset()
 		}
 	}
 	return nil
@@ -135,7 +145,7 @@ func (r *Relay) Run(ctx context.Context) error {
 
 func (r *Relay) idle() time.Duration {
 	if r.Idle <= 0 {
-		return 2 * time.Second
+		return poll.DefaultMax
 	}
 	return r.Idle
 }

@@ -213,7 +213,7 @@ func Build(ctx context.Context, q db.Querier, o Options) (Report, error) {
 
 func (r *Report) kinds(ctx context.Context, q db.Querier) error {
 	rows, err := q.Query(ctx, `SELECT kind, sum(jobs), sum(failures), sum(requests), sum(bytes), sum(blocks), sum(run_ms)
-		FROM usage_hourly WHERE hour >= date_trunc('hour', $1::timestamptz) AND hour < $2 GROUP BY kind ORDER BY sum(requests) DESC, kind`,
+		FROM usage_hourly WHERE hour >= date_trunc('hour', $1::timestamptz, 'UTC') AND hour < $2 GROUP BY kind ORDER BY sum(requests) DESC, kind`,
 		r.From, r.To)
 	if err != nil {
 		return err
@@ -249,7 +249,7 @@ func (r *Report) kinds(ctx context.Context, q db.Querier) error {
 	// The hours collection ran, and the busiest one in steady state.
 	var first, last *time.Time
 	if err := q.QueryRow(ctx, `SELECT min(hour), max(hour) FROM usage_hourly
-		WHERE hour >= date_trunc('hour', $1::timestamptz) AND hour < $2`, r.From, r.To).Scan(&first, &last); err != nil {
+		WHERE hour >= date_trunc('hour', $1::timestamptz, 'UTC') AND hour < $2`, r.From, r.To).Scan(&first, &last); err != nil {
 		return err
 	}
 	if first == nil {
@@ -261,7 +261,7 @@ func (r *Report) kinds(ctx context.Context, q db.Querier) error {
 	var peak *time.Time
 	var peakReq *int64
 	if err := q.QueryRow(ctx, `SELECT hour, sum(requests)::bigint FROM usage_hourly
-		WHERE hour >= date_trunc('hour', $1::timestamptz) AND hour < $2 AND kind <> $3
+		WHERE hour >= date_trunc('hour', $1::timestamptz, 'UTC') AND hour < $2 AND kind <> $3
 		GROUP BY hour ORDER BY 2 DESC, 1 LIMIT 1`, r.From, r.To, queue.KindBackfill).Scan(&peak, &peakReq); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}

@@ -96,7 +96,7 @@ func Record(ctx context.Context, q db.Querier, at time.Time, j queue.Job, t Tota
 	}
 	_, err := q.Exec(ctx, `WITH h AS (
 			INSERT INTO usage_hourly (hour, kind, jobs, failures, requests, bytes, blocks, run_ms)
-			VALUES (date_trunc('hour', $1::timestamptz), $2, 1, $3, $4, $5, $6, $7)
+			VALUES (date_trunc('hour', $1::timestamptz, 'UTC'), $2, 1, $3, $4, $5, $6, $7)
 			ON CONFLICT (hour, kind) DO UPDATE SET jobs = usage_hourly.jobs + 1,
 				failures = usage_hourly.failures + EXCLUDED.failures, requests = usage_hourly.requests + EXCLUDED.requests,
 				bytes = usage_hourly.bytes + EXCLUDED.bytes, blocks = usage_hourly.blocks + EXCLUDED.blocks,

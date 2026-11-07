@@ -286,9 +286,14 @@ func (h *Handoff) Consume(ctx context.Context, cl *kgo.Client) error {
 }
 
 // Run announces every minute, deletes what is due every 10 minutes, and
-// reads acknowledgements with clients from newClient, until ctx ends.
+// reads acknowledgements with clients from newClient, until ctx ends; it
+// returns once the reader has stopped too. The relay runs it only while it
+// holds its lease.
 func (h *Handoff) Run(ctx context.Context, newClient func() (*kgo.Client, error)) {
+	reader := make(chan struct{})
+	defer func() { <-reader }()
 	go func() {
+		defer close(reader)
 		for ctx.Err() == nil {
 			cl, err := newClient()
 			if err == nil {

@@ -42,6 +42,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/poll"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/secrets"
 )
 
@@ -390,27 +391,32 @@ func (d *Dispatcher) redactErasures(ctx context.Context) error {
 	return err
 }
 
-// Run creates and sends deliveries every interval until ctx ends.
+// Run creates and sends deliveries until ctx ends: again after every,
+// and, while there is nothing to create or send, after twice as long each
+// time up to 30 seconds (REQ-024).
 func (d *Dispatcher) Run(ctx context.Context, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
+	idle := poll.Backoff{Min: every, Max: max(every, poll.DefaultMax)}
 	for {
-		if _, err := d.Enqueue(ctx); err != nil && ctx.Err() == nil {
+		created, err := d.Enqueue(ctx)
+		if err != nil && ctx.Err() == nil {
 			d.Log.Warn("creating webhook deliveries failed", "err", err)
 		}
+		sent := 0
 		for {
 			n, err := d.Deliver(ctx, 100)
 			if err != nil && ctx.Err() == nil {
 				d.Log.Warn("sending webhooks failed", "err", err)
 			}
+			sent += n
 			if n < 100 || err != nil {
 				break
 			}
 		}
-		select {
-		case <-ctx.Done():
+		if created > 0 || sent > 0 {
+			idle.Reset()
+		}
+		if !idle.Wait(ctx) {
 			return
-		case <-t.C:
 		}
 	}
 }

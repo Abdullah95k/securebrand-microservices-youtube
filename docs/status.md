@@ -28,6 +28,14 @@ The current state of the YouTube collector, for the owner and the master session
     ([#66](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/66)): thumbnails are announced to analysis, and each file is deleted once
     analysis acknowledges it, or at its 72-hour deadline; the record stays. It runs in the relay, so the pilot (no Kafka) keeps
     every image.
+  - **REQ-023 and REQ-024 (the owner, 7 November): in review.** yts now fits the platform's PostgreSQL behind PgBouncer in
+    transaction mode: no session locks (the relay holds a lease row; the migrations and new partitions use locks that end with
+    their transaction), no statements prepared on the server, no startup parameters, at most 4 connections per process, and a
+    wait for a free connection when the database is full (45 minutes for the migrations). While idle it touches the database far
+    less: readiness checked at most once a minute, liveness without the database, polling that backs off to every 30 seconds.
+    Idle queries per minute through PgBouncer, before and after: worker 60 → 12, scheduler 45 → 36 (one burst a minute, the
+    gauges), relay 67 → 16 (12 of them the lease renewal every 5 seconds the platform asks for). The test suite runs through
+    PgBouncer in transaction mode with prepared statements off, here and in CI.
   - **Next:** the pilot (fix 11) when the platform is ready (below). Until the relay runs, events wait in the outbox (roughly
     100 MB a day at 1,000 channels).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
@@ -87,6 +95,10 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- REQ-023 and REQ-024: migration `0014_leases.sql` (a new table `leases`); the migrate command's `-wait` flag (45 minutes) and the
+  chart's `migrate.waitForSlot` and `migrate.activeDeadlineSeconds` 3600 (give `helm upgrade` `--timeout 60m`); the relay's
+  `-idle` now means the longest idle wait (30 seconds); the metric `yt_relay_up` now means "holds the lease"; runbook §18. The
+  database tests now make a database per test instead of a schema, so the test role must be allowed to create databases.
 - Fix 12, PR 7: migration `0013_media_handoff.sql` (five new columns on `media`, a new table `media_acks`); the relay publishes
   `content.media.v1`, `content.media.ready.v1`, `content.media.deleted.v1` and `yt.media.v1`, and **reads**
   `content.media.processed.v1` in consumer group `yts-media`; relay flags `-media-handoff`, `-media-keep`, `-media-group`,

@@ -127,7 +127,7 @@ func (c Config) mechanism() (sasl.Mechanism, error) {
 }
 
 // TransactionalID is the relay's Kafka transactional ID: one relay sends at
-// a time (an advisory lock in Postgres), and a new one fences the old.
+// a time (a lease in Postgres), and a new one fences the old.
 const TransactionalID = "yts-relay"
 
 // Options are the Kafka client's options: transactional and idempotent,

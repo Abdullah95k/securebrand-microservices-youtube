@@ -63,6 +63,8 @@ jobs:
           max_client_conn = 1000
           default_pool_size = 20
           max_user_connections = 80
+          logfile = /tmp/pgb/pgbouncer.log
+          pidfile = /tmp/pgb/pgbouncer.pid
           EOF
           echo '"postgres" ""' > /tmp/pgb/userlist.txt
           pgbouncer -d /tmp/pgb/pgbouncer.ini

@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **7 November 2026, 04:37 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **7 November 2026, 04:49 (Iraq time)**.
 
 ## Where it stands
 
@@ -22,7 +22,9 @@ The current state of the YouTube collector, for the owner and the master session
     message checked by the contract's conformance package; `ytcollect outbox check` runs the checks on real events. **PR 3,
     the `yt.*` messages, is merged** ([#62](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/62)): the platform events with every field yts holds, generated with buf, checked in CI. **PR 4, the relay, is
     merged** ([#63](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/63)): `ytcollect relay` sends the outbox to Kafka, both message sets in one transaction. **PR 5, the relay in the
-    chart, is in review** ([#64](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/64)): off until Kafka is there; `relay.enabled=true` turns it on.
+    chart, is merged** ([#64](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/64)): off until Kafka is there; `relay.enabled=true` turns it on. **PR 6, discovery candidates
+    and hourly coverage, is in review**; it also stops a video first seen through the official API from going out before its
+    website read.
   - **Next:** the pilot (fix 11) when the platform is ready (below). Until the relay runs, events wait in the outbox (roughly
     100 MB a day at 1,000 channels).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
@@ -82,6 +84,8 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- Fix 12, PR 6: the scheduler's hourly "coverage roll-up" task; candidates and coverage go to `discovery.candidate.v1` and
+  `collection.coverage.v1`.
 - Fix 12, PR 5: the chart's `yts-relay` Deployment and Service (off by default and in production values), values `relay.*`, the
   ops port 9103 in the ServiceMonitor and NetworkPolicy.
 - Fix 12, PR 4: the command `ytcollect relay` (a new long-running service: ops port 9103; the chart adds it in PR 5), the

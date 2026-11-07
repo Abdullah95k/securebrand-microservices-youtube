@@ -31,7 +31,7 @@ func TestEveryEventMapsStrictly(t *testing.T) {
 			continue
 		}
 		if msg == nil {
-			if row.Kind != outbox.KindCommentMetrics {
+			if row.Kind != outbox.KindCommentMetrics && row.Kind != outbox.KindCandidate && row.Kind != outbox.KindCoverage {
 				t.Errorf("%s event %d mapped to nothing", row.Kind, row.ID)
 			}
 			continue
@@ -95,7 +95,16 @@ func TestUnknownColumns(t *testing.T) {
 	if err != nil || msg.Msg.(*ytv1.Video).GetId() != "fakeX" {
 		t.Errorf("lenient mode: %v, %v", msg, err)
 	}
-	if msg, err := (ytevents.Mapper{}).Map(outbox.Row{Kind: outbox.KindCommentMetrics}); msg != nil || err != nil {
-		t.Errorf("a comment's counts have no yt.* topic: %v, %v", msg, err)
+	for _, k := range []string{outbox.KindCommentMetrics, outbox.KindCandidate, outbox.KindCoverage} {
+		if msg, err := (ytevents.Mapper{}).Map(outbox.Row{Kind: k}); msg != nil || err != nil {
+			t.Errorf("%s has no yt.* topic: %v, %v", k, msg, err)
+		}
+	}
+	// First seen through the official API, never read on the website: the
+	// API's title must not go out.
+	api := row
+	api.Payload = []byte(`{"id":"fakeX","channel_id":"UCfakeX","kind":"video","title":"an API title","source":"api_search"}`)
+	if msg, err := (ytevents.Mapper{}).Map(api); msg != nil || err != nil {
+		t.Errorf("an API-sourced video not yet read: %v, %v", msg, err)
 	}
 }

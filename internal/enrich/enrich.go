@@ -126,10 +126,17 @@ func (e *Enricher) enrich(ctx context.Context, j queue.Job) (time.Time, error) {
 		var status string
 		err := e.Pool.QueryRow(ctx, `SELECT status FROM channels WHERE id = $1`, id).Scan(&status)
 		if errors.Is(err, pgx.ErrNoRows) && (e.Sup == nil || !e.Sup.Suppressed(privacy.Channel, id)) {
-			if _, err := e.Pool.Exec(ctx, `INSERT INTO candidates (channel_id, sources) VALUES ($1, ARRAY['commenter'])
-				ON CONFLICT (channel_id) DO UPDATE SET last_found = now(),
-					sources = CASE WHEN 'commenter' = ANY(candidates.sources) THEN candidates.sources ELSE array_append(candidates.sources, 'commenter') END`,
-				id); err != nil {
+			ev := outbox.New(ctx, e.now())
+			if err := pgx.BeginFunc(ctx, e.Pool, func(tx pgx.Tx) error {
+				if _, err := tx.Exec(ctx, `INSERT INTO candidates (channel_id, sources) VALUES ($1, ARRAY['commenter'])
+					ON CONFLICT (channel_id) DO UPDATE SET last_found = now(),
+						sources = CASE WHEN 'commenter' = ANY(candidates.sources) THEN candidates.sources ELSE array_append(candidates.sources, 'commenter') END`,
+					id); err != nil {
+					return err
+				}
+				_, err := ev.Content(ctx, tx, outbox.Candidates, id) // discovery.candidate (fix 12)
+				return err
+			}); err != nil {
 				return time.Time{}, err
 			}
 			if _, err := queue.Ensure(ctx, e.Pool, queue.KindCandidate, id, id, queue.P3, now); err != nil {

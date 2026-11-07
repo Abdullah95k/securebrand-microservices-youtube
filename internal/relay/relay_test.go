@@ -100,6 +100,18 @@ func header(r *kgo.Record, k string) string {
 // transactions, keyed and typed as the contract says.
 func TestRelaySendsTheOutbox(t *testing.T) {
 	run := collecttest.Run(t)
+	ctx := context.Background()
+	// A discovery candidate, and the coverage roll-ups of the run's hour.
+	if _, err := run.Pool.Exec(ctx, `INSERT INTO candidates (channel_id, sources) VALUES ('UCfakeRELAYCAND000000001', ARRAY['web_search'])`); err != nil {
+		t.Fatal(err)
+	}
+	ev := outbox.New(ctx, time.Now())
+	if _, err := ev.Content(ctx, run.Pool, outbox.Candidates, "UCfakeRELAYCAND000000001"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := ev.Coverage(ctx, run.Pool, time.Now().Add(-2*time.Hour), time.Now().Add(2*time.Hour)); err != nil || n == 0 {
+		t.Fatalf("coverage roll-ups: %d (%v)", n, err)
+	}
 	c, cl := kafka(t)
 	reg := metrics.New()
 	r := newRelay(run.Pool, cl, reg)
@@ -128,7 +140,9 @@ func TestRelaySendsTheOutbox(t *testing.T) {
 		if typ == "" {
 			t.Errorf("%s record without sb-type", rec.Topic)
 		}
-		if strings.HasPrefix(rec.Topic, "content.") != (header(rec, "sb-contract") == "1.2.0") {
+		// Every contract message (content.*, discovery.*, collection.*) says
+		// its contract version; yts's own yt.* don't.
+		if !strings.HasPrefix(rec.Topic, "yt.") != (header(rec, "sb-contract") == "1.2.0") {
 			t.Errorf("%s record: sb-contract %q", rec.Topic, header(rec, "sb-contract"))
 		}
 		if (rec.Topic == contract.TopicComment || rec.Topic == contract.TopicMetrics || rec.Topic == "yt.comment.v1") &&

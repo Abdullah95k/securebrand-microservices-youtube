@@ -313,3 +313,71 @@ func TestPrune(t *testing.T) {
 		t.Errorf("left %v, want the unsent one and the one sent 6 days ago", left)
 	}
 }
+
+// A candidate's event goes out when it is found, gains a source or is
+// decided; more sightings alone are not a change. An official-API hit
+// gives its keyword only.
+func TestCandidateEvents(t *testing.T) {
+	pool := dbtest.New(t)
+	const c = "UCfakeCANDIDATE000000001"
+	exec(t, pool, `INSERT INTO keywords (label, kind) VALUES ('baghdad', 'place')`)
+	exec(t, pool, `INSERT INTO search_hits (engine, keyword_id, video_id, channel_id, title, found_at)
+		SELECT 'api', id, 'fakeAPIvideo', $1, 'an API title', $2 FROM keywords`, c, t0)
+	exec(t, pool, `INSERT INTO candidates (channel_id, sources) VALUES ($1, ARRAY['api_search'])`, c)
+	if n, _ := write(t, pool, t0, outbox.Candidates, c); n != 1 {
+		t.Fatalf("found: %d events", n)
+	}
+	exec(t, pool, `UPDATE candidates SET hits = hits + 1, last_found = $2 WHERE channel_id = $1`, c, t0.Add(time.Hour))
+	if n, _ := write(t, pool, t0.Add(time.Hour), outbox.Candidates, c); n != 0 {
+		t.Fatalf("seen again: %d events, want none", n)
+	}
+	exec(t, pool, `INSERT INTO search_hits (engine, keyword_id, video_id, channel_id, found_at)
+		SELECT 'web', id, 'fakeWEBvideo', $1, $2 FROM keywords`, c, t0.Add(2*time.Hour))
+	exec(t, pool, `UPDATE candidates SET sources = array_append(sources, 'web_search') WHERE channel_id = $1`, c)
+	if n, _ := write(t, pool, t0.Add(2*time.Hour), outbox.Candidates, c); n != 1 {
+		t.Fatalf("a new source: %d events", n)
+	}
+	exec(t, pool, `UPDATE candidates SET status = 'no_match', checked_at = $2, decision = 'not relevant' WHERE channel_id = $1`, c, t0.Add(3*time.Hour))
+	if n, _ := write(t, pool, t0.Add(3*time.Hour), outbox.Candidates, c); n != 1 {
+		t.Fatalf("decided: %d events", n)
+	}
+	ev := events(t, pool)
+	evidence := ev[1].payload["evidence"].([]any)
+	if len(evidence) != 2 {
+		t.Fatalf("evidence %v", evidence)
+	}
+	for _, e := range evidence {
+		e := e.(map[string]any)
+		if e["keyword"] != "baghdad" || (e["engine"] == "api") != (e["video_id"] == nil) {
+			t.Errorf("evidence %v: the API's video must never be carried", e)
+		}
+		if _, ok := e["title"]; ok {
+			t.Errorf("evidence %v carries a title", e)
+		}
+	}
+	if ev[0].key != c {
+		t.Errorf("keyed %q", ev[0].key)
+	}
+}
+
+// One coverage roll-up per job kind and finished hour, once.
+func TestCoverageOnce(t *testing.T) {
+	pool := dbtest.New(t)
+	h1, h2 := t0.Add(-2*time.Hour), t0.Add(-time.Hour)
+	for _, h := range []time.Time{h1, h2, t0} {
+		exec(t, pool, `INSERT INTO usage_hourly (hour, kind, jobs, failures, requests, bytes, blocks, run_ms) VALUES ($1, 'video', 10, 1, 30, 9000, 2, 5000)`, h)
+	}
+	ctx := context.Background()
+	ev := outbox.New(ctx, t0.Add(15*time.Minute))
+	n, err := ev.Coverage(ctx, pool, t0.Add(-48*time.Hour), t0.Add(5*time.Minute))
+	if err != nil || n != 2 {
+		t.Fatalf("roll-ups %d (%v), want the two finished hours", n, err)
+	}
+	if n, _ := ev.Coverage(ctx, pool, t0.Add(-48*time.Hour), t0.Add(5*time.Minute)); n != 0 {
+		t.Errorf("again: %d, want none", n)
+	}
+	got := events(t, pool)
+	if got[0].entity != "video@"+h1.Format("2006-01-02T15")+":00Z" || got[0].payload["jobs"] != float64(10) {
+		t.Errorf("roll-up %s %v", got[0].entity, got[0].payload)
+	}
+}

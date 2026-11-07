@@ -9,6 +9,8 @@ import (
 
 	"github.com/abdullah95k/securebrand-contracts/conformance"
 	contentv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/content/v1"
+	coveragev1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/coverage/v1"
+	discoveryv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/discovery/v1"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/collecttest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/contract"
@@ -224,5 +226,67 @@ func TestEventIDsAreStable(t *testing.T) {
 	ida, idb, idc := envelopeOf(t, a[0]).GetEventId(), envelopeOf(t, b[0]).GetEventId(), envelopeOf(t, c[0]).GetEventId()
 	if ida == "" || ida != idb || ida == idc {
 		t.Errorf("event IDs %q %q %q", ida, idb, idc)
+	}
+}
+
+// A candidate: its source, its evidence (an official-API hit only by its
+// keyword), the outcome, and the API's 30-day terms when only the API
+// found it. The contract's Candidate check passes.
+func TestCandidates(t *testing.T) {
+	m := &contract.Mapper{Options: prod}
+	for _, tc := range []struct {
+		name, payload string
+		outcome       discoveryv1.Outcome
+		source        discoveryv1.Source
+		apiOnly       bool
+	}{
+		{"API only, pending", `{"channel_id":"UCfakeCAND00000000000001","first_found":"2026-11-01T09:00:00+00:00","sources":["api_search"],
+			"status":"new","evidence":[{"engine":"api","keyword":"baghdad","found_at":"2026-11-01T09:00:00+00:00"}]}`,
+			discoveryv1.Outcome_OUTCOME_PENDING, discoveryv1.Source_SOURCE_OFFICIAL_API_SEARCH, true},
+		{"website, added as mention", `{"channel_id":"UCfakeCAND00000000000001","first_found":"2026-11-01T09:00:00+00:00",
+			"sources":["web_search","api_search"],"status":"listed","checked_at":"2026-11-02T09:00:00+00:00","decision":"mention: Iraq",
+			"channel":{"kind":"mention","status":"listed"},
+			"evidence":[{"engine":"web","keyword":"baghdad","video_id":"fakeCANDv1","published_at":"2026-10-31T12:00:00+00:00"}]}`,
+			discoveryv1.Outcome_OUTCOME_ADDED_RELEVANT_ONLY, discoveryv1.Source_SOURCE_KEYWORD_SEARCH, false},
+		{"commenter, gone", `{"channel_id":"UCfakeCAND00000000000001","first_found":"2026-11-01T09:00:00+00:00","sources":["commenter"],
+			"status":"no_match","checked_at":"2026-11-02T09:00:00+00:00","decision":"channel not found","evidence":[]}`,
+			discoveryv1.Outcome_OUTCOME_UNAVAILABLE, discoveryv1.Source_SOURCE_COMMENTER, false},
+	} {
+		msgs, err := m.Map(row("candidate", "UCfakeCAND00000000000001", "UCfakeCAND00000000000001", tc.payload))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		c := msgs[0].Msg.(*discoveryv1.Candidate)
+		if msgs[0].Topic != contract.TopicCandidate || msgs[0].Key != "yt:account:UCfakeCAND00000000000001" ||
+			c.GetOutcome() != tc.outcome || c.GetSource() != tc.source || c.GetTargetPlatform() != "yt" {
+			t.Errorf("%s: %s %s %v", tc.name, msgs[0].Topic, msgs[0].Key, c)
+		}
+		if got := c.GetProvenance().GetTermsExpireAt() != nil; got != tc.apiOnly {
+			t.Errorf("%s: terms_expire_at set %v, want %v", tc.name, got, tc.apiOnly)
+		}
+		for _, e := range c.GetEvidence() {
+			if e.GetVia() == "api_search" && (e.GetContentId() != "" || e.GetUrl() != "") {
+				t.Errorf("%s: an API hit carries a video: %v", tc.name, e)
+			}
+			if e.GetVia() == "web_search" && (e.GetContentId() != "yt:post:fakeCANDv1" || e.GetContentTime().GetPrecision() != contentv1.TimePrecision_TIME_PRECISION_DAY) {
+				t.Errorf("%s: website evidence %v", tc.name, e)
+			}
+		}
+	}
+}
+
+// An hour's roll-up: its counters, its status and why, keyed by its job.
+func TestCoverage(t *testing.T) {
+	m := &contract.Mapper{Options: prod}
+	msgs, err := m.Map(row("coverage", "comments@2026-11-07T08:00Z", "comments@2026-11-07T08:00Z",
+		`{"hour":"2026-11-07T08:00:00+00:00","kind":"comments","jobs":40,"failures":3,"requests":120,"bytes":500000,"blocks":2,"run_ms":90000}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := msgs[0].Msg.(*coveragev1.JobCoverage)
+	if msgs[0].Topic != contract.TopicCoverage || msgs[0].Key != "yts:comments@2026-11-07T08:00Z" || c.GetJobCount() != 40 ||
+		c.GetStatus() != coveragev1.JobStatus_JOB_STATUS_PARTIAL || c.GetCounters()["requests"] != 120 || c.GetCounters()["blocked"] != 2 ||
+		len(c.GetReasons()) != 2 || c.GetWindowTo().AsTime().Sub(c.GetWindowFrom().AsTime()) != time.Hour {
+		t.Errorf("coverage %s %v", msgs[0].Key, c)
 	}
 }

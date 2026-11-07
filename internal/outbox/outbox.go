@@ -43,12 +43,15 @@ const (
 	KindCommentMetrics  = "comment_metrics"  // content.metrics (target comment)
 	KindPlaylist        = "playlist"         // content.playlist, yt.playlist
 	KindAuthor          = "author"           // content.account (not monitored), yt.author_profile
+	KindCandidate       = "candidate"        // discovery.candidate
+	KindCoverage        = "coverage"         // collection.coverage (an hourly roll-up per job kind)
 )
 
 // Table is how one stored table becomes events. Its SQL reads the row as t;
 // $2 is the time of the observation (the snapshot tables' taken_at).
 type Table struct {
 	name string // the table
+	id   string // its key column ("id" when empty)
 	kind string // its content events' kind, and its outbox_state kind
 	// SQL: the Kafka key's YouTube ID (the post, for comments).
 	key string
@@ -145,12 +148,33 @@ var (
 	})
 )
 
+// Candidates are the channels discovery found. An event goes out when one
+// is found, gains a source, or is decided; more sightings alone are not a
+// change. It carries the latest evidence: the keywords and, for the
+// website's search, the videos that matched. Official-API hits give their
+// keyword only, never the API's video IDs or fields (the YouTube terms).
+var Candidates = build(Table{
+	name: "candidates", kind: KindCandidate, key: "t.channel_id", id: "channel_id",
+	payload: `to_jsonb(t) || jsonb_build_object(
+		'channel', (SELECT jsonb_build_object('kind', c.kind, 'status', c.status) FROM channels c WHERE c.id = t.channel_id),
+		'evidence', COALESCE((SELECT jsonb_agg(e ORDER BY e.found_at DESC) FROM (
+			SELECT h.engine, k.label AS keyword, h.found_at,
+				CASE WHEN h.engine = 'web' THEN h.video_id END AS video_id,
+				CASE WHEN h.engine = 'web' THEN h.published_at END AS published_at
+			FROM search_hits h LEFT JOIN keywords k ON k.id = h.keyword_id
+			WHERE h.channel_id = t.channel_id ORDER BY h.found_at DESC LIMIT 20) e), '[]'::jsonb))`,
+	compare: `to_jsonb(t) - ARRAY['last_found', 'hits']`,
+})
+
 // build writes a table's two statements. $1: the IDs; $2: the observation
 // time; $3: the provenance.
 func build(t Table) Table {
+	if t.id == "" {
+		t.id = "id"
+	}
 	t.contentSQL = fmt.Sprintf(`WITH cur AS (
-			SELECT t.id, %[3]s AS key, %[4]s AS payload, sha256(convert_to((%[5]s)::text, 'UTF8')) AS h
-			FROM %[1]s t WHERE t.id = ANY($1::text[])
+			SELECT t.%[6]s AS id, %[3]s AS key, %[4]s AS payload, sha256(convert_to((%[5]s)::text, 'UTF8')) AS h
+			FROM %[1]s t WHERE t.%[6]s = ANY($1::text[])
 		), changed AS (
 			INSERT INTO outbox_state AS s (kind, entity_id, content_hash)
 			SELECT '%[2]s', id, h FROM cur
@@ -161,7 +185,7 @@ func build(t Table) Table {
 		INSERT INTO event_outbox (kind, entity_id, partition_key, observed_at, payload, provenance)
 		SELECT '%[2]s', cur.id, cur.key, $2::timestamptz, cur.payload, $3::jsonb
 		FROM cur JOIN changed ON changed.entity_id = cur.id ORDER BY cur.id`,
-		t.name, t.kind, t.key, t.payload, t.compare)
+		t.name, t.kind, t.key, t.payload, t.compare, t.id)
 	if t.metricsKind != "" {
 		t.metricsSQL = fmt.Sprintf(`WITH cur AS (
 				SELECT t.id, %[4]s AS key, %[5]s AS payload FROM %[1]s t WHERE t.id = ANY($1::text[])
@@ -248,6 +272,27 @@ func (e *Events) Write(ctx context.Context, q db.Querier, t Table, ids ...string
 	}
 	_, err := e.Metrics(ctx, q, t, ids...)
 	return err
+}
+
+// Coverage adds an hourly roll-up event per job kind (the contract's
+// JobCoverage, job_count jobs) for each hour of usage_hourly (fix 5) that
+// started at or after from and ended by to, once each. It returns how many
+// it added.
+func (e *Events) Coverage(ctx context.Context, q db.Querier, from, to time.Time) (int64, error) {
+	tag, err := q.Exec(ctx, `WITH cur AS (
+			SELECT u.kind || '@' || to_char(u.hour AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24":00Z"') AS id, to_jsonb(u) AS payload
+			FROM usage_hourly u WHERE u.hour >= $1 AND u.hour + interval '1 hour' <= $2
+		), fresh AS (
+			INSERT INTO outbox_state (kind, entity_id, content_hash) SELECT 'coverage', id, '\x00'::bytea FROM cur
+			ON CONFLICT (kind, entity_id) DO NOTHING RETURNING entity_id
+		)
+		INSERT INTO event_outbox (kind, entity_id, partition_key, observed_at, payload, provenance)
+		SELECT 'coverage', cur.id, cur.id, $3::timestamptz, cur.payload, $4::jsonb
+		FROM cur JOIN fresh ON fresh.entity_id = cur.id ORDER BY cur.id`, from, to, e.at, e.prov)
+	if err != nil {
+		return 0, fmt.Errorf("outbox: coverage events: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // Keep is how long sent events stay (the owner, 7 November): they are

@@ -5,7 +5,13 @@
 // publishes it next to the content.* message from the same row.
 //
 // A comment's counts alone have no yt.* topic: content.metrics.v1 carries
-// them, and the next yt.comment.v1 message has them too.
+// them, and the next yt.comment.v1 message has them too. Discovery's
+// candidates and the coverage roll-ups have none either: their contract
+// topics (discovery.candidate.v1, collection.coverage.v1) carry everything.
+//
+// A video first stored from an official-API search hit and never read on
+// the website (title and time still the API's) is not sent: its first
+// website read is.
 package ytevents
 
 import (
@@ -77,8 +83,9 @@ type Mapper struct {
 // Map returns the yt.* message for one outbox row; nil for a kind with no
 // yt.* topic (a comment's counts).
 func (m Mapper) Map(r outbox.Row) (*Message, error) {
-	if r.Kind == outbox.KindCommentMetrics {
-		return nil, nil
+	switch r.Kind {
+	case outbox.KindCommentMetrics, outbox.KindCandidate, outbox.KindCoverage:
+		return nil, nil // no yt.* topic: the contract's message is the only one
 	}
 	k, ok := kinds[r.Kind]
 	if !ok {
@@ -88,6 +95,9 @@ func (m Mapper) Map(r outbox.Row) (*Message, error) {
 	msg := k.msg()
 	if err := opt.Unmarshal(r.Payload, msg); err != nil {
 		return nil, fmt.Errorf("ytevents: %s event %d: %w", r.Kind, r.ID, err)
+	}
+	if v, ok := msg.(*ytv1.Video); ok && v.GetSource() == "api_search" && v.LastChecked == nil && v.RemovedAt == nil {
+		return nil, nil
 	}
 	prov := &ytv1.Provenance{}
 	if len(r.Provenance) > 0 {

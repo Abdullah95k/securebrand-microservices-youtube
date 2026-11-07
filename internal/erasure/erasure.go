@@ -210,7 +210,7 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 			{"outbox events", `DELETE FROM event_outbox WHERE partition_key = $1 OR partition_key IN (
 				SELECT id FROM videos WHERE channel_id = $1 UNION ALL SELECT id FROM posts WHERE channel_id = $1
 				UNION ALL SELECT id FROM playlists WHERE channel_id = $1)`},
-			{"outbox state", `DELETE FROM outbox_state WHERE kind = 'channel' AND entity_id = $1
+			{"outbox state", `DELETE FROM outbox_state WHERE kind IN ('channel', 'candidate') AND entity_id = $1
 				OR kind = 'video' AND entity_id IN (SELECT id FROM videos WHERE channel_id = $1)
 				OR kind = 'post' AND entity_id IN (SELECT id FROM posts WHERE channel_id = $1)
 				OR kind = 'playlist' AND entity_id IN (SELECT id FROM playlists WHERE channel_id = $1)

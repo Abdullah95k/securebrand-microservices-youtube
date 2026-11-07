@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **7 November 2026, 04:11 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **7 November 2026, 04:19 (Iraq time)**.
 
 ## Where it stands
 
@@ -18,8 +18,9 @@ The current state of the YouTube collector, for the owner and the master session
     [`master/yts-contract-adoption.md`](master/yts-contract-adoption.md). The owner answered on 7 November: sent outbox rows go
     after 7 days, and the code generator may run here. **PR 1, the outbox, is merged**
     ([#60](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/60)): every write adds its events in the same
-    transaction as the data; no Kafka yet. **PR 2, the contract mapping, is in review** ([#61](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/61)): every event becomes a contract v1.2.0
-    message checked by the contract's conformance package; `ytcollect outbox check` runs the checks on real events.
+    transaction as the data; no Kafka yet. **PR 2, the contract mapping, is merged** ([#61](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/61)): every event becomes a contract v1.2.0
+    message checked by the contract's conformance package; `ytcollect outbox check` runs the checks on real events. **PR 3,
+    the `yt.*` messages, is in review** ([#62](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/62)): the platform events with every field yts holds, generated with buf, checked in CI.
   - **Next:** the pilot (fix 11) when the platform is ready (below). Until the relay runs, events wait in the outbox (roughly
     100 MB a day at 1,000 channels).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
@@ -79,6 +80,8 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- Fix 12, PR 3: the `yt.*` message definitions (`proto/securebrand/yt/v1/yt.proto`, package `securebrand.yt.v1`), their generated
+  Go code (`gen/go`) and a CI job `proto`. The topics already exist; nothing is registered.
 - Fix 12, PR 2: the command `ytcollect outbox` (and `outbox check`), read-only; the Go dependency
   `github.com/abdullah95k/securebrand-contracts` v1.2.0 (the platform contract, with the Protobuf library it needs).
 - Fix 12, PR 1 ([#60](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/60), merged): two tables

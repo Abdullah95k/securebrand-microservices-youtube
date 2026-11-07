@@ -2,7 +2,7 @@
 
 Written by the yts session on 6 November 2026 (Iraq time), from `main` `9a0e248`. A plan: the outbox and relay (fix 12) and the
 `content.*` mapping (REQ-021) are built from it in small PRs, in the order of section 7. **Updated 7 November:** the owner's two
-answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3.
+answers, and PR 1 (the outbox) built; section 4 describes it as built. PR 2 (the mapping and the checks) built: sections 2 and 3. PR 3 (the `yt.*` messages) built: section 5.
 
 **Contract version:** v1.2.0 (`github.com/abdullah95k/securebrand-contracts`). The owner approved v1.0.0 (D-016); v1.1.0 and v1.2.0 only
 add fields and checks, and the master agreed to v1.2.0 (6 November). Every message goes out with `sb-contract: 1.2.0`.
@@ -148,6 +148,21 @@ ever needs one, it moves into the contract).
 **Tooling:** the owner allowed `buf generate` in this session (7 November), so the Go code is generated here and committed, and CI
 checks it matches.
 
+**Built (PR 3):**
+- `proto/securebrand/yt/v1/yt.proto`, package `securebrand.yt.v1`: `Channel`, `ChannelSnapshot`, `Video`, `VideoMetrics`, `Post`,
+  `PostMetrics`, `Comment`, `Playlist` (with its items) and `AuthorProfile` (with the latest profile), one per `yt.*` topic. Each
+  mirrors its outbox payload field for field, named as the stored column, so `internal/ytevents` reads a payload straight into its
+  message (Protobuf's JSON reader). Field 1 of each is an `Event` header: event ID, outbox kind, read time and version, the
+  provenance, the outbox row's ID.
+- Keys: the same contract IDs as the `content.*` message from the same row, so the two stay on matching partitions.
+- A comment's counts alone have no `yt.*` topic (none was created for them): `content.metrics.v1` carries them, and the next
+  `yt.comment.v1` message has them too. `yt.media.v1` comes with the media hand-off (PR 7).
+- Go code in `gen/go/securebrand/yt/v1`, generated with buf 1.50.0 and protoc-gen-go 1.35.2 (`buf.yaml`, `buf.gen.yaml`; run
+  `buf generate` after changing the `.proto` file).
+- CI job `proto`: `buf lint`; the committed code must equal what `buf generate` writes; `buf breaking` against `main` (rule set
+  `FILE`), so no field is renumbered, retyped or removed.
+- A strict test maps every event of a fake run and fails if a stored column has no field: adding a column means adding its field.
+
 ## 6. The master's answers (6 November)
 
 1. **Topics:** the contract topics exist; the ten `yt.*` topics were added to production Kafka with 7 days' retention, partitions as
@@ -165,7 +180,7 @@ checks it matches.
 |---|---|---|
 | 1 | Migration `0012` and the outbox writer; events written in the same transaction (no Kafka yet). **Built** | 3 days |
 | 2 | The `content.*` mapping from outbox rows, with the conformance checks and tests from the fake YouTube. **Built** | 5 days |
-| 3 | The `yt.*` protos and their mapping | 4 days |
+| 3 | The `yt.*` protos and their mapping. **Built** | 4 days |
 | 4 | The relay: franz-go transactions, leases, metrics, alerts; an end-to-end test with Redpanda in CI | 4 days |
 | 5 | The chart: the relay Deployment, its credentials, the network policy to Kafka and the registry | 1 day |
 | 6 | Discovery candidates and the hourly coverage roll-ups | 2 days |

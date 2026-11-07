@@ -3,124 +3,31 @@ package contract_test
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/abdullah95k/securebrand-contracts/conformance"
 	contentv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/content/v1"
-	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/collect"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/comments"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/collecttest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/contract"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db/dbtest"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/enrich"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fakeyt"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
-	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/writer"
 )
 
-const chID = "UCfakeCONTRACT0000000001"
+const chID = collecttest.ChannelID
 
-var (
-	quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
-	prod  = conformance.Options{Production: true}
-)
-
-func fakeChannel() fakeyt.FakeChannel {
-	return fakeyt.FakeChannel{ID: chID, Handle: "@fakecontract", Title: "قناة تجريبية", Country: "Iraq", Subscribers: "25K subscribers",
-		Videos: []fakeyt.FakeVideo{
-			{ID: "fakeKV1", Title: "أخبار بغداد اليوم", Views: 1200, Likes: 40, Ago: "2 hours ago", LengthSec: 300, CommentsTxt: "3",
-				PublishDate: time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339),
-				Comments: []fakeyt.FakeComment{
-					{ID: "fakeKC1", Text: "first", Author: "UCfakeKAUTHOR00000000001", Ago: "1 hour ago", Likes: "1.2K", Pinned: true,
-						Replies: []fakeyt.FakeComment{{ID: "fakeKC1.r1", Text: "a reply", Author: chID, Ago: "30 minutes ago", Likes: "2"}}},
-					{ID: "fakeKC2", Text: "second", Author: "UCfakeKAUTHOR00000000002", Ago: "1 hour ago", Likes: "0"},
-				}},
-			{ID: "fakeKV2", Title: "recipe of the day", Views: 50, Likes: 2, Ago: "3 days ago", LengthSec: 120, CommentsTxt: "0"},
-			{ID: "fakeKV3", Title: "short from Basra", Views: 999, Ago: "5 days ago", LengthSec: 30, Short: true, CommentsTxt: "0"},
-		},
-		Posts:     []fakeyt.FakePost{{ID: "UgkxFAKEKPOST1", Text: "منشور عن بغداد", Ago: "1 day ago", Likes: "1.2K", CommentsTxt: "0"}},
-		Playlists: []fakeyt.FakePlaylist{{ID: "PLfakeKLIST01", Title: "تقارير بغداد", VideoIDs: []string{"fakeKV1", "fakeKV2"}}},
-	}
-}
-
-type rig struct {
-	pool *pgxpool.Pool
-	live *kwstore.Live
-}
-
-// collectAll lists the fake channel and runs the collector, the comment
-// engine and enrichment against the fake YouTube for a few seconds.
-func collectAll(t *testing.T) *rig {
-	t.Helper()
-	yt := fakeyt.New()
-	t.Cleanup(yt.Close)
-	yt.ServeChannels([]fakeyt.FakeChannel{fakeChannel()}, 2, 2)
-	px := fakeyt.NewForwardProxy("a")
-	t.Cleanup(px.Close)
-	ps, err := proxypool.ParseList([]string{px.ProxyLine() + " country=IQ"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pp := proxypool.New(ps, proxypool.Config{MinInterval: time.Millisecond, Jitter: 1e-12, DisableBrake: true,
-		FailoverDelayMin: time.Millisecond, FailoverDelayMax: 2 * time.Millisecond, TransientBackoff: time.Millisecond}, 1)
-	debug, err := phase0.OpenStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := innertube.New(innertube.Options{Pool: pp, BaseURL: yt.URL, CDNBase: yt.URL})
-	fetch := &phase0.Collector{Client: client, Store: debug, Now: time.Now, Log: quiet}
-	pool := dbtest.New(t)
-	ctx := context.Background()
-	if _, err := kwstore.ImportSeed(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
-	live := &kwstore.Live{}
-	if _, err := live.Refresh(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
-	k, _ := privacy.NewKeyer([]byte("test-secret-0123456789abcdef-0123456789"))
-	sup := privacy.NewSuppressor(k)
-	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: quiet, WithPlayer: true,
-		Write: &writer.Writer{Pool: pool, Sup: sup, KW: live}}
-	h := svc.Handlers()
-	for kind, f := range (&comments.Engine{Pool: pool, Client: client, Sup: sup, Log: quiet}).Handlers() {
-		h[kind] = f
-	}
-	for kind, f := range (&enrich.Enricher{Pool: pool, Sup: sup, Log: quiet, Fetch: fetch}).Handlers() {
-		h[kind] = f
-	}
-	if err := registry.AddInput(ctx, pool, registry.Input{Input: "@fakecontract", Tier: policy.A}); err != nil {
-		t.Fatal(err)
-	}
-	w := &worker.Worker{Pool: pool, Owner: "test", Handlers: h, Concurrency: 4, Idle: 10 * time.Millisecond, Lease: time.Minute, Log: quiet}
-	wctx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
-	_ = w.Run(wctx)
-	return &rig{pool: pool, live: live}
-}
+var prod = conformance.Options{Production: true}
 
 // Everything the collector wrote maps to messages the contract accepts in
 // production, keyed as the contract says.
 func TestEveryEventConformsEndToEnd(t *testing.T) {
-	r := collectAll(t)
-	rows, err := outbox.Unsent(context.Background(), r.pool, 0, 10000)
+	r := collecttest.Run(t)
+	rows, err := outbox.Unsent(context.Background(), r.Pool, 0, 10000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &contract.Mapper{Options: prod, Keywords: func() contract.KeywordIDs { return r.live.Matcher() }}
+	m := &contract.Mapper{Options: prod, Keywords: func() contract.KeywordIDs { return r.Live.Matcher() }}
 	kinds := map[string]int{}
 	topics := map[string]int{}
 	byID := map[string]contract.Message{}

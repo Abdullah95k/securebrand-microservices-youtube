@@ -1,0 +1,340 @@
+// The yt.* platform events (REQ-010 fix 12, standard E2): every field yts
+// holds, one message type per topic, published by yts's relay alongside the
+// unified contract's content.* messages. The topics are yts's own working
+// topics: not registered in a schema registry, not archived (the master,
+// 6 November); `buf breaking` in yts's CI keeps them compatible.
+//
+// Each record mirrors its outbox payload (internal/outbox): the stored row
+// as Postgres writes it with to_jsonb, field for field and named as the
+// column, so the relay reads a payload straight into its message. A column
+// added to a table is added here with a new field number; nothing is ever
+// renumbered or removed. Field 1 of every message is the event's header.
+syntax = "proto3";
+
+package securebrand.yt.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/Abdullah95k/securebrand-microservices-youtube/gen/go/securebrand/yt/v1;ytv1";
+
+// Event is what every message says about itself.
+message Event {
+  // The same event ID as the content.* message from the same outbox row,
+  // with "yt|" before the hash input (internal/ytevents).
+  string event_id = 1;
+  // The outbox kind: channel, channel_snapshot, video, video_metrics,
+  // post, post_metrics, comment, playlist, author.
+  string kind = 2;
+  // When yts read it; version is that in microseconds (the highest wins).
+  google.protobuf.Timestamp observed_at = 3;
+  int64 version = 4;
+  Provenance provenance = 5;
+  // The outbox row's ID, for tracing.
+  int64 outbox_id = 6;
+}
+
+// Provenance is where the data came from (internal/provenance).
+message Provenance {
+  string job_id = 1;
+  string job_kind = 2;
+  // The YouTube operations read (browse, next, player, page…), once each.
+  repeated string operations = 3;
+  // Where the raw answers are kept (fix 8), s3://….
+  repeated string raw_refs = 4;
+  // The proxies' country= tags, once each.
+  repeated string exit_countries = 5;
+  string collector = 6;
+  string collector_version = 7;
+  string collector_revision = 8;
+  string parser_version = 9;
+}
+
+// Link is a link as yts stores it (About panel, description).
+message Link {
+  string title = 1 [json_name = "Title"];
+  string url = 2 [json_name = "URL"];
+}
+
+// Channel is a monitored channel (topic yt.channel.v1; key the account ID).
+message Channel {
+  Event event = 1;
+  string id = 2;
+  optional string handle = 3;
+  optional string title = 4;
+  optional string description = 5;
+  // The channel's keyword field, as written.
+  optional string keywords = 6;
+  // As shown ("Iraq").
+  optional string country = 7;
+  // YYYY-MM-DD, from joined_text.
+  optional string joined_at = 8;
+  repeated Link links = 9;
+  optional int64 subscribers_min = 10;
+  optional string subscribers_text = 11;
+  optional int64 videos_min = 12;
+  optional int64 views_min = 13;
+  optional string avatar_url = 14;
+  optional string banner_url = 15;
+  // core or mention.
+  string kind = 16;
+  // A, B, C, D or M.
+  optional string tier = 17;
+  // candidate, listed, dormant, no_match, removed.
+  string status = 18;
+  // seed, admin, discovery, enrichment.
+  optional string added_by = 19;
+  optional string added_reason = 20;
+  google.protobuf.Timestamp backfill_until = 21;
+  google.protobuf.Timestamp backfill_done_at = 22;
+  google.protobuf.Timestamp first_seen = 23;
+  google.protobuf.Timestamp last_checked = 24;
+  google.protobuf.Timestamp removed_at = 25;
+  optional string source = 26;
+  optional int32 missed_checks = 27;
+  // "Joined 2 Jan 2016", as shown.
+  optional string joined_text = 28;
+  optional bool family_safe = 29;
+  // The tier was set by hand, not recomputed.
+  optional bool tier_manual = 30;
+}
+
+// ChannelCounts are a channel's counts.
+message ChannelCounts {
+  google.protobuf.Timestamp taken_at = 1;
+  optional int64 subscribers_min = 2;
+  optional string subscribers_text = 3;
+  optional int64 videos_min = 4;
+  optional int64 views_min = 5;
+}
+
+// ChannelSnapshot is a channel's counts at a read (topic
+// yt.channel_snapshot.v1): the stored counts, and the snapshot this read
+// took (unset when the read took none).
+message ChannelSnapshot {
+  Event event = 1;
+  ChannelCounts counts = 2;
+  ChannelCounts observed = 3;
+  optional string handle = 4;
+  optional string title = 5;
+  string status = 6;
+  google.protobuf.Timestamp removed_at = 7;
+}
+
+// Chapter is a video chapter.
+message Chapter {
+  string title = 1 [json_name = "Title"];
+  int32 start_sec = 2 [json_name = "StartSec"];
+}
+
+// Video is a video, Short or live stream (topic yt.video.v1; key the post
+// ID).
+message Video {
+  Event event = 1;
+  string id = 2;
+  string channel_id = 3;
+  // video, short or live.
+  string kind = 4;
+  optional string title = 5;
+  optional string description = 6;
+  google.protobuf.Timestamp published_at = 7;
+  // ± seconds; 0 exact.
+  optional int32 published_precision_s = 8;
+  optional int32 duration_s = 9;
+  optional int64 views = 10;
+  optional int64 likes_min = 11;
+  optional string likes_text = 12;
+  optional int64 comments_min = 13;
+  optional string comments_text = 14;
+  optional bool comments_disabled = 15;
+  repeated string tags = 16;
+  optional string category = 17;
+  optional bool player_unavailable = 18;
+  // none, upcoming, live, was_live.
+  optional string live_status = 19;
+  google.protobuf.Timestamp scheduled_start = 20;
+  optional bool relevant = 21;
+  // yts's keyword match IDs (seed IDs, kw-<id>, lang-ckb).
+  repeated string matched_keywords = 22;
+  optional bool comments_partial = 23;
+  optional float comments_complete_pct = 24;
+  google.protobuf.Timestamp first_seen = 25;
+  google.protobuf.Timestamp last_checked = 26;
+  google.protobuf.Timestamp removed_at = 27;
+  optional int32 missed_checks = 28;
+  // web, tab, rss, websub, web_search, api_search.
+  optional string source = 29;
+  optional string published_text = 30;
+  optional bool family_safe = 31;
+  repeated string caption_langs = 32;
+  repeated Chapter chapters = 33;
+}
+
+// VideoCounts are a video's counts: the stored ones, or one read's.
+message VideoCounts {
+  google.protobuf.Timestamp taken_at = 1;
+  optional int64 views = 2;
+  optional int64 likes_min = 3;
+  optional string likes_text = 4;
+  optional int64 comments_min = 5;
+  optional string comments_text = 6;
+  optional int64 live_viewers = 7;
+}
+
+// VideoMetrics is a video's counts at a read (topic yt.video_metrics.v1).
+message VideoMetrics {
+  Event event = 1;
+  VideoCounts counts = 2;
+  VideoCounts observed = 3;
+  string channel_id = 4;
+  optional string live_status = 5;
+}
+
+// Post is a community post (topic yt.post.v1).
+message Post {
+  Event event = 1;
+  string id = 2;
+  string channel_id = 3;
+  optional string text = 4;
+  // As stored (images, poll, linked video: fix 21).
+  google.protobuf.Value attachments = 5;
+  google.protobuf.Timestamp published_at = 6;
+  optional int32 published_precision_s = 7;
+  optional int64 likes_min = 8;
+  optional string likes_text = 9;
+  optional int64 comments_min = 10;
+  optional string comments_text = 11;
+  optional bool relevant = 12;
+  repeated string matched_keywords = 13;
+  google.protobuf.Timestamp first_seen = 14;
+  google.protobuf.Timestamp last_checked = 15;
+  google.protobuf.Timestamp removed_at = 16;
+  optional string source = 17;
+  // The post page's request parameters (how yts reads its comments).
+  optional string detail_params = 18;
+  google.protobuf.Timestamp comments_read_at = 19;
+  optional bool has_image = 20;
+  optional bool has_poll = 21;
+  optional bool has_video = 22;
+  optional string published_text = 23;
+}
+
+// PostCounts are a community post's counts.
+message PostCounts {
+  google.protobuf.Timestamp taken_at = 1;
+  optional int64 likes_min = 2;
+  optional string likes_text = 3;
+  optional int64 comments_min = 4;
+  optional string comments_text = 5;
+}
+
+// PostMetrics is a community post's counts at a read (topic
+// yt.post_metrics.v1).
+message PostMetrics {
+  Event event = 1;
+  PostCounts counts = 2;
+  PostCounts observed = 3;
+  string channel_id = 4;
+}
+
+// AuthorBadges are a commenter's badges as a comment showed them.
+message AuthorBadges {
+  bool verified = 1;
+  // "Member (2 years)".
+  string member = 2;
+}
+
+// Comment is a comment or reply (topic yt.comment.v1; key the post ID).
+// Its counts alone go to content.metrics.v1.
+message Comment {
+  Event event = 1;
+  string id = 2;
+  // video or post.
+  string parent_kind = 3;
+  string parent_id = 4;
+  string channel_id = 5;
+  // The thread a reply belongs to; unset for a top-level comment.
+  optional string thread_id = 6;
+  optional string author_id = 7;
+  optional string author_handle = 8;
+  optional string author_name = 9;
+  optional string author_avatar_url = 10;
+  optional bool author_is_creator = 11;
+  AuthorBadges author_badges = 12;
+  string text = 13;
+  google.protobuf.Timestamp published_at = 14;
+  optional int32 published_precision_s = 15;
+  optional int64 likes_min = 16;
+  optional string likes_text = 17;
+  optional int32 reply_count = 18;
+  optional bool pinned = 19;
+  optional bool hearted = 20;
+  optional bool edited = 21;
+  // The text's version: 1, then one more for each edit seen.
+  optional int32 version = 22;
+  google.protobuf.Timestamp first_seen = 23;
+  google.protobuf.Timestamp last_seen = 24;
+  optional int32 missed_sweeps = 25;
+  // Absent from two complete re-reads; the text is kept.
+  google.protobuf.Timestamp deleted_at = 26;
+  optional string source = 27;
+}
+
+// PlaylistItem is a video in a playlist, removed ones kept.
+message PlaylistItem {
+  string video_id = 1;
+  // From 1.
+  optional int32 position = 2;
+  google.protobuf.Timestamp first_seen = 3;
+  google.protobuf.Timestamp last_seen = 4;
+  google.protobuf.Timestamp removed_at = 5;
+}
+
+// Playlist is a channel's playlist with its videos (topic yt.playlist.v1).
+message Playlist {
+  Event event = 1;
+  string id = 2;
+  string channel_id = 3;
+  optional string title = 4;
+  optional string description = 5;
+  optional int32 video_count = 6;
+  optional bool relevant = 7;
+  google.protobuf.Timestamp first_seen = 8;
+  google.protobuf.Timestamp last_checked = 9;
+  google.protobuf.Timestamp removed_at = 10;
+  repeated PlaylistItem items = 11;
+}
+
+// Profile is a commenter's channel page as enrichment read it.
+message Profile {
+  google.protobuf.Timestamp fetched_at = 1;
+  optional string handle = 2;
+  optional string display_name = 3;
+  optional string description = 4;
+  optional string country = 5;
+  optional string joined_at = 6;
+  repeated Link links = 7;
+  optional int64 subscribers_min = 8;
+  optional int64 videos_min = 9;
+  optional string avatar_url = 10;
+  optional string banner_url = 11;
+}
+
+// AuthorProfile is a commenter (topic yt.author_profile.v1; key the
+// account ID).
+message AuthorProfile {
+  Event event = 1;
+  string id = 2;
+  optional string handle = 3;
+  optional string display_name = 4;
+  optional string avatar_url = 5;
+  google.protobuf.Timestamp first_seen = 6;
+  google.protobuf.Timestamp last_seen = 7;
+  optional int64 comments_seen = 8;
+  optional int64 relevant_comments = 9;
+  google.protobuf.Timestamp enriched_at = 10;
+  // The latest profile read, once enriched.
+  Profile profile = 11;
+  // Also a listed channel (its yt.channel events describe it).
+  bool monitored = 12;
+}

@@ -1,0 +1,12 @@
+# The yt.* platform events (REQ-010 fix 12). "buf generate" writes the Go
+# code to gen/go (committed); CI checks it is current and runs
+# "buf breaking" against main.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

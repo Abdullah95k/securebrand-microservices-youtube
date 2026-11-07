@@ -141,6 +141,10 @@ relay:
   enabled: false
   batch: 500              # events per Kafka transaction
   canary: false           # the contract's canary checks (D-012) while the canary runs
+  # Each batch in one Kafka transaction. false: idempotent sends without
+  # transactions, for a Kafka whose access rules can't grant the
+  # transactional ID "yts-relay" (delivery stays at least once).
+  transactions: true
   opsPort: 9103           # /metrics, /healthz and /readyz (the database and Kafka)
   # The media hand-off (contract R5), with object storage on: thumbnails are
   # announced to analysis and deleted once acknowledged, or at the deadline.

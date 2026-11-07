@@ -44,6 +44,7 @@ spec:
             {{- if .Values.relay.canary }}
             - -canary
             {{- end }}
+            - -transactions={{ .Values.relay.transactions }}
             - -media-handoff={{ .Values.relay.media.handoff }}
             - -media-keep={{ .Values.relay.media.keep }}
             - -media-group={{ .Values.relay.media.group }}

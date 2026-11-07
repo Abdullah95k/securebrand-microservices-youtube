@@ -689,7 +689,7 @@ The files stay as they are (JSON lines, readable with any tool), next to the pro
 Every change yts stores also goes into an outbox table, in the same save (REQ-010 fix 12). The relay (`ytcollect relay`, its own
 service on the cluster) sends the outbox to the platform's Kafka: each event as the contract's message (`content.*`, checked first)
 and as yts's own (`yt.*`), in one Kafka transaction per batch. Sent events are deleted after 7 days; unsent ones stay until sent.
-Until the relay runs (the pilot has no Kafka), events wait in the outbox.
+While the relay is off or Kafka is down, events wait in the outbox and go when it is back.
 
 What is waiting, by kind:
 
@@ -715,6 +715,15 @@ the relay looks for new events less often, from every second up to every 30 seco
 or data the contract can't express), or Kafka can't take them (too large). `ytcollect outbox check` shows each with its reason.
 After the fix is deployed, the relay's restart tries them again.
 
+**Without Kafka transactions.** The relay uses the transactional ID `yts-relay`. If Kafka's access rules can't grant it (the
+relay's log then says "beginning a transaction" or "committing" failed, with an authorization error such as
+`TRANSACTIONAL_ID_AUTHORIZATION_FAILED`), set `relay.transactions: false` in the chart (the flag `-transactions=false`). The relay
+then sends each batch without a transaction; the producer stays idempotent, so a retry inside Kafka doesn't write a message twice.
+What changes: when part of a batch fails, the events up to the first failure are marked sent and the rest go again, so a consumer
+may see a message twice (with the same event ID, which it drops) but never an older message after a newer one for the same post.
+`yt_relay_transactions_total` stays at zero in this mode; `yt_relay_published_total` and the `OutboxBacklog` alert work as before.
+The start-up log line "relay starting" says `transactions=false`.
+
 ## 17. The media hand-off
 
 yts downloads video thumbnails (and keeps channel avatars, banners and commenters' avatars). The contract's rule for media
@@ -728,8 +737,8 @@ Kafka are both there:
 3. Every 10 minutes it deletes each file that analysis has acknowledged (processed, skipped, or failed for good), and each file
    whose deadline has passed, and says so on `content.media.deleted.v1`.
 
-The record of every image (its row, and `content.media.v1`) stays forever; only the file goes. Without Kafka (the pilot) nothing
-is announced and nothing is deleted. Avatars and banners are never handed off: they stay as before.
+The record of every image (its row, and `content.media.v1`) stays forever; only the file goes. With the hand-off off
+(`relay.media.handoff: false`, or without Kafka) nothing is announced and nothing is deleted. Avatars and banners are never handed off: they stay as before.
 
 What the relay has done, by kind and state (`stored`, `announced`, `deleted_processed`, `deleted_expired`), is the metric
 `yt_media_handoff`. Files deleted without analysis (`deleted_expired`) mean analysis did not answer within the deadline.

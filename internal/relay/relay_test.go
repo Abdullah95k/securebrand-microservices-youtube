@@ -373,3 +373,143 @@ func TestOneRelayAtATime(t *testing.T) {
 		t.Errorf("the lease is still held by %s after both stopped", holder)
 	}
 }
+
+// Without transactions (a Kafka that can't grant the transactional ID):
+// what Kafka takes is sent and marked at once, an event Kafka can't take
+// is set aside, and readers see the records without a commit.
+func TestWithoutTransactions(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	for _, sql := range []string{
+		`INSERT INTO videos (id, channel_id, kind, title, live_status, published_at, published_precision_s)
+			VALUES ('fakeNTv1', 'UCfakeNOTX00000000000001', 'video', 'fine', 'none', '2026-11-07 08:00:00+00', 0)`,
+		`INSERT INTO videos (id, channel_id, kind, title, description, live_status, published_at, published_precision_s)
+			VALUES ('fakeNTv2', 'UCfakeNOTX00000000000001', 'video', 'huge', repeat('x', 1500000), 'none', '2026-11-07 08:00:00+00', 0)`,
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ev := outbox.New(ctx, time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC))
+	for _, id := range []string{"fakeNTv1", "fakeNTv2"} {
+		if _, err := ev.Content(ctx, pool, outbox.Videos, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := kfake.NewCluster(kfake.NumBrokers(1), kfake.SeedTopics(6, relay.Topics()...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	opts, err := relay.Config{Brokers: c.ListenAddrs()}.ProducerOptions(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl, err := kgo.NewClient(opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	r := newRelay(pool, cl, nil)
+	r.NoTransactions = true
+	res, err := r.Once(ctx)
+	if err == nil || res.Sent != 1 || res.Refused != 1 || res.Messages != 2 {
+		t.Fatalf("first batch: %+v, err %v; want the fine video sent and the oversized one set aside", res, err)
+	}
+	if sent, _, _ := drain(t, r); sent != 0 {
+		t.Errorf("sent %d more; the fine video went in the first batch", sent)
+	}
+	var unsent int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM event_outbox WHERE published_at IS NULL AND failure IS NULL`).Scan(&unsent)
+	if unsent != 0 {
+		t.Errorf("%d events neither sent nor set aside", unsent)
+	}
+	recs := consume(t, c, 2)
+	if len(recs) != 2 {
+		t.Fatalf("read %d records, want the fine video's two", len(recs))
+	}
+	for _, rec := range recs {
+		if header(rec, "sb-type") == "" || (!strings.HasPrefix(rec.Topic, "yt.") && header(rec, "sb-contract") != "1.2.0") {
+			t.Errorf("%s record headers %v", rec.Topic, rec.Headers)
+		}
+	}
+}
+
+// flaky is a producer without transactions whose records for one key fail
+// once, as a broker error that may pass would.
+type flaky struct {
+	mu        sync.Mutex
+	failKey   string
+	failed    bool
+	delivered []string
+	txns      int
+}
+
+func (f *flaky) BeginTransaction() error { f.txns++; return nil }
+func (f *flaky) EndTransaction(context.Context, kgo.TransactionEndTry) error {
+	f.txns++
+	return nil
+}
+func (f *flaky) Flush(context.Context) error { return nil }
+func (f *flaky) Produce(_ context.Context, rec *kgo.Record, promise func(*kgo.Record, error)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.failed && strings.Contains(string(rec.Key), f.failKey) {
+		promise(rec, fmt.Errorf("broker not available"))
+		return
+	}
+	f.delivered = append(f.delivered, rec.Topic+" "+string(rec.Key))
+	promise(rec, nil)
+}
+
+// Without transactions, a batch is marked sent only up to the first event
+// that failed for a reason that may pass: the events after it go again, so
+// none of them stays ahead of the earlier one when it is resent.
+func TestWithoutTransactionsKeepsOrder(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	ids := []string{"fakeNTo1", "fakeNTo2", "fakeNTo3"}
+	for _, id := range ids {
+		if _, err := pool.Exec(ctx, `INSERT INTO videos (id, channel_id, kind, title, live_status, published_at, published_precision_s)
+			VALUES ($1, 'UCfakeNOTX00000000000002', 'video', 'fine', 'none', '2026-11-07 08:00:00+00', 0)`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ev := outbox.New(ctx, time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC))
+	for _, id := range ids {
+		if _, err := ev.Content(ctx, pool, outbox.Videos, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &flaky{failKey: "fakeNTo2"}
+	r := newRelay(pool, p, nil)
+	r.NoTransactions = true
+	res, err := r.Once(ctx)
+	if err == nil || res.Sent != 1 || res.Refused != 0 {
+		t.Fatalf("first batch: %+v, err %v; want only the first video marked sent", res, err)
+	}
+	var unsent int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM event_outbox WHERE published_at IS NULL AND failure IS NULL`).Scan(&unsent)
+	if unsent != 2 {
+		t.Fatalf("%d events left to send, want the failed one and the one after it", unsent)
+	}
+	p.failed = true
+	if sent, _, _ := drain(t, r); sent != 2 {
+		t.Errorf("resent %d events, want 2", sent)
+	}
+	if p.txns != 0 {
+		t.Errorf("%d transaction calls without transactions", p.txns)
+	}
+	// The third video went twice, the second time after the second video.
+	last := map[string]int{}
+	for i, d := range p.delivered {
+		for _, id := range ids {
+			if strings.Contains(d, id) {
+				last[id] = i
+			}
+		}
+	}
+	if !(last["fakeNTo1"] < last["fakeNTo2"] && last["fakeNTo2"] < last["fakeNTo3"]) {
+		t.Errorf("last deliveries out of order: %v", p.delivered)
+	}
+}

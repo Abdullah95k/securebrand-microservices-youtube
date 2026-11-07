@@ -20,7 +20,7 @@ The current state of the YouTube collector, for the owner and the master session
     ([#60](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/60)): every write adds its events in the same
     transaction as the data; no Kafka yet. **PR 2, the contract mapping, is merged** ([#61](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/61)): every event becomes a contract v1.2.0
     message checked by the contract's conformance package; `ytcollect outbox check` runs the checks on real events. **PR 3,
-    the `yt.*` messages, is in review:** the platform events with every field yts holds, generated with buf, checked in CI.
+    the `yt.*` messages, is in review** ([#62](https://github.com/Abdullah95k/securebrand-microservices-youtube/pull/62)): the platform events with every field yts holds, generated with buf, checked in CI.
   - **Next:** the pilot (fix 11) when the platform is ready (below). Until the relay runs, events wait in the outbox (roughly
     100 MB a day at 1,000 channels).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.

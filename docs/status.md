@@ -24,7 +24,9 @@ The current state of the YouTube collector, for the owner and the master session
   backfill. The 46 Iraq place names are loaded, and the owner's 329 channels were imported at 18:52. An hour later, 374 channels
   were listed (45 more found by discovery), 5 of the owner's inputs were unresolved, and no jobs were failing or dead. The first
   day goes to the new videos and their comments (the top priorities); the rest drains after. The report covers 18:29 on
-  7 November to 18:29 on 9 November; `docs/master/yts-pilot-report.md` follows once the master sends the report output.
+  7 November to 18:29 on 9 November: [`master/yts-pilot-report.md`](master/yts-pilot-report.md). In short: it works, comment
+  sections were complete and YouTube barely pushed back, but the 10 IPs were full. The list grew to 2,646 channels, which need
+  at least 19 IPs; the lowest-priority work (backfill, enrichment, images) never got a turn.
 - **Deployed to production (7 November, the master):** on the platform's cluster through Argo CD, at `9a4700d`, then pinned to
   `145e68c` (no overrides left but the image and the worker count). The migrations ran (PreSync hook) and the scheduler is
   running and ready. The worker was held at 0 until the pilot (above) started, on igs's shared IPs until yts's own are bought.

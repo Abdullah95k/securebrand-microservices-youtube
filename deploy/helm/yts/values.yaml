@@ -150,10 +150,13 @@ relay:
   # transactional ID "yts-relay" (delivery stays at least once).
   transactions: true
   opsPort: 9103           # /metrics, /healthz and /readyz (the database and Kafka)
-  # The media hand-off (contract R5), with object storage on: thumbnails are
+  # The media hand-off (contract R5), with object storage on: images are
   # announced to analysis and deleted once acknowledged, or at the deadline.
   media:
     handoff: true
+    # The images handed off: thumb, avatar, banner, author_avatar (a
+    # commenter's avatar). Those not listed are kept.
+    kinds: [thumb, avatar, banner]
     keep: 72h             # an announced image's deadline (at least 24h)
     group: yts-media      # the Kafka consumer group reading the acknowledgements
     consumers: [sb-analysis]

@@ -238,9 +238,33 @@ func (s *Service) fetch(ctx context.Context, j queue.Job) (time.Time, error) {
 }
 
 // HandoffKinds are the images announced to analysis and deleted once it is
-// done (the owner: thumbnails and community-post images, kept until
-// analysed; post images come with fix 21). Avatars and banners are kept.
-var HandoffKinds = []string{Thumb}
+// done, by default (the owner: thumbnails, kept until analysed; on 11
+// November, channel avatars and banners too; post images come with fix 21).
+// Commenters' avatars are kept unless listed (the relay's -media-kinds).
+var HandoffKinds = []string{Thumb, Avatar, Banner}
+
+// ParseKinds reads a comma-separated list of image kinds to hand off.
+func ParseKinds(s string) ([]string, error) {
+	var kinds []string
+	seen := map[string]bool{}
+	for _, k := range strings.Split(s, ",") {
+		k = strings.TrimSpace(k)
+		if k == "" || seen[k] {
+			continue
+		}
+		switch k {
+		case Thumb, Avatar, Banner, AuthorAvatar:
+		default:
+			return nil, fmt.Errorf("media: %q is not an image kind (%s, %s, %s or %s)", k, Thumb, Avatar, Banner, AuthorAvatar)
+		}
+		seen[k] = true
+		kinds = append(kinds, k)
+	}
+	if len(kinds) == 0 {
+		return nil, fmt.Errorf("media: no image kind to hand off in %q", s)
+	}
+	return kinds, nil
+}
 
 // Location is where a store keeps objects, for the hand-off's messages:
 // the bucket, and the prefix in front of every key.

@@ -67,8 +67,15 @@ type Config struct {
 	Cooldowns   []time.Duration // after the 1st, 2nd, 3rd, 4th+ block (default 30m, 2h, 12h, 24h)
 	StrikeReset time.Duration   // clean time after a cooldown ends that resets the strike count (default 24h)
 
-	QuarantineDays   int           // distinct days with blocks that quarantine an IP (default 3)
-	QuarantineWindow time.Duration // window for counting those days (default 7 days)
+	// Quarantine: an IP is set aside after QuarantineDays bad days in a row
+	// (UTC days), a bad day being one with at least QuarantineBlocks blocks
+	// on page requests. Blocks of the QuarantineIgnore classes never count:
+	// nil means the player's (blocked often by design, as for the brake);
+	// an empty, non-nil slice counts every class.
+	QuarantineBlocks int           // page blocks that make a bad day (default 3)
+	QuarantineDays   int           // bad days in a row (default 3)
+	QuarantineIgnore []Class       // classes whose blocks never count (default: the player)
+	QuarantineWindow time.Duration // days older than this are forgotten (default 7 days)
 
 	SubnetThreshold int           // IPs of one subnet cooling for a class that cool the subnet (default 3)
 	SubnetCooldown  time.Duration // default 2h
@@ -113,6 +120,7 @@ func DefaultConfig() Config {
 		Jitter:             0.3,
 		Cooldowns:          []time.Duration{30 * time.Minute, 2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
 		StrikeReset:        24 * time.Hour,
+		QuarantineBlocks:   3,
 		QuarantineDays:     3,
 		QuarantineWindow:   7 * 24 * time.Hour,
 		SubnetThreshold:    3,
@@ -156,6 +164,12 @@ func (c Config) withDefaults() Config {
 	setDur(&c.StrikeReset, d.StrikeReset)
 	if c.QuarantineDays == 0 {
 		c.QuarantineDays = d.QuarantineDays
+	}
+	if c.QuarantineBlocks == 0 {
+		c.QuarantineBlocks = d.QuarantineBlocks
+	}
+	if c.QuarantineIgnore == nil {
+		c.QuarantineIgnore = []Class{ClassPlayer}
 	}
 	setDur(&c.QuarantineWindow, d.QuarantineWindow)
 	if c.SubnetThreshold == 0 {
@@ -227,8 +241,9 @@ type proxyState struct {
 	inFlight      bool
 	classes       map[Class]*classState
 	proxyErrUntil time.Time
-	blockDays     map[string]time.Time // "2006-01-02" → last block that day
+	blockDays     map[string]int // "2006-01-02" (UTC) → page blocks that day
 	quarantined   bool
+	quarantinedAt time.Time
 
 	requests, blocks, proxyErrors int64
 }
@@ -284,7 +299,7 @@ func New(proxies []*Proxy, cfg Config, seed int64) *Pool {
 		speed:          1,
 	}
 	for _, px := range proxies {
-		st := &proxyState{p: px, classes: map[Class]*classState{}, blockDays: map[string]time.Time{}}
+		st := &proxyState{p: px, classes: map[Class]*classState{}, blockDays: map[string]int{}}
 		p.states = append(p.states, st)
 		p.byID[px.id] = st
 	}
@@ -462,15 +477,8 @@ func (p *Pool) releaseAt(now time.Time, st *proxyState, c Class, o Outcome) {
 		cs.blocks++
 		st.blocks++
 
-		// Quarantine after blocks on several distinct days.
-		st.blockDays[now.UTC().Format("2006-01-02")] = now
-		for day, at := range st.blockDays {
-			if now.Sub(at) > p.cfg.QuarantineWindow {
-				delete(st.blockDays, day)
-			}
-		}
-		if len(st.blockDays) >= p.cfg.QuarantineDays {
-			st.quarantined = true
+		if !p.quarantineIgnores(c) {
+			p.countBlockLocked(now, st)
 		}
 
 		p.coolSubnetLocked(now, st.p.subnet, c)
@@ -652,8 +660,66 @@ func (p *Pool) Unquarantine(id string) bool {
 		return false
 	}
 	st.quarantined = false
-	st.blockDays = map[string]time.Time{}
+	st.quarantinedAt = time.Time{}
+	st.blockDays = map[string]int{}
 	return true
+}
+
+// Quarantine sets a proxy aside from since (restoring a quarantine saved
+// before a restart). It reports whether the pool has that proxy.
+func (p *Pool) Quarantine(id string, since time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st, ok := p.byID[id]
+	if !ok {
+		return false
+	}
+	st.quarantined, st.quarantinedAt = true, since
+	return true
+}
+
+// Usable reports whether any proxy is out of quarantine (a cooling one
+// comes back by itself).
+func (p *Pool) Usable() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, st := range p.states {
+		if !st.quarantined {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Pool) quarantineIgnores(c Class) bool {
+	for _, x := range p.cfg.QuarantineIgnore {
+		if x == c {
+			return true
+		}
+	}
+	return false
+}
+
+// countBlockLocked counts a page block towards the day's total and
+// quarantines the IP after QuarantineDays bad days in a row, today
+// included. Caller holds p.mu.
+func (p *Pool) countBlockLocked(now time.Time, st *proxyState) {
+	const layout = "2006-01-02"
+	today := now.UTC()
+	st.blockDays[today.Format(layout)]++
+	for day := range st.blockDays {
+		if d, err := time.Parse(layout, day); err != nil || today.Sub(d) > p.cfg.QuarantineWindow {
+			delete(st.blockDays, day)
+		}
+	}
+	for i := 0; i < p.cfg.QuarantineDays; i++ {
+		if st.blockDays[today.AddDate(0, 0, -i).Format(layout)] < p.cfg.QuarantineBlocks {
+			return
+		}
+	}
+	if !st.quarantined {
+		st.quarantined, st.quarantinedAt = true, now
+	}
 }
 
 // ProxyStats describes one proxy, without any address or credential.
@@ -667,7 +733,9 @@ type ProxyStats struct {
 	// Bytes the proxy carried (compressed, on the wire).
 	Bytes       int64
 	Quarantined bool
-	CoolUntil   map[Class]time.Time // only classes still cooling
+	// QuarantinedSince is when the IP went into quarantine (zero if not).
+	QuarantinedSince time.Time
+	CoolUntil        map[Class]time.Time // only classes still cooling
 	// BlocksByClass splits Blocks by endpoint class (browse, player…).
 	BlocksByClass map[Class]int64
 }
@@ -715,7 +783,7 @@ func (p *Pool) Stats() Stats {
 		ps := ProxyStats{
 			ID: st.p.id, Kind: st.p.kind, Subnet: st.p.subnet,
 			Requests: st.requests, Blocks: st.blocks, ProxyErrors: st.proxyErrors, Bytes: st.p.Bytes(),
-			Quarantined: st.quarantined, CoolUntil: map[Class]time.Time{}, BlocksByClass: map[Class]int64{},
+			Quarantined: st.quarantined, QuarantinedSince: st.quarantinedAt, CoolUntil: map[Class]time.Time{}, BlocksByClass: map[Class]int64{},
 		}
 		for c, cs := range st.classes {
 			until := maxTime(cs.coolUntil, p.subnetCool[st.p.subnet][c])

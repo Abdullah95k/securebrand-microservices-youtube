@@ -154,3 +154,79 @@ func TestPoolMetricsAndProxyHealth(t *testing.T) {
 		}
 	}
 }
+
+// A quarantine is saved with the pool's health, restored by the next
+// worker, and lifted by a release (ytcollect proxies release). A
+// quarantine saved by the old rule, without quarantined_since, is never
+// restored; an IP quarantined again after a release is.
+func TestQuarantineSurvivesRestartAndRelease(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	ps, err := proxypool.ParseList([]string{"http://192.0.2.10:8080", "http://198.51.100.10:8080"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := ps[0].ID(), ps[1].ID()
+	newPool := func() *proxypool.Pool { return proxypool.New(ps, proxypool.Config{}, 1) }
+	save := func(pp *proxypool.Pool) {
+		t.Helper()
+		if err := monitor.Pool(ctx, pool, metrics.New(), "w1", pp.Stats(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	quarantined := func(pp *proxypool.Pool) map[string]time.Time {
+		out := map[string]time.Time{}
+		for _, p := range pp.Stats().Proxies {
+			if p.Quarantined {
+				out[p.ID] = p.QuarantinedSince
+			}
+		}
+		return out
+	}
+	since := time.Now().Add(-time.Hour).Truncate(time.Microsecond)
+	pp := newPool()
+	pp.Quarantine(a, since)
+	save(pp)
+	// b as the old rule left it: quarantined, with no time.
+	if _, err := pool.Exec(ctx, `UPDATE proxy_health SET state = 'quarantined' WHERE proxy_key = $1`, b); err != nil {
+		t.Fatal(err)
+	}
+
+	pp = newPool() // a restart
+	if n, err := monitor.RestoreQuarantine(ctx, pool, pp); err != nil || n != 1 {
+		t.Fatalf("restored %d (%v); want a only", n, err)
+	}
+	if q := quarantined(pp); len(q) != 1 || !q[a].Equal(since) {
+		t.Fatalf("quarantined after the restart: %v", q)
+	}
+	save(pp)
+	if released, err := monitor.ApplyReleases(ctx, pool, pp); err != nil || len(released) != 0 {
+		t.Fatalf("released %v (%v) before any release", released, err)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE proxy_health SET released_at = now() WHERE proxy_key = $1`, a); err != nil {
+		t.Fatal(err)
+	}
+	if released, err := monitor.ApplyReleases(ctx, pool, pp); err != nil || len(released) != 1 || released[0] != a {
+		t.Fatalf("released %v (%v); want a", released, err)
+	}
+	if q := quarantined(pp); len(q) != 0 {
+		t.Fatalf("still quarantined: %v", q)
+	}
+	save(pp)
+	var n int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM proxy_health WHERE quarantined_since IS NOT NULL`).Scan(&n)
+	if n != 0 {
+		t.Errorf("%d rows still marked quarantined after the release", n)
+	}
+	if n, _ := monitor.RestoreQuarantine(ctx, pool, newPool()); n != 0 {
+		t.Errorf("restored %d after the release", n)
+	}
+
+	// Quarantined again, later: that one is restored.
+	pp.Quarantine(a, time.Now().Add(time.Minute))
+	save(pp)
+	if n, _ := monitor.RestoreQuarantine(ctx, pool, newPool()); n != 1 {
+		t.Errorf("restored %d; a was quarantined again after its release", n)
+	}
+}

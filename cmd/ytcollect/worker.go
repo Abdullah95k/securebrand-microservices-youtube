@@ -229,13 +229,17 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	}()
 	health := &ops.Health{}
 	health.Add("database", pool.Ping)
+	if n, err := monitor.RestoreQuarantine(ctx, pool, pp); err != nil {
+		return fmt.Errorf("restoring proxy quarantines: %w", err)
+	} else if n > 0 {
+		log.Warn("proxy IPs still in quarantine from before the restart", "ips", n,
+			"release", "ytcollect proxies release")
+	}
 	health.Add("proxies", func(context.Context) error {
-		for _, p := range pp.Stats().Proxies {
-			if !p.Quarantined {
-				return nil
-			}
+		if !pp.Usable() {
+			return errors.New("every proxy is quarantined")
 		}
-		return errors.New("every proxy is quarantined")
+		return nil
 	})
 	serveOps(ctx, *metricsAddr, reg, health, log)
 	// Every minute: fill rates and proxy health; every 15 minutes: canaries;
@@ -263,6 +267,11 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 				if err := rec.Flush(ctx, pool, time.Now()); err != nil && ctx.Err() == nil {
 					log.Warn("saving fill rates failed", "err", err)
 				}
+				if released, err := monitor.ApplyReleases(ctx, pool, pp); err != nil && ctx.Err() == nil {
+					log.Warn("reading proxy releases failed", "err", err)
+				} else if len(released) > 0 {
+					log.Info("proxy IPs released from quarantine", "ips", released)
+				}
 				if err := monitor.Pool(ctx, pool, reg, owner, pp.Stats(), time.Now()); err != nil && ctx.Err() == nil {
 					log.Warn("saving proxy health failed", "err", err)
 				}
@@ -274,7 +283,15 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 		}
 	}()
 	w := &worker.Worker{Pool: pool, Owner: owner, Handlers: handlers, OnResult: monitor.Jobs(reg), OnDead: monitor.Dead(reg),
-		Concurrency: *workers, Lease: 15 * time.Minute, Drain: *drain, Log: log}
+		Concurrency: *workers, Lease: 15 * time.Minute, Drain: *drain, Log: log,
+		// With every IP quarantined, jobs wait in the queue instead of
+		// failing (they would be pushed back by up to 6 hours each time).
+		Paused: func() string {
+			if !pp.Usable() {
+				return "every proxy IP is quarantined (ytcollect proxies)"
+			}
+			return ""
+		}}
 	log.Info("worker running", "proxies", len(proxies), "interval", interval.String(), "workers", *workers, "push", wsCfg.Enabled(),
 		"raw_responses", raw != nil)
 	return w.Run(ctx)

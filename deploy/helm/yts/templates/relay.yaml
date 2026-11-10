@@ -46,6 +46,7 @@ spec:
             {{- end }}
             - -transactions={{ .Values.relay.transactions }}
             - -media-handoff={{ .Values.relay.media.handoff }}
+            - -media-kinds={{ join "," .Values.relay.media.kinds }}
             - -media-keep={{ .Values.relay.media.keep }}
             - -media-group={{ .Values.relay.media.group }}
             - -media-consumers={{ join "," .Values.relay.media.consumers }}

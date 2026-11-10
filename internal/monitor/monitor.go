@@ -123,6 +123,8 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 			AND updated_at >= now() - interval '10 minutes'`, nil, nil},
 		{"yt_proxies_cooling", "Proxy IPs resting after a block (all workers).", `SELECT count(*) FROM proxy_health WHERE cooldown_until > now()
 			AND updated_at >= now() - interval '10 minutes'`, nil, nil},
+		{"yt_proxies_reporting", "Proxy IPs whose worker saved their health in the last 10 minutes (all workers).",
+			`SELECT count(*) FROM proxy_health WHERE updated_at >= now() - interval '10 minutes'`, nil, nil},
 	}
 	for _, g := range gauges {
 		if err := setFromQuery(ctx, pool, reg, g); err != nil {
@@ -253,16 +255,78 @@ func Pool(ctx context.Context, q db.Querier, reg *metrics.Registry, owner string
 			q01 = 1
 		}
 		reg.Set("yt_proxy_quarantined", "1 when the IP is in quarantine.", l, q01)
-		if _, err := q.Exec(ctx, `INSERT INTO proxy_health (proxy_key, label, subnet, proxy_kind, state, cooldown_until, requests_24h, blocks_24h, updated_at)
-			VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)
+		var since *time.Time
+		if p.Quarantined && !p.QuarantinedSince.IsZero() {
+			since = &p.QuarantinedSince
+		}
+		if _, err := q.Exec(ctx, `INSERT INTO proxy_health (proxy_key, label, subnet, proxy_kind, state, cooldown_until, requests_24h, blocks_24h, updated_at, quarantined_since)
+			VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
 			ON CONFLICT (proxy_key) DO UPDATE SET subnet = EXCLUDED.subnet, proxy_kind = EXCLUDED.proxy_kind, state = EXCLUDED.state,
 				cooldown_until = EXCLUDED.cooldown_until, requests_24h = EXCLUDED.requests_24h, blocks_24h = EXCLUDED.blocks_24h,
-				updated_at = EXCLUDED.updated_at`,
-			p.ID, p.Subnet, string(p.Kind), state, cool, p.Requests, p.Blocks, now); err != nil {
+				updated_at = EXCLUDED.updated_at, quarantined_since = EXCLUDED.quarantined_since`,
+			p.ID, p.Subnet, string(p.Kind), state, cool, p.Requests, p.Blocks, now, since); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// RestoreQuarantine sets aside again, at a worker's start, the IPs of its
+// pool that were quarantined before (and not released since). It returns
+// how many it restored.
+func RestoreQuarantine(ctx context.Context, q db.Querier, pp *proxypool.Pool) (int, error) {
+	rows, err := q.Query(ctx, `SELECT proxy_key, quarantined_since FROM proxy_health
+		WHERE quarantined_since IS NOT NULL AND (released_at IS NULL OR released_at < quarantined_since)`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var key string
+		var since time.Time
+		if err := rows.Scan(&key, &since); err != nil {
+			return n, err
+		}
+		if pp.Quarantine(key, since) {
+			n++
+		}
+	}
+	return n, rows.Err()
+}
+
+// ApplyReleases takes out of quarantine the IPs of the pool released with
+// "ytcollect proxies release" since they went in. It returns their IDs.
+func ApplyReleases(ctx context.Context, q db.Querier, pp *proxypool.Pool) ([]string, error) {
+	rows, err := q.Query(ctx, `SELECT proxy_key FROM proxy_health
+		WHERE quarantined_since IS NOT NULL AND released_at IS NOT NULL AND released_at >= quarantined_since`)
+	if err != nil {
+		return nil, err
+	}
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	quarantined := map[string]bool{}
+	for _, p := range pp.Stats().Proxies {
+		quarantined[p.ID] = p.Quarantined
+	}
+	var released []string
+	for _, key := range keys {
+		if quarantined[key] && pp.Unquarantine(key) {
+			released = append(released, key)
+		}
+	}
+	return released, nil
 }
 
 // Healthy reports whether a proxy can serve page requests now: not

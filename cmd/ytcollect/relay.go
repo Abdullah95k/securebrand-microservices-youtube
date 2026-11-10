@@ -43,6 +43,7 @@ func relayCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []
 	mediaKeep := fs.Duration("media-keep", handoff.DefaultKeep, "an announced image's deadline: deleted then even without every acknowledgement (at least 24h)")
 	mediaGroup := fs.String("media-group", "yts-media", "the Kafka consumer group that reads the acknowledgements")
 	mediaConsumers := fs.String("media-consumers", strings.Join(contract.DefaultConsumers, ","), "the consumers that must acknowledge each image, comma-separated")
+	mediaKinds := fs.String("media-kinds", strings.Join(media.HandoffKinds, ","), "the images handed off and deleted once analysed, comma-separated: thumb, avatar, banner, author_avatar")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -51,6 +52,10 @@ func relayCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []
 	}
 	if *mediaKeep < handoff.MinKeep {
 		return fmt.Errorf("-media-keep must be at least %s (the contract), not %s", handoff.MinKeep, *mediaKeep)
+	}
+	kinds, err := media.ParseKinds(*mediaKinds)
+	if err != nil {
+		return err
 	}
 	var consumers []string
 	for _, c := range strings.Split(*mediaConsumers, ",") {
@@ -108,7 +113,7 @@ func relayCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []
 	}
 	if store != nil {
 		mapper.MediaBucket, mapper.MediaPrefix = media.Location(store)
-		h := &handoff.Handoff{Pool: pool, Store: store, Kinds: media.HandoffKinds, Consumers: consumers, Keep: *mediaKeep,
+		h := &handoff.Handoff{Pool: pool, Store: store, Kinds: kinds, Consumers: consumers, Keep: *mediaKeep,
 			Log: log, Metrics: reg}
 		copts, err := cfg.ConsumerOptions(*mediaGroup, handoff.TopicProcessed)
 		if err != nil {
@@ -116,7 +121,7 @@ func relayCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []
 		}
 		// Only the relay holding the lease hands images off.
 		r.Lead = func(ctx context.Context) { h.Run(ctx, func() (*kgo.Client, error) { return kgo.NewClient(copts...) }) }
-		log.Info("media hand-off on", "kinds", media.HandoffKinds, "consumers", consumers, "keep", *mediaKeep, "group", *mediaGroup)
+		log.Info("media hand-off on", "kinds", kinds, "consumers", consumers, "keep", *mediaKeep, "group", *mediaGroup)
 	}
 
 	log.Info("relay starting", "brokers", len(cfg.Brokers), "tls", cfg.TLS, "batch", *batch, "canary", *canary, "transactions", *transactions)

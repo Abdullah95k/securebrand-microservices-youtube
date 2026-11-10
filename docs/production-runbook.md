@@ -356,9 +356,11 @@ the schedule asks for:
 - **What the IPs can do:** each IP makes a request every gap plus about 0.7 s for the answer: about 1,333 an hour at 2 s. That is
   counted at 70% busy, which leaves 30% for retries, rests and the lowest-priority work (backfill, commenter enrichment, images).
 - **What the schedule asks for,** from what each kind of job really cost in the last day. It comes in two parts:
-  - work that is never slowed: new uploads, the feeds and tab checks of every channel, tiers A and B, backfill, discovery,
-    enrichment and images;
+  - work that is never slowed: new uploads, the feeds and tab checks of every channel, tiers A and B, backfill and discovery;
   - refreshes that can be: tiers C, D and M's channel snapshots, posts, playlists, video stats and comment scans.
+
+  Images and commenter enrichment, the lowest priority, are left out: they run in whatever time is left and never slow a
+  refresh (the log's `spare_time_per_hour`).
 
 When that is more than the IPs can do, the planner refreshes C, D and M less often (the "stretch", at most 8 times), by up to 1.5
 times per hour. New uploads are found as soon as before: the feeds and tab checks are never slowed. The scheduler's log line
@@ -373,6 +375,30 @@ scheduler:
 
 When the stretch sits at 8 and `yt_freshness_debt_hours` still grows, the work that is never slowed fills the IPs alone: add IPs, or
 find fewer channels.
+
+**Quarantined IPs.** An IP blocked on page requests at least 3 times in a day (UTC), 3 days in a row, is quarantined: no job
+uses it. Player blocks never count; the player is blocked often by design. A quarantine outlives a restart. See them:
+
+```bash
+ytcollect proxies
+```
+
+Release one once its provider has replaced it, or once you are sure the blocks have passed (the worker picks it up within a
+minute):
+
+```bash
+ytcollect proxies release px-0a1b2c
+```
+
+Or every quarantined IP:
+
+```bash
+ytcollect proxies release -all
+```
+
+**Alert `AllProxiesQuarantined`**: every IP is quarantined, so nothing is collected. The worker takes no jobs meanwhile, so none
+fail or are pushed back. The alert comes from the database, so it fires even when the worker isn't Ready. Replace the IPs, or
+release them when the blocks have passed.
 
 **Health endpoints.** The worker (`:9101`) and the scheduler (`:9102`) answer on their ops port. The push receiver answers on its own
 port (`:8080`).
@@ -751,11 +777,12 @@ The start-up log line "relay starting" says `transactions=false`.
 
 ## 17. The media hand-off
 
-yts downloads video thumbnails (and keeps channel avatars, banners and commenters' avatars). The contract's rule for media
-files (R5) is that a file is kept until analysis is done with it, and at least 24 hours. The relay does this, once storage and
-Kafka are both there:
+yts downloads video thumbnails, channel avatars and banners, and commenters' avatars. The contract's rule for media files (R5) is
+that a file is kept until analysis is done with it, and at least 24 hours. The relay does this, once storage and Kafka are both
+there, for the kinds in `relay.media.kinds`: thumbnails, channel avatars and banners by default (the owner, 11 November). Add
+`author_avatar` to hand off commenters' avatars too; kinds not listed are kept.
 
-1. Every minute it announces new thumbnails on `content.media.ready.v1`, each with a deadline 72 hours later
+1. Every minute it announces new images of those kinds on `content.media.ready.v1`, each with a deadline 72 hours later
    (`relay.media.keep` in the chart).
 2. It reads analysis's acknowledgements from `content.media.processed.v1`, in consumer group `yts-media`. After a retryable
    failure it announces the file again, at most 3 more times.
@@ -763,7 +790,8 @@ Kafka are both there:
    whose deadline has passed, and says so on `content.media.deleted.v1`.
 
 The record of every image (its row, and `content.media.v1`) stays forever; only the file goes. With the hand-off off
-(`relay.media.handoff: false`, or without Kafka) nothing is announced and nothing is deleted. Avatars and banners are never handed off: they stay as before.
+(`relay.media.handoff: false`, or without Kafka) nothing is announced and nothing is deleted. A deleted avatar or banner is not
+downloaded again: yts knows it by its address and its content, so only a new picture is fetched (and handed off).
 
 What the relay has done, by kind and state (`stored`, `announced`, `deleted_processed`, `deleted_expired`), is the metric
 `yt_media_handoff`. Files deleted without analysis (`deleted_expired`) mean analysis did not answer within the deadline.

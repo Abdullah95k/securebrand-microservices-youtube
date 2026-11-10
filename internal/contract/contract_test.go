@@ -364,5 +364,18 @@ func TestMedia(t *testing.T) {
 		if rec.GetOwnerId() != "yt:account:UCfakeMEDAUTHOR000000001" || rec.GetOwnerKind() != "account" || rec.GetRole() != role {
 			t.Errorf("%s: %v", kind, rec)
 		}
+		// Handed off too (the owner, 11 November): announced to analysis
+		// as the account's picture, in production mode.
+		msgs, err = m.Map(row("media_ready", kind, "", `{"kind":"`+kind+`","entity_id":"UCfakeMEDAUTHOR000000001","sha256":"`+sha+`",
+			"object_key":"`+kind+`/k.jpg","source_url":"https://yt3.ggpht.com/fake","content_type":"image/jpeg","bytes":1,
+			"first_seen":"2026-11-07T08:00:00+00:00","announced_at":"2026-11-07T09:00:00+00:00","delete_after":"2026-11-10T09:00:00+00:00","attempt":1}`))
+		if err != nil {
+			t.Fatalf("%s ready: %v", kind, err)
+		}
+		ready := msgs[0].Msg.(*mediav1.MediaReady)
+		if ready.GetOwnerId() != "yt:account:UCfakeMEDAUTHOR000000001" || ready.GetAccountId() != "yt:account:UCfakeMEDAUTHOR000000001" ||
+			ready.GetRole() != role || ready.GetObject().GetKey() != "yts/"+kind+"/k.jpg" {
+			t.Errorf("%s ready: %v", kind, ready)
+		}
 	}
 }

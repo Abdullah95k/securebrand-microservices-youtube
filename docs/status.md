@@ -145,6 +145,10 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- The media hand-off (11 November, the owner: "yes", and avatars and banners "collect them for analysis then delete them as
+  well"): channel avatars and banners are handed off and deleted like thumbnails, by default. New relay flag `-media-kinds` and
+  chart value `relay.media.kinds` (default `[thumb, avatar, banner]`; `author_avatar` adds commenters' avatars). Turning the
+  hand-off on in production is `relay.media.handoff: true`. Runbook §17.
 - The capacity planner (11 November, the owner's decision to refresh less often): supply counts each answer's time and 70% busy
   (about 933 requests an hour per IP at 2 s, was 1,440); demand uses each job kind's cost measured over the last day; the stretch
   is what fits the IPs, moving at most 1.5 times an hour. New-upload detection (the feeds and tab checks) is no longer stretched

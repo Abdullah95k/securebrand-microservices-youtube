@@ -751,11 +751,12 @@ The start-up log line "relay starting" says `transactions=false`.
 
 ## 17. The media hand-off
 
-yts downloads video thumbnails (and keeps channel avatars, banners and commenters' avatars). The contract's rule for media
-files (R5) is that a file is kept until analysis is done with it, and at least 24 hours. The relay does this, once storage and
-Kafka are both there:
+yts downloads video thumbnails, channel avatars and banners, and commenters' avatars. The contract's rule for media files (R5) is
+that a file is kept until analysis is done with it, and at least 24 hours. The relay does this, once storage and Kafka are both
+there, for the kinds in `relay.media.kinds`: thumbnails, channel avatars and banners by default (the owner, 11 November). Add
+`author_avatar` to hand off commenters' avatars too; kinds not listed are kept.
 
-1. Every minute it announces new thumbnails on `content.media.ready.v1`, each with a deadline 72 hours later
+1. Every minute it announces new images of those kinds on `content.media.ready.v1`, each with a deadline 72 hours later
    (`relay.media.keep` in the chart).
 2. It reads analysis's acknowledgements from `content.media.processed.v1`, in consumer group `yts-media`. After a retryable
    failure it announces the file again, at most 3 more times.
@@ -763,7 +764,8 @@ Kafka are both there:
    whose deadline has passed, and says so on `content.media.deleted.v1`.
 
 The record of every image (its row, and `content.media.v1`) stays forever; only the file goes. With the hand-off off
-(`relay.media.handoff: false`, or without Kafka) nothing is announced and nothing is deleted. Avatars and banners are never handed off: they stay as before.
+(`relay.media.handoff: false`, or without Kafka) nothing is announced and nothing is deleted. A deleted avatar or banner is not
+downloaded again: yts knows it by its address and its content, so only a new picture is fetched (and handed off).
 
 What the relay has done, by kind and state (`stored`, `announced`, `deleted_processed`, `deleted_expired`), is the metric
 `yt_media_handoff`. Files deleted without analysis (`deleted_expired`) mean analysis did not answer within the deadline.

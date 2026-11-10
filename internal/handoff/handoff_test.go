@@ -68,9 +68,10 @@ const (
 	idB = "yt:media:thumb:fakeHOv2:bbbbbbbbbbbbbbbb"
 )
 
-// Thumbnails are announced once with their deadline; avatars never. An
-// acknowledged file is deleted; a retried one is announced again, at most
-// 4 times in all, and deleted at its deadline. The rows stay.
+// Thumbnails are announced once with their deadline; a kind not listed
+// (here the avatar) never is. An acknowledged file is deleted; a retried one
+// is announced again, at most 4 times in all, and deleted at its deadline.
+// The rows stay.
 func TestHandoff(t *testing.T) {
 	pool := dbtest.New(t)
 	ctx := context.Background()
@@ -78,7 +79,7 @@ func TestHandoff(t *testing.T) {
 	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
 	seed(t, pool, store, now.Add(-time.Hour))
 	reg := metrics.New()
-	h := &handoff.Handoff{Pool: pool, Store: store, Kinds: media.HandoffKinds, Consumers: []string{"sb-analysis"},
+	h := &handoff.Handoff{Pool: pool, Store: store, Kinds: []string{media.Thumb}, Consumers: []string{"sb-analysis"},
 		Log: quiet, Metrics: reg, Now: func() time.Time { return now }}
 
 	if n, err := h.Announce(ctx, 100); err != nil || n != 2 {
@@ -91,7 +92,7 @@ func TestHandoff(t *testing.T) {
 		t.Errorf("%d thumbnails with their 72-hour deadline", n)
 	}
 	if n := count(t, pool, `SELECT count(*) FROM media WHERE kind = 'avatar' AND announced_at IS NULL`); n != 1 {
-		t.Error("avatars are not handed off")
+		t.Error("a kind not listed is not handed off")
 	}
 	if n := count(t, pool, `SELECT count(*) FROM event_outbox WHERE kind = 'media_ready'`); n != 2 {
 		t.Errorf("%d media_ready events", n)
@@ -199,8 +200,8 @@ func TestDeleteFailureIsRetried(t *testing.T) {
 		t.Error("a file not deleted must not be recorded as deleted")
 	}
 	h.Store = store
-	if n, err := h.DeleteDue(ctx, 100); err != nil || n != 2 {
-		t.Errorf("storage back: deleted %d (%v), want 2", n, err)
+	if n, err := h.DeleteDue(ctx, 100); err != nil || n != 3 {
+		t.Errorf("storage back: deleted %d (%v), want the two thumbnails and the avatar", n, err)
 	}
 }
 
@@ -279,5 +280,38 @@ func TestConsume(t *testing.T) {
 	consume(2 * time.Second)
 	if n := count(t, pool, `SELECT count(*) FROM media_acks`); n != 0 {
 		t.Errorf("%d acknowledgements read again after a restart", n)
+	}
+}
+
+// By default (the owner, 11 November) channel avatars and banners are handed
+// off with the thumbnails; commenters' avatars only when listed.
+func TestHandoffKinds(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	store := media.FileStore{Dir: t.TempDir()}
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	seed(t, pool, store, now.Add(-time.Hour))
+	h := &handoff.Handoff{Pool: pool, Store: store, Kinds: media.HandoffKinds, Consumers: []string{"sb-analysis"},
+		Log: quiet, Now: func() time.Time { return now }}
+	if n, err := h.Announce(ctx, 100); err != nil || n != 3 {
+		t.Fatalf("announced %d (%v), want the two thumbnails and the avatar", n, err)
+	}
+	if n := count(t, pool, `SELECT count(*) FROM media WHERE kind = 'avatar' AND attempt = 1 AND delete_after = $1`, now.Add(handoff.DefaultKeep)); n != 1 {
+		t.Error("the channel's avatar is announced with its deadline")
+	}
+	for _, c := range []struct {
+		in   string
+		want int
+		bad  bool
+	}{
+		{"thumb,avatar,banner", 3, false},
+		{" thumb , author_avatar,thumb", 2, false},
+		{"thumb,poster", 0, true},
+		{",", 0, true},
+	} {
+		got, err := media.ParseKinds(c.in)
+		if (err != nil) != c.bad || len(got) != c.want {
+			t.Errorf("ParseKinds(%q) = %v, %v", c.in, got, err)
+		}
 	}
 }

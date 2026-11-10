@@ -4,16 +4,20 @@ The current state of the YouTube collector, for the owner and the master session
 
 ## Where it stands
 
-- **Collection stopped on 9 November, 19:30 Iraq time (16:30Z), and is waiting on a restart and a fix** (the master
-  found it on 10 November). Every job fails with `proxypool: no proxy available`, and the worker isn't Ready. The exits work: all
-  10 answered the master's proxy check. **The cause is yts's own quarantine rule**:
-  - the pool quarantines an IP once it has had at least one block on 3 different UTC days within 7 days;
-  - a single block of any kind counts, including the player endpoint, which is blocked often by design;
-  - the pilot ran across UTC days 7, 8 and 9 November, so by 16:30Z on 9 November all 10 IPs were quarantined.
+- **Collection stopped from 9 November 19:30 to 11 November 00:09 Iraq time** (16:30Z to 21:09Z). The cause was yts's own
+  quarantine rule: one block of any kind on 3 different UTC days within a week set an IP aside for good. The pilot ran across
+  7, 8 and 9 November, so its 47 player blocks in about 393,000 requests took all 10 IPs. The exits themselves were fine.
+  The master restarted the worker at 21:09Z on 10 November, which cleared it.
+- **Merged on 11 November for the next pin, `519c220`** (the owner's decisions, through the master):
+  - **the quarantine fix:** only 3 or more page blocks a day count, on 3 days in a row. Quarantines are saved and lifted with
+    `ytcollect proxies release`. A database-backed alert fires if every IP is out, and the worker waits instead of failing jobs.
+  - **the slower refresh:** the capacity planner fits the work to the 10 IPs at 70% busy. It refreshes tiers C, D and M less
+    often as needed, never A and B, and never new-upload detection.
+  - **avatars and banners:** handed off to analysis and deleted, like thumbnails; `relay.media.handoff: true` turns the
+    hand-off on;
+  - **the report:** IP counts that allow for each answer's time.
 
-  The quarantine is held in memory, so a worker restart clears it. The master reads the pool's metrics first and then restarts
-  the worker. Without a fix it happens again about three days later. **The owner approved the fix on 11 November**; it is built
-  (below). The relay is fine.
+  The relay is fine.
 - **Built and merged:** every production step of the plan (1–20). That is the collector, comments, posts and playlists, discovery,
   capacity planning, privacy tools (dormant), images, the archive, webhooks, and the Docker Compose deployment, all with tests. See
   [plan.md](plan.md) §10.

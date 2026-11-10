@@ -346,8 +346,33 @@ What to look at (plan §8.13):
 
 - `yt_pool_speed` below 1: the pool brake is on (many IPs blocked).
 - `yt_freshness_debt_hours`: work running late, per tier. If it grows, add proxy IPs (`yt_capacity_recommended_ips`).
+- `yt_capacity_stretch`: how many times less often tiers C, D and M are refreshed (1 = as planned). See below.
 - `yt_fill_rate` against `yt_fill_rate_baseline`: a big drop means YouTube changed a page.
 - `yt_erasure_oldest_pending_seconds` and `yt_suppression_violations`: must stay low and 0.
+
+**Refreshing less often when the IPs are full.** Every hour the scheduler's capacity planner compares what the IPs can do with what
+the schedule asks for:
+
+- **What the IPs can do:** each IP makes a request every gap plus about 0.7 s for the answer: about 1,333 an hour at 2 s. That is
+  counted at 70% busy, which leaves 30% for retries, rests and the lowest-priority work (backfill, commenter enrichment, images).
+- **What the schedule asks for,** from what each kind of job really cost in the last day. It comes in two parts:
+  - work that is never slowed: new uploads, the feeds and tab checks of every channel, tiers A and B, backfill, discovery,
+    enrichment and images;
+  - refreshes that can be: tiers C, D and M's channel snapshots, posts, playlists, video stats and comment scans.
+
+When that is more than the IPs can do, the planner refreshes C, D and M less often (the "stretch", at most 8 times), by up to 1.5
+times per hour. New uploads are found as soon as before: the feeds and tab checks are never slowed. The scheduler's log line
+"capacity plan" shows both parts, the stretch and the IPs that would make it unnecessary (`recommended_ips`).
+
+To slow refreshes down on purpose, set a floor (1 to 8) in the chart. The planner never goes below it:
+
+```yaml
+scheduler:
+  minStretch: 2
+```
+
+When the stretch sits at 8 and `yt_freshness_debt_hours` still grows, the work that is never slowed fills the IPs alone: add IPs, or
+find fewer channels.
 
 **Health endpoints.** The worker (`:9101`) and the scheduler (`:9102`) answer on their ops port. The push receiver answers on its own
 port (`:8080`).

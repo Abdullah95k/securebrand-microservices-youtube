@@ -63,7 +63,7 @@ func TestDatabaseMetrics(t *testing.T) {
 		`yt_erasure_requests{status="pending"} 1`,
 		"yt_erasure_oldest_pending_seconds 2592",
 		"yt_comments_complete_pct 80",
-		"yt_capacity_supply_per_hour 1440",
+		"yt_capacity_supply_per_hour 1072.34", // 2 IPs at 4 s + 0.7 s, 70% busy
 		"yt_suppression_violations 0",
 		"yt_db_size_bytes",
 		`yt_archive_bytes{table="comment_versions"} 1234`,

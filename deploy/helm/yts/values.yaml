@@ -121,6 +121,10 @@ worker:
 # webhooks. One replica (no leader election yet, fix 15).
 scheduler:
   opsPort: 9102
+  # Refresh tiers C, D and M at least this many times less often (1 to 8).
+  # 1: only as much as the capacity planner needs to fit the IPs. New-upload
+  # detection and tiers A and B are never slowed. Runbook §7.
+  minStretch: 1
   extraArgs: []
   goMemLimit: 850MiB
   resources:

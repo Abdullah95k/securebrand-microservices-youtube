@@ -35,6 +35,7 @@ spec:
           args:
             - scheduler
             - -metrics-addr=:{{ .Values.scheduler.opsPort }}
+            - -min-stretch={{ .Values.scheduler.minStretch }}
             {{- range .Values.scheduler.extraArgs }}
             - {{ . | quote }}
             {{- end }}

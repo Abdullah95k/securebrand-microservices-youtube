@@ -146,8 +146,8 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 	err = pool.QueryRow(ctx, `SELECT supply_per_hour, demand_per_hour, stretch, recommended_ips, debt FROM capacity_reports ORDER BY at DESC LIMIT 1`).
 		Scan(&supply, &demand, &stretch, &ips, &debt)
 	if err == nil {
-		reg.Set("yt_capacity_supply_per_hour", "Requests per hour the proxies can do.", nil, supply)
-		reg.Set("yt_capacity_demand_per_hour", "Requests per hour the schedule asks for.", nil, demand)
+		reg.Set("yt_capacity_supply_per_hour", "Requests per hour the proxies can do at 70% busy.", nil, supply)
+		reg.Set("yt_capacity_demand_per_hour", "Requests per hour the schedule asks for, without any stretch.", nil, demand)
 		reg.Set("yt_capacity_stretch", "Interval stretch for tiers C, D and M (1 = none).", nil, float64(stretch))
 		if ips != nil {
 			reg.Set("yt_capacity_recommended_ips", "Proxy IPs that would close the gap.", nil, float64(*ips))

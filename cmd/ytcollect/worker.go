@@ -144,7 +144,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer, Write: wr, Stretch: stretch.Value,
 		Window: time.Duration(*backfillDays) * 24 * time.Hour, Raw: raw}
 	handlers := svc.Handlers()
-	rss := &detect.RSS{Pool: pool, Feeds: feeds.NewFetcher(fetch.Client), Write: wr, Log: log, Stretch: stretch.Value,
+	rss := &detect.RSS{Pool: pool, Feeds: feeds.NewFetcher(fetch.Client), Write: wr, Log: log,
 		Recent: svc.RecentUploads}
 	for k, h := range rss.Handlers() {
 		handlers[k] = h

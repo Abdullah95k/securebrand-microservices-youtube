@@ -1,18 +1,32 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **7 November 2026 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **11 November 2026 (Iraq time)**.
 
 ## Where it stands
 
+- **Collection stopped on 9 November, 19:30 Iraq time (16:30Z), and is waiting on a restart and a fix** (the master
+  found it on 10 November). Every job fails with `proxypool: no proxy available`, and the worker isn't Ready. The exits work: all
+  10 answered the master's proxy check. **The cause is yts's own quarantine rule**:
+  - the pool quarantines an IP once it has had at least one block on 3 different UTC days within 7 days;
+  - a single block of any kind counts, including the player endpoint, which is blocked often by design;
+  - the pilot ran across UTC days 7, 8 and 9 November, so by 16:30Z on 9 November all 10 IPs were quarantined.
+
+  The quarantine is held in memory, so a worker restart clears it. The master reads the pool's metrics first and then restarts
+  the worker. Without a fix it happens again about three days later. **A fix is proposed to the owner** (below); it changes how
+  yts backs off after blocks, so it waits for their yes. The relay is fine.
 - **Built and merged:** every production step of the plan (1–20). That is the collector, comments, posts and playlists, discovery,
   capacity planning, privacy tools (dormant), images, the archive, webhooks, and the Docker Compose deployment, all with tests. See
   [plan.md](plan.md) §10.
-- **The 48-hour pilot (fix 11) is running** since 18:29 Iraq time on 7 November, run by the master's ops workflow. The proxies are
+- **The 48-hour pilot (fix 11) ran** from 18:29 Iraq time on 7 November, run by the master's ops workflow. Its IPs went into
+  quarantine one by one on 9 November UTC, the last at 16:30Z, an hour after its window ended (above). The report will show
+  how much its last day lost. The proxies are
   igs's 10 US ISP IPs, shared until yts's own are bought (the owner, D-042). It uses a 2 s gap per IP, 10 jobs at once and a 7-day
   backfill. The 46 Iraq place names are loaded, and the owner's 329 channels were imported at 18:52. An hour later, 374 channels
   were listed (45 more found by discovery), 5 of the owner's inputs were unresolved, and no jobs were failing or dead. The first
   day goes to the new videos and their comments (the top priorities); the rest drains after. The report covers 18:29 on
-  7 November to 18:29 on 9 November; then `docs/master/yts-pilot-report.md`.
+  7 November to 18:29 on 9 November: [`master/yts-pilot-report.md`](master/yts-pilot-report.md). In short: it works, comment
+  sections were complete and YouTube barely pushed back, but the 10 IPs were full. The list grew to 2,646 channels, which need
+  at least 19 IPs; the lowest-priority work (backfill, enrichment, images) never got a turn.
 - **Deployed to production (7 November, the master):** on the platform's cluster through Argo CD, at `9a4700d`, then pinned to
   `145e68c` (no overrides left but the image and the worker count). The migrations ran (PreSync hook) and the scheduler is
   running and ready. The worker was held at 0 until the pilot (above) started, on igs's shared IPs until yts's own are bought.
@@ -55,6 +69,22 @@ The current state of the YouTube collector, for the owner and the master session
     PgBouncer in transaction mode with prepared statements off, here and in CI.
   - **Next:** the pilot report (fix 11) after 18:29 on 9 November. The relay sends the outbox as it fills (above).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
+
+## Proposed to the owner (11 November): the quarantine rule
+
+What stays the same: the 2 s pace, the rests after a block (30 min, 2 h, 12 h, 24 h), trying another IP after a block, parking a
+request blocked on 3 IPs, the pool brake and the WEB client.
+
+What changes:
+
+1. **A day counts towards quarantine only if it was a bad day:** at least 3 blocks on page requests that day (player blocks don't
+   count, as they already don't for the brake and for the healthy-IP count), and on 3 days in a row, as the plan says.
+2. **A quarantine is saved and restored at start,** so a restart no longer undoes one, and a command lifts it
+   (`ytcollect proxies release`).
+3. **An alert for "every IP quarantined" from the database.** It works even when the worker isn't Ready or isn't scraped.
+4. **The worker stops taking jobs while no IP is usable,** instead of failing each one and pushing it hours back.
+
+Whether the pace or the exits need changing too waits for the block counts the master reads before the restart.
 
 ## Ready for the pilot (fix 11)
 

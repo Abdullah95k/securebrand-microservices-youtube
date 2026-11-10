@@ -151,6 +151,8 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
   `ytcollect proxies` (list, `release ID`, `release -all`) lifts it. New gauge `yt_proxies_reporting` and alert
   `AllProxiesQuarantined` (from the database, through the scheduler). While no IP is usable, the worker takes no jobs.
   Runbook §7.
+- The capacity planner leaves the lowest-priority work (P4: images and commenter enrichment) out of its demand: it runs in
+  the time left and never slows a refresh; `spare_time_per_hour` in the log and `capacity_reports.detail`.
 - The media hand-off (11 November, the owner: "yes", and avatars and banners "collect them for analysis then delete them as
   well"): channel avatars and banners are handed off and deleted like thumbnails, by default. New relay flag `-media-kinds` and
   chart value `relay.media.kinds` (default `[thumb, avatar, banner]`; `author_avatar` adds commenters' avatars). Turning the

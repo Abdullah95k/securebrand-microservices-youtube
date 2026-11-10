@@ -356,9 +356,11 @@ the schedule asks for:
 - **What the IPs can do:** each IP makes a request every gap plus about 0.7 s for the answer: about 1,333 an hour at 2 s. That is
   counted at 70% busy, which leaves 30% for retries, rests and the lowest-priority work (backfill, commenter enrichment, images).
 - **What the schedule asks for,** from what each kind of job really cost in the last day. It comes in two parts:
-  - work that is never slowed: new uploads, the feeds and tab checks of every channel, tiers A and B, backfill, discovery,
-    enrichment and images;
+  - work that is never slowed: new uploads, the feeds and tab checks of every channel, tiers A and B, backfill and discovery;
   - refreshes that can be: tiers C, D and M's channel snapshots, posts, playlists, video stats and comment scans.
+
+  Images and commenter enrichment, the lowest priority, are left out: they run in whatever time is left and never slow a
+  refresh (the log's `spare_time_per_hour`).
 
 When that is more than the IPs can do, the planner refreshes C, D and M less often (the "stretch", at most 8 times), by up to 1.5
 times per hour. New uploads are found as soon as before: the feeds and tab checks are never slowed. The scheduler's log line

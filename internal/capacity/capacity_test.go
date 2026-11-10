@@ -52,6 +52,9 @@ func setup(t *testing.T) *fixture {
 		// 1,200 searches at 4 requests: 200 an hour, fixed.
 		`INSERT INTO schedule (kind, entity_id, priority, due_at)
 			SELECT 'search', 'fake term ' || i, 2, $1::timestamptz + make_interval(secs => i * 70) FROM generate_series(0, 1199) i`,
+		// 2,400 images at P4: spare-time work, never in the demand.
+		`INSERT INTO schedule (kind, entity_id, priority, due_at)
+			SELECT 'media', 'thumb:fakeIMG' || i, 4, $1::timestamptz + make_interval(secs => i * 35) FROM generate_series(0, 2399) i`,
 		`UPDATE schedule SET due_at = $1::timestamptz - interval '2 hours' WHERE kind = 'rss'`,
 	} {
 		if _, err := f.pool.Exec(ctx, sql, f.at); err != nil {
@@ -101,6 +104,7 @@ func TestPlanFitsTheIPs(t *testing.T) {
 	near(t, "fixed", r.FixedPerHour, 200+42.0/24, 0.01)
 	near(t, "stretchable", r.StretchablePerHour, 1000+8.0/24, 0.01)
 	near(t, "demand", r.DemandPerHour, r.FixedPerHour+r.StretchablePerHour, 0.001)
+	near(t, "spare-time work", r.SpareTimePerHour, 2400*2.0/24, 0.01) // images, 2 requests each by the estimate
 	// 1,000.3 / (1,072.3 - 201.75) = 1.149.
 	near(t, "stretch", r.Stretch, 1.15, 0.001)
 	if r.RecommendedIPs != 3 {

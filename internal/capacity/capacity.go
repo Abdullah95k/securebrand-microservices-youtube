@@ -12,7 +12,9 @@
 // refreshes it can (C, D and M channels' snapshots, posts, playlists, video
 // stats and comment scans). The stretch is what makes them fit, moved at
 // most 1.5 times up or down per run, and never below Options.MinStretch
-// (the owner may slow refreshes on purpose).
+// (the owner may slow refreshes on purpose). The lowest-priority work (P4:
+// images and commenter enrichment) is left out: it runs in whatever time is
+// left and never slows a refresh (SpareTimePerHour reports it).
 package capacity
 
 import (
@@ -86,6 +88,7 @@ type Report struct {
 	DemandPerHour      float64            `json:"demand_per_hour"`
 	FixedPerHour       float64            `json:"fixed_per_hour"`
 	StretchablePerHour float64            `json:"stretchable_per_hour"`
+	SpareTimePerHour   float64            `json:"spare_time_per_hour"` // P4 work, not in the demand
 	Stretch            float64            `json:"stretch"`
 	MinStretch         float64            `json:"min_stretch,omitempty"`
 	DebtHours          map[string]float64 `json:"debt_hours"`      // overdue job-hours per tier
@@ -167,17 +170,18 @@ func PlanWith(ctx context.Context, q db.Querier, now time.Time, o Options) (Repo
 	// Demand: the next 24 hours of jobs, overdue ones included.
 	rows, err = q.Query(ctx, `SELECT s.kind,
 			COALESCE(c.tier, '') IN ('C', 'D', 'M') AND s.kind = ANY($2) AND s.priority > $3 AS stretched,
+			s.priority >= $4 AS spare,
 			count(*) FILTER (WHERE s.due_at <= $1::timestamptz + interval '24 hours')
 		FROM schedule s LEFT JOIN channels c ON c.id = s.channel_id
-		WHERE s.dead_at IS NULL GROUP BY 1, 2`, now, Stretched, queue.P0)
+		WHERE s.dead_at IS NULL GROUP BY 1, 2, 3`, now, Stretched, queue.P0, queue.P4)
 	if err != nil {
 		return r, err
 	}
 	for rows.Next() {
 		var kind string
-		var stretched bool
+		var stretched, spare bool
 		var next24 int64
-		if err := rows.Scan(&kind, &stretched, &next24); err != nil {
+		if err := rows.Scan(&kind, &stretched, &spare, &next24); err != nil {
 			rows.Close()
 			return r, err
 		}
@@ -185,9 +189,12 @@ func PlanWith(ctx context.Context, q db.Querier, now time.Time, o Options) (Repo
 		if !ok {
 			c = 2
 		}
-		if stretched {
+		switch {
+		case spare:
+			r.SpareTimePerHour += float64(next24) * c / 24
+		case stretched:
 			r.StretchablePerHour += float64(next24) * c * current / 24
-		} else {
+		default:
 			r.FixedPerHour += float64(next24) * c / 24
 		}
 	}
@@ -275,6 +282,6 @@ func (s *Stretcher) Value() float64 {
 }
 
 func (r Report) String() string {
-	return fmt.Sprintf("supply %.0f/h, demand %.0f/h (fixed %.0f, stretchable %.0f), stretch %.2f, recommended IPs %d, debt %v",
-		r.SupplyPerHour, r.DemandPerHour, r.FixedPerHour, r.StretchablePerHour, r.Stretch, r.RecommendedIPs, r.DebtHours)
+	return fmt.Sprintf("supply %.0f/h, demand %.0f/h (fixed %.0f, stretchable %.0f; spare-time work %.0f), stretch %.2f, recommended IPs %d, debt %v",
+		r.SupplyPerHour, r.DemandPerHour, r.FixedPerHour, r.StretchablePerHour, r.SpareTimePerHour, r.Stretch, r.RecommendedIPs, r.DebtHours)
 }

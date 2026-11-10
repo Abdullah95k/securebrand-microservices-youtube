@@ -1,8 +1,18 @@
 // Package capacity is the capacity planner (plan §6.6, §8.2): every hour it
 // compares what the proxy pool can do (supply) with what the schedule asks
-// for (demand). When demand is higher, the intervals of tiers C, D and M
-// are stretched (A and B never are), and it reports the freshness debt per
-// tier and how many IPs would close the gap.
+// for (demand). When demand is higher, the refresh intervals of tiers C, D
+// and M are stretched (A and B never are, nor is new-upload detection), and
+// it reports the freshness debt per tier and how many IPs would close the
+// gap.
+//
+// Supply is what the IPs make at the plan's 70% busy (usage.TargetUse),
+// counting each answer's time on top of the gap (usage.PerIPHour). Demand
+// splits into work the stretch can't slow (new uploads, the feeds and tabs,
+// tiers A and B, backfill, discovery, enrichment and images) and the
+// refreshes it can (C, D and M channels' snapshots, posts, playlists, video
+// stats and comment scans). The stretch is what makes them fit, moved at
+// most 1.5 times up or down per run, and never below Options.MinStretch
+// (the owner may slow refreshes on purpose).
 package capacity
 
 import (
@@ -15,6 +25,7 @@ import (
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
 )
 
 // StretchKey is the settings key workers read the stretch from.
@@ -23,11 +34,16 @@ const StretchKey = "capacity_stretch"
 // MaxStretch caps how far C, D and M intervals are stretched.
 const MaxStretch = 8.0
 
-// Efficiency is the share of a proxy's raw pace that real work achieves
-// (retries, waits for a channel's previous job, failovers).
-const Efficiency = 0.8
+// maxStep is how far one run moves the stretch, up or down: the schedule
+// takes a while to follow a new stretch, so the estimate lags behind it.
+const maxStep = 1.5
 
-// Cost is the estimated YouTube requests per run of each job kind.
+// minSample is the finished jobs of a kind in the last day from which its
+// measured cost replaces the estimate in Cost.
+const minSample = 20
+
+// Cost is the estimated YouTube requests per run of each job kind, used
+// until a kind has minSample finished jobs in the last day.
 var Cost = map[string]float64{
 	// RSS: 1 request, or up to 3 tab pages while the feed service is down
 	// (Phase 0: about 40% of the time).
@@ -36,6 +52,11 @@ var Cost = map[string]float64{
 	queue.KindPostComments: 3, queue.KindEnrich: 2, queue.KindCandidate: 3, queue.KindSearch: 4,
 	queue.KindLive: 1, queue.KindWebSub: 0, "erasure": 0,
 }
+
+// Stretched are the job kinds whose next run the stretch delays, for tiers
+// C, D and M (policy.Stretch); a video's first read (P0) never is.
+var Stretched = []string{queue.KindChannel, queue.KindPosts, queue.KindPlaylists, queue.KindVideo,
+	queue.KindComments, queue.KindPostComments}
 
 // Worker is what a worker process announces about itself.
 type Worker struct {
@@ -50,20 +71,46 @@ func Announce(ctx context.Context, q db.Querier, owner string, w Worker) error {
 	return db.SetSetting(ctx, q, "capacity/"+owner, w)
 }
 
+// Options tune a planner run.
+type Options struct {
+	// MinStretch is the least stretch for C, D and M; 1 or less: none.
+	MinStretch float64
+}
+
 // Report is one planner run.
 type Report struct {
-	At             time.Time          `json:"at"`
-	SupplyPerHour  float64            `json:"supply_per_hour"`
-	DemandPerHour  float64            `json:"demand_per_hour"`
-	Stretch        float64            `json:"stretch"`
-	DebtHours      map[string]float64 `json:"debt_hours"` // overdue job-hours per tier
-	RecommendedIPs int                `json:"recommended_ips"`
-	Workers        int                `json:"workers"`
+	At            time.Time `json:"at"`
+	SupplyPerHour float64   `json:"supply_per_hour"` // at usage.TargetUse
+	// DemandPerHour is the work the schedule asks for without any stretch:
+	// FixedPerHour, which the stretch can't slow, plus StretchablePerHour.
+	DemandPerHour      float64            `json:"demand_per_hour"`
+	FixedPerHour       float64            `json:"fixed_per_hour"`
+	StretchablePerHour float64            `json:"stretchable_per_hour"`
+	Stretch            float64            `json:"stretch"`
+	MinStretch         float64            `json:"min_stretch,omitempty"`
+	DebtHours          map[string]float64 `json:"debt_hours"`      // overdue job-hours per tier
+	RecommendedIPs     int                `json:"recommended_ips"` // to do it all without a stretch
+	Workers            int                `json:"workers"`
+	Measured           map[string]float64 `json:"measured_cost,omitempty"` // requests per job, last day
+}
+
+// PerIPHour is what one IP makes in an hour at a gap of intervalS seconds,
+// at the plan's 70% busy.
+func PerIPHour(intervalS float64) float64 {
+	return usage.PerIPHour(time.Duration(intervalS*float64(time.Second))) * usage.TargetUse
 }
 
 // Plan computes a report, stores it, and sets the stretch.
 func Plan(ctx context.Context, q db.Querier, now time.Time) (Report, error) {
-	r := Report{At: now, DebtHours: map[string]float64{}, Stretch: 1}
+	return PlanWith(ctx, q, now, Options{})
+}
+
+// PlanWith is Plan with options.
+func PlanWith(ctx context.Context, q db.Querier, now time.Time, o Options) (Report, error) {
+	r := Report{At: now, DebtHours: map[string]float64{}, Stretch: 1, Measured: map[string]float64{}}
+	if o.MinStretch > 1 {
+		r.MinStretch = math.Min(o.MinStretch, MaxStretch)
+	}
 	// Supply: live workers (announced within 15 minutes).
 	rows, err := q.Query(ctx, `SELECT value FROM settings WHERE key LIKE 'capacity/%'`)
 	if err != nil {
@@ -81,30 +128,71 @@ func Plan(ctx context.Context, q db.Querier, now time.Time) (Report, error) {
 			continue
 		}
 		r.Workers++
-		r.SupplyPerHour += float64(w.Proxies) * 3600 / w.IntervalS * Efficiency
+		r.SupplyPerHour += float64(w.Proxies) * PerIPHour(w.IntervalS)
 		interval = math.Max(interval, w.IntervalS)
 	}
 	rows.Close()
-	// Demand: the next 24 hours of jobs, plus clearing today's backlog.
-	rows, err = q.Query(ctx, `SELECT kind, count(*) FILTER (WHERE due_at <= $1::timestamptz + interval '24 hours'),
-			count(*) FILTER (WHERE due_at <= $1::timestamptz) FROM schedule WHERE dead_at IS NULL GROUP BY kind`, now)
+	// What a job of each kind cost in the last day, where enough finished.
+	cost := map[string]float64{}
+	for k, v := range Cost {
+		cost[k] = v
+	}
+	rows, err = q.Query(ctx, `SELECT kind, sum(requests)::float8, sum(jobs - failures)::bigint FROM usage_hourly
+		WHERE hour >= $1::timestamptz - interval '24 hours' GROUP BY kind`, now)
 	if err != nil {
 		return r, err
 	}
 	for rows.Next() {
 		var kind string
-		var next24, overdue int64
-		if err := rows.Scan(&kind, &next24, &overdue); err != nil {
+		var requests float64
+		var done int64
+		if err := rows.Scan(&kind, &requests, &done); err != nil {
 			rows.Close()
 			return r, err
 		}
-		c, ok := Cost[kind]
+		if done >= minSample {
+			cost[kind] = requests / float64(done)
+			r.Measured[kind] = math.Round(cost[kind]*10) / 10
+		}
+	}
+	rows.Close()
+	// The stretch in force: the stretched jobs due in the next day are fewer
+	// by that much, so their count times it is what they would be without.
+	current := 1.0
+	if ok, err := db.GetSetting(ctx, q, StretchKey, &current); err != nil {
+		return r, err
+	} else if !ok || current < 1 {
+		current = 1
+	}
+	// Demand: the next 24 hours of jobs, overdue ones included.
+	rows, err = q.Query(ctx, `SELECT s.kind,
+			COALESCE(c.tier, '') IN ('C', 'D', 'M') AND s.kind = ANY($2) AND s.priority > $3 AS stretched,
+			count(*) FILTER (WHERE s.due_at <= $1::timestamptz + interval '24 hours')
+		FROM schedule s LEFT JOIN channels c ON c.id = s.channel_id
+		WHERE s.dead_at IS NULL GROUP BY 1, 2`, now, Stretched, queue.P0)
+	if err != nil {
+		return r, err
+	}
+	for rows.Next() {
+		var kind string
+		var stretched bool
+		var next24 int64
+		if err := rows.Scan(&kind, &stretched, &next24); err != nil {
+			rows.Close()
+			return r, err
+		}
+		c, ok := cost[kind]
 		if !ok {
 			c = 2
 		}
-		r.DemandPerHour += float64(next24) * c / 24
+		if stretched {
+			r.StretchablePerHour += float64(next24) * c * current / 24
+		} else {
+			r.FixedPerHour += float64(next24) * c / 24
+		}
 	}
 	rows.Close()
+	r.DemandPerHour = r.FixedPerHour + r.StretchablePerHour
 	// Freshness debt: how far behind the overdue jobs are, per tier.
 	rows, err = q.Query(ctx, `SELECT COALESCE(c.tier, '-'), sum(EXTRACT(EPOCH FROM $1::timestamptz - s.due_at) / 3600)
 		FROM schedule s LEFT JOIN channels c ON c.id = s.channel_id
@@ -122,12 +210,9 @@ func Plan(ctx context.Context, q db.Querier, now time.Time) (Report, error) {
 		r.DebtHours[tier] = math.Round(h*10) / 10
 	}
 	rows.Close()
-	if r.SupplyPerHour > 0 && r.DemandPerHour > r.SupplyPerHour {
-		r.Stretch = math.Min(MaxStretch, math.Round(r.DemandPerHour/r.SupplyPerHour*100)/100)
-	}
+	r.Stretch = stretchFor(r.SupplyPerHour, r.FixedPerHour, r.StretchablePerHour, current, r.MinStretch)
 	if interval > 0 {
-		perIP := 3600 / interval * Efficiency
-		r.RecommendedIPs = int(math.Ceil(r.DemandPerHour / perIP))
+		r.RecommendedIPs = int(math.Ceil(r.DemandPerHour / PerIPHour(interval)))
 	}
 	detail, _ := json.Marshal(r)
 	debt, _ := json.Marshal(r.DebtHours)
@@ -137,6 +222,26 @@ func Plan(ctx context.Context, q db.Querier, now time.Time) (Report, error) {
 		return r, err
 	}
 	return r, db.SetSetting(ctx, q, StretchKey, r.Stretch)
+}
+
+// stretchFor is the stretch that fits fixed + stretchable/stretch into
+// supply, moved at most maxStep from current, at least floor, at most
+// MaxStretch. With no live worker (no supply) the stretch stays as it is.
+func stretchFor(supply, fixed, stretchable, current, floor float64) float64 {
+	want := 1.0
+	switch {
+	case supply <= 0:
+		want = current
+	case stretchable <= 0:
+	case fixed >= supply:
+		want = MaxStretch
+	default:
+		want = stretchable / (supply - fixed)
+	}
+	want = math.Max(current/maxStep, math.Min(current*maxStep, want))
+	want = math.Max(want, floor)
+	want = math.Max(1, math.Min(MaxStretch, want))
+	return math.Round(want*100) / 100
 }
 
 // Stretcher gives workers the current stretch, re-read every 5 minutes.
@@ -170,6 +275,6 @@ func (s *Stretcher) Value() float64 {
 }
 
 func (r Report) String() string {
-	return fmt.Sprintf("supply %.0f/h, demand %.0f/h, stretch %.2f, recommended IPs %d, debt %v",
-		r.SupplyPerHour, r.DemandPerHour, r.Stretch, r.RecommendedIPs, r.DebtHours)
+	return fmt.Sprintf("supply %.0f/h, demand %.0f/h (fixed %.0f, stretchable %.0f), stretch %.2f, recommended IPs %d, debt %v",
+		r.SupplyPerHour, r.DemandPerHour, r.FixedPerHour, r.StretchablePerHour, r.Stretch, r.RecommendedIPs, r.DebtHours)
 }

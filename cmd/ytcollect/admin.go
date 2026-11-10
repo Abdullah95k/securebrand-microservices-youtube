@@ -204,8 +204,12 @@ func switchCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer, args []st
 func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("scheduler", flag.ContinueOnError)
 	metricsAddr := fs.String("metrics-addr", ":9102", "the ops port: /metrics, /healthz and /readyz (empty: off)")
+	minStretch := fs.Float64("min-stretch", 1, "refresh tiers C, D and M at least this many times less often (1: only as the capacity planner needs; at most 8)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *minStretch < 1 || *minStretch > capacity.MaxStretch {
+		return fmt.Errorf("scheduler: -min-stretch %v is not between 1 and %v", *minStretch, capacity.MaxStretch)
 	}
 	reg := metrics.New()
 	health := &ops.Health{}
@@ -317,10 +321,11 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			return err
 		}},
 		{name: "capacity", every: time.Hour, run: func() error {
-			r, err := capacity.Plan(ctx, pool, time.Now())
+			r, err := capacity.PlanWith(ctx, pool, time.Now(), capacity.Options{MinStretch: *minStretch})
 			if err == nil {
 				log.Info("capacity plan", "supply_per_hour", int(r.SupplyPerHour), "demand_per_hour", int(r.DemandPerHour),
-					"stretch", r.Stretch, "recommended_ips", r.RecommendedIPs, "debt_hours", r.DebtHours)
+					"fixed_per_hour", int(r.FixedPerHour), "stretchable_per_hour", int(r.StretchablePerHour),
+					"stretch", r.Stretch, "min_stretch", *minStretch, "recommended_ips", r.RecommendedIPs, "debt_hours", r.DebtHours)
 			}
 			return err
 		}},

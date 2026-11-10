@@ -287,7 +287,7 @@ func (s *Service) tabs(ctx context.Context, j queue.Job) (time.Time, error) {
 	if added > 0 {
 		s.Log.Info("tab check found new uploads", "channel", j.EntityID, "new", added)
 	}
-	return s.now().Add(s.stretch(policy.TabCheck(ci.tier), ci.tier)), nil
+	return s.now().Add(policy.TabCheck(ci.tier)), nil // detection is never stretched
 }
 
 // video reads a video's watch page (and player), stores it with a

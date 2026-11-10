@@ -35,8 +35,8 @@ const (
 	FullUse = 0.9
 )
 
-// perIPHour is the most requests one IP makes in an hour at gap.
-func perIPHour(gap time.Duration) float64 {
+// PerIPHour is the most requests one IP makes in an hour at gap.
+func PerIPHour(gap time.Duration) float64 {
 	return 3600 / (gap + AnswerTime).Seconds()
 }
 
@@ -505,7 +505,7 @@ func (r *Report) quality(ctx context.Context, q db.Querier) error {
 
 // ipsFor is the IPs a peak hour needs: at most TargetUse busy, plus Spare.
 func ipsFor(peakHour float64, gap time.Duration) int {
-	perIP := perIPHour(gap) * TargetUse
+	perIP := PerIPHour(gap) * TargetUse
 	n := int(math.Ceil(peakHour / perIP * (1 + Spare)))
 	return max(n, MinIPs)
 }
@@ -540,7 +540,7 @@ func (r *Report) project(targets []int) {
 		if r.BackfillChannels > 0 {
 			p.BackfillRequests = r.BackfillPerChan.Mean * float64(n)
 			p.BackfillGB = float64(bf.Bytes) / float64(r.BackfillChannels) * float64(n) / 1e9
-			perIPWindow := float64(BackfillDays) * 24 * perIPHour(gap) * TargetUse
+			perIPWindow := float64(BackfillDays) * 24 * PerIPHour(gap) * TargetUse
 			p.BackfillIPs = int(math.Ceil(p.BackfillRequests / perIPWindow * (1 + Spare)))
 			if r.BackfillDepth > 0 && r.BackfillDepth < 365 {
 				p.FullBackfill = p.BackfillRequests / float64(r.BackfillDepth) * 365
@@ -554,10 +554,10 @@ func (r *Report) project(targets []int) {
 	r.Notes = append(r.Notes,
 		"Projections assume the window's mix of tiers and channel sizes. Channel work, enrichment and images grow with the channel count; discovery doesn't (it has no caps and grows with the search terms), so it is shown as measured.",
 		fmt.Sprintf("IPs: the busiest steady hour, each IP at most %.0f%% busy at a %s gap, plus %.0f%% spare for failover and rests, and never fewer than %d. An IP makes at most %.0f requests an hour: the gap starts after each answer, which takes about %s (measured in the pilot).",
-			TargetUse*100, gap, Spare*100, MinIPs, perIPHour(gap), AnswerTime),
+			TargetUse*100, gap, Spare*100, MinIPs, PerIPHour(gap), AnswerTime),
 		fmt.Sprintf("The backfill is once per new channel; its extra IPs finish it within %d days.", BackfillDays))
 	if r.Proxies > 0 && r.PeakHourRequests > 0 {
-		r.PeakUse = float64(r.PeakHourRequests) / (float64(r.Proxies) * perIPHour(gap))
+		r.PeakUse = float64(r.PeakHourRequests) / (float64(r.Proxies) * PerIPHour(gap))
 		if r.PeakUse >= FullUse {
 			r.Notes = append(r.Notes, fmt.Sprintf("The busiest hour used %.0f%% of what the worker's %d IPs can make: they were full, so work was probably waiting and every count here is a floor. Check the queue and the capacity planner's demand for the window.",
 				r.PeakUse*100, r.Proxies))

@@ -86,10 +86,9 @@ What changes:
 
 The block counts the master read (47, all on the player, in about 393,000 requests) show the pace and the exits are fine.
 
-**Also proposed:** the capacity planner, which lengthens refresh intervals when there is more work than the IPs can do, assumes
-an IP makes 1,440 requests an hour at 2 s; the pilot measured about 1,320. With the right figure it starts stretching a little
-sooner, so the lowest-priority work isn't starved for as long. It changes how often channels are refreshed when the IPs are
-full, so it waits for the owner too.
+**Decided (the owner, 11 November, through the master): refresh channels less often for now; more proxies come later.** Done
+in the capacity planner: it now fits the work to the 10 IPs at 70% busy and refreshes tiers C, D and M less often as needed,
+never A and B and never new-upload detection (runbook §7).
 
 ## Ready for the pilot (fix 11)
 
@@ -146,6 +145,12 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- The capacity planner (11 November, the owner's decision to refresh less often): supply counts each answer's time and 70% busy
+  (about 933 requests an hour per IP at 2 s, was 1,440); demand uses each job kind's cost measured over the last day; the stretch
+  is what fits the IPs, moving at most 1.5 times an hour. New-upload detection (the feeds and tab checks) is no longer stretched
+  at any tier. New: the scheduler's `-min-stretch` flag and chart value `scheduler.minStretch` (default 1), and `fixed_per_hour`,
+  `stretchable_per_hour`, `min_stretch` and `measured_cost` in `capacity_reports.detail`. `yt_capacity_demand_per_hour` now
+  means the demand without any stretch. Runbook §7.
 - `ytcollect report` (11 November): the IP counts now allow 0.7 s for each answer on top of the gap (an IP makes about 1,333
   requests an hour at 2 s, not 1,800), so they come out about a third higher; new fields `proxies` and `peak_use` (the busiest
   hour against what the worker's IPs can make), and a note when that is 90% or more, saying the counts are a floor.

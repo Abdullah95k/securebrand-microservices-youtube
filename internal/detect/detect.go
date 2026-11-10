@@ -33,7 +33,6 @@ type RSS struct {
 	Write   *writer.Writer
 	Log     *slog.Logger
 	Now     func() time.Time
-	Stretch func() float64
 	Breaker *Breaker // nil: a default one
 	// Recent reads a channel's newest uploads from its tabs
 	// (collect.Service.RecentUploads). It replaces the feed while the feed
@@ -73,7 +72,7 @@ func (r *RSS) feed(ctx context.Context, j queue.Job) (time.Time, error) {
 		return time.Time{}, err
 	}
 	t := policy.Tier(tier)
-	next := r.now().Add(policy.Stretch(policy.RSS(t), t, r.stretch()))
+	next := r.now().Add(policy.RSS(t)) // detection is never stretched
 	br := r.breaker()
 	if br.Open(r.now()) {
 		// Feeds failing widely: read the channel's tabs instead.
@@ -132,13 +131,6 @@ func (r *RSS) fallback(ctx context.Context, channelID string, next, without time
 		r.Log.Info("new uploads found on channel tabs (feed unavailable)", "channel", channelID, "new", n)
 	}
 	return next, nil
-}
-
-func (r *RSS) stretch() float64 {
-	if r.Stretch == nil {
-		return 1
-	}
-	return r.Stretch()
 }
 
 // Entry handles one feed or push entry: a new video is stored and, for a

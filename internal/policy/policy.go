@@ -2,7 +2,8 @@
 // (plan §8.6). Tiers A–D are core channels by size and relevance; M is a
 // mention channel (only its Iraq-relevant items are collected). The
 // capacity planner may stretch the intervals of C, D and M when the proxy
-// pool cannot keep up; A and B are never stretched.
+// pool cannot keep up; A and B are never stretched, and neither is
+// new-upload detection (RSS and TabCheck), at any tier.
 package policy
 
 import (

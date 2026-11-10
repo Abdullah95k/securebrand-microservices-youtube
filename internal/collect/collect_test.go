@@ -198,6 +198,33 @@ func TestTabCheckQueuesOnlyNewUploads(t *testing.T) {
 	}
 }
 
+// New-upload detection is never slowed: a tier C channel's tab check comes
+// back in a week (policy.TabCheck) even under a stretch of 4.
+func TestTabCheckIsNeverStretched(t *testing.T) {
+	c := fakeChannel()
+	r := newRig(t, []fakeyt.FakeChannel{c})
+	r.svc.Stretch = func() float64 { return 4 }
+	ctx := context.Background()
+	if err := registry.List(ctx, r.pool, nil, chID, registry.Input{Input: chID, Tier: policy.C}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = r.pool.Exec(ctx, `UPDATE channels SET backfill_done_at = now() WHERE id = $1`, chID)
+	_, _ = r.pool.Exec(ctx, `DELETE FROM schedule WHERE kind <> 'tabs'`)
+	_, _ = r.pool.Exec(ctx, `UPDATE schedule SET due_at = now() - interval '1 minute'`)
+	w := &worker.Worker{Pool: r.pool, Owner: "t", Handlers: map[string]worker.Handler{queue.KindTabs: r.svc.Handlers()[queue.KindTabs]},
+		Concurrency: 1, Idle: 10 * time.Millisecond, Log: quiet}
+	wctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	_ = w.Run(wctx)
+	var days float64
+	if err := r.pool.QueryRow(ctx, `SELECT EXTRACT(EPOCH FROM due_at - now()) / 86400 FROM schedule WHERE kind = 'tabs'`).Scan(&days); err != nil {
+		t.Fatal(err)
+	}
+	if days < 6.9 || days > 7.1 {
+		t.Errorf("the next tab check is in %.1f days; want 7, unstretched", days)
+	}
+}
+
 func TestPostsAndPlaylists(t *testing.T) {
 	c := fakeChannel()
 	c.Posts = []fakeyt.FakePost{

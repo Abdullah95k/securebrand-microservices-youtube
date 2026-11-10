@@ -84,7 +84,12 @@ What changes:
 3. **An alert for "every IP quarantined" from the database.** It works even when the worker isn't Ready or isn't scraped.
 4. **The worker stops taking jobs while no IP is usable,** instead of failing each one and pushing it hours back.
 
-Whether the pace or the exits need changing too waits for the block counts the master reads before the restart.
+The block counts the master read (47, all on the player, in about 393,000 requests) show the pace and the exits are fine.
+
+**Also proposed:** the capacity planner, which lengthens refresh intervals when there is more work than the IPs can do, assumes
+an IP makes 1,440 requests an hour at 2 s; the pilot measured about 1,320. With the right figure it starts stretching a little
+sooner, so the lowest-priority work isn't starved for as long. It changes how often channels are refreshed when the IPs are
+full, so it waits for the owner too.
 
 ## Ready for the pilot (fix 11)
 
@@ -141,6 +146,9 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- `ytcollect report` (11 November): the IP counts now allow 0.7 s for each answer on top of the gap (an IP makes about 1,333
+  requests an hour at 2 s, not 1,800), so they come out about a third higher; new fields `proxies` and `peak_use` (the busiest
+  hour against what the worker's IPs can make), and a note when that is 90% or more, saying the counts are a floor.
 - The relay's `-transactions` flag and the chart value `relay.transactions` (default `true`, as before). `false` sends each
   batch without a Kafka transaction (idempotent sends), for a Kafka that can't grant the transactional ID; runbook §16.
 - REQ-023 and REQ-024: migration `0014_leases.sql` (a new table `leases`); the migrate command's `-wait` flag (45 minutes) and the

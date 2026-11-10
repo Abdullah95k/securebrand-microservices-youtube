@@ -212,12 +212,24 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 
 	host, _ := os.Hostname()
 	owner := fmt.Sprintf("%s/%d", host, os.Getpid())
+	announce := func() capacity.Worker {
+		return capacity.Worker{Proxies: len(proxies), IntervalS: interval.Seconds(), BackfillDays: *backfillDays, At: time.Now()}
+	}
+	// At shutdown the planner stops counting this worker at once, so the
+	// next pod's capacity isn't counted twice for 15 minutes.
+	defer func() {
+		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := capacity.Withdraw(wctx, pool, owner, announce(), time.Now()); err != nil {
+			log.Warn("withdrawing the capacity announcement failed; it lapses in 15 minutes", "err", err)
+		}
+	}()
 	// Tell the capacity planner what this worker can do.
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
 		for {
-			if err := capacity.Announce(ctx, pool, owner, capacity.Worker{Proxies: len(proxies), IntervalS: interval.Seconds(), BackfillDays: *backfillDays, At: time.Now()}); err != nil && ctx.Err() == nil {
+			if err := capacity.Announce(ctx, pool, owner, announce()); err != nil && ctx.Err() == nil {
 				log.Warn("announcing capacity failed", "err", err)
 			}
 			select {

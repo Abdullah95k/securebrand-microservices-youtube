@@ -24,7 +24,21 @@ const (
 	Spare        = 0.3
 	MinIPs       = 5
 	BackfillDays = 30 // the backfill of new channels is finished within this
+	// AnswerTime is what an answer takes on top of the gap: an IP's gap
+	// starts when the previous answer is in, so an IP makes a request
+	// every gap + AnswerTime. Measured in the 48-hour pilot (7–9 November
+	// 2026): about 1,320 requests an hour per IP at a 2 s gap, its busiest
+	// hour with every IP busy.
+	AnswerTime = 700 * time.Millisecond
+	// FullUse is the share of the IPs' limit above which the busiest hour
+	// counts as full: work was probably waiting, so the counts are a floor.
+	FullUse = 0.9
 )
+
+// perIPHour is the most requests one IP makes in an hour at gap.
+func perIPHour(gap time.Duration) float64 {
+	return 3600 / (gap + AnswerTime).Seconds()
+}
 
 // DefaultGap is the per-IP gap assumed when no worker has announced one.
 const DefaultGap = 2 * time.Second
@@ -163,6 +177,8 @@ type Report struct {
 	Hours            float64      `json:"hours"`
 	Gap              string       `json:"gap"`
 	GapSource        string       `json:"gap_source"`
+	Proxies          int          `json:"proxies,omitempty"`             // the latest worker's IPs, as it announced them
+	PeakUse          float64      `json:"peak_use,omitempty"`            // the busiest hour against what those IPs can make
 	BackfillDepth    int          `json:"backfill_depth_days,omitempty"` // as the workers announced it
 	Kinds            []KindCost   `json:"kinds"`
 	Groups           []KindCost   `json:"groups"`
@@ -285,6 +301,7 @@ func (r *Report) group(name string) Cost {
 // announcement, whatever its age (the pilot may have ended).
 func (r *Report) gap(ctx context.Context, q db.Querier, override time.Duration) error {
 	var w struct {
+		Proxies      int       `json:"proxies"`
 		IntervalS    float64   `json:"interval_s"`
 		BackfillDays int       `json:"backfill_days"`
 		At           time.Time `json:"at"`
@@ -298,6 +315,7 @@ func (r *Report) gap(ctx context.Context, q db.Querier, override time.Duration) 
 		_ = json.Unmarshal(raw, &w)
 	}
 	r.BackfillDepth = w.BackfillDays
+	r.Proxies = w.Proxies
 	switch {
 	case override > 0:
 		r.Gap, r.GapSource = override.String(), "set with -gap"
@@ -487,7 +505,7 @@ func (r *Report) quality(ctx context.Context, q db.Querier) error {
 
 // ipsFor is the IPs a peak hour needs: at most TargetUse busy, plus Spare.
 func ipsFor(peakHour float64, gap time.Duration) int {
-	perIP := 3600 / gap.Seconds() * TargetUse
+	perIP := perIPHour(gap) * TargetUse
 	n := int(math.Ceil(peakHour / perIP * (1 + Spare)))
 	return max(n, MinIPs)
 }
@@ -522,7 +540,7 @@ func (r *Report) project(targets []int) {
 		if r.BackfillChannels > 0 {
 			p.BackfillRequests = r.BackfillPerChan.Mean * float64(n)
 			p.BackfillGB = float64(bf.Bytes) / float64(r.BackfillChannels) * float64(n) / 1e9
-			perIPWindow := float64(BackfillDays) * 86400 / gap.Seconds() * TargetUse
+			perIPWindow := float64(BackfillDays) * 24 * perIPHour(gap) * TargetUse
 			p.BackfillIPs = int(math.Ceil(p.BackfillRequests / perIPWindow * (1 + Spare)))
 			if r.BackfillDepth > 0 && r.BackfillDepth < 365 {
 				p.FullBackfill = p.BackfillRequests / float64(r.BackfillDepth) * 365
@@ -535,9 +553,16 @@ func (r *Report) project(targets []int) {
 	}
 	r.Notes = append(r.Notes,
 		"Projections assume the window's mix of tiers and channel sizes. Channel work, enrichment and images grow with the channel count; discovery doesn't (it has no caps and grows with the search terms), so it is shown as measured.",
-		fmt.Sprintf("IPs: the busiest steady hour, each IP at most %.0f%% busy at a %s gap, plus %.0f%% spare for failover and rests, and never fewer than %d.",
-			TargetUse*100, gap, Spare*100, MinIPs),
+		fmt.Sprintf("IPs: the busiest steady hour, each IP at most %.0f%% busy at a %s gap, plus %.0f%% spare for failover and rests, and never fewer than %d. An IP makes at most %.0f requests an hour: the gap starts after each answer, which takes about %s (measured in the pilot).",
+			TargetUse*100, gap, Spare*100, MinIPs, perIPHour(gap), AnswerTime),
 		fmt.Sprintf("The backfill is once per new channel; its extra IPs finish it within %d days.", BackfillDays))
+	if r.Proxies > 0 && r.PeakHourRequests > 0 {
+		r.PeakUse = float64(r.PeakHourRequests) / (float64(r.Proxies) * perIPHour(gap))
+		if r.PeakUse >= FullUse {
+			r.Notes = append(r.Notes, fmt.Sprintf("The busiest hour used %.0f%% of what the worker's %d IPs can make: they were full, so work was probably waiting and every count here is a floor. Check the queue and the capacity planner's demand for the window.",
+				r.PeakUse*100, r.Proxies))
+		}
+	}
 	if r.BackfillDepth > 0 && r.BackfillDepth < 365 {
 		r.Notes = append(r.Notes, fmt.Sprintf("The backfill read %d days of uploads; the 365-day figure scales it in proportion, an estimate (older uploads have fewer new comments).", r.BackfillDepth))
 	}
@@ -623,6 +648,9 @@ func (r Report) Markdown() string {
 	if r.PeakHourRequests > 0 {
 		p("Steady state: %s requests an hour on average; the busiest hour was %s with %s.", num(r.AvgHourRequests, 0),
 			t(r.PeakHour), num(float64(r.PeakHourRequests), 0))
+		if r.PeakUse > 0 {
+			p("That is %.0f%% of what the worker's %d IPs can make in an hour.", r.PeakUse*100, r.Proxies)
+		}
 	}
 	p("")
 	p("## Projected")

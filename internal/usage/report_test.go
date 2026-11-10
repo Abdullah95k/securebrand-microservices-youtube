@@ -125,14 +125,26 @@ func TestBuildReport(t *testing.T) {
 	near("1k discovery (not scaled)", p1k.DiscoveryRequests, 120)
 	near("1k GB a day", p1k.GBPerDay, 8.0512)
 	near("1k peak", p1k.PeakHourRequests, 80753.05)
-	if p1k.IPs != 84 || p10k.IPs != 834 {
-		t.Errorf("IPs = %d and %d; want 84 and 834", p1k.IPs, p10k.IPs)
+	// 80,753 an hour at 1,333 per IP (2 s gap + 0.7 s answer), 70% busy:
+	// 86.5 IPs, plus 30% spare: 112.5, so 113.
+	if p1k.IPs != 113 || p10k.IPs != 1125 {
+		t.Errorf("IPs = %d and %d; want 113 and 1125", p1k.IPs, p10k.IPs)
 	}
 	near("1k backfill", p1k.BackfillRequests, 200000)
 	near("1k backfill GB", p1k.BackfillGB, 2)
 	near("1k full backfill", p1k.FullBackfill, 10428571.43)
-	if p1k.BackfillIPs != 1 || p10k.BackfillIPs != 3 {
-		t.Errorf("backfill IPs = %d and %d; want 1 and 3", p1k.BackfillIPs, p10k.BackfillIPs)
+	// 2,000,000 requests in 30 days at 933 an hour per IP: 2.98 IPs, plus
+	// 30% spare: 3.9, so 4.
+	if p1k.BackfillIPs != 1 || p10k.BackfillIPs != 4 {
+		t.Errorf("backfill IPs = %d and %d; want 1 and 4", p1k.BackfillIPs, p10k.BackfillIPs)
+	}
+	if r.Proxies != 6 || r.PeakUse > 0.05 {
+		t.Errorf("proxies %d, busiest hour use %.3f; want 6 and about 4%%", r.Proxies, r.PeakUse)
+	}
+	for _, n := range r.Notes {
+		if strings.Contains(n, "they were full") {
+			t.Errorf("a quiet window reported as full: %s", n)
+		}
 	}
 	near("1k database GB a year", p1k.DBGBPerYear, 18250)
 	// Database growth.
@@ -193,11 +205,30 @@ func TestNum(t *testing.T) {
 }
 
 func TestIPsFor(t *testing.T) {
-	// 2 s gap: 1,800 an hour per IP, 1,260 at 70%; then 30% spare.
-	if n := ipsFor(1260*10, 2*time.Second); n != 13 {
-		t.Errorf("ipsFor = %d; want 13", n)
+	// 2 s gap and a 0.7 s answer: 1,333 an hour per IP, 933 at 70%; then
+	// 30% spare. The pilot's busiest hour, 13,210 requests: 18.4, so 19.
+	if n := ipsFor(13210, 2*time.Second); n != 19 {
+		t.Errorf("ipsFor = %d; want 19", n)
 	}
 	if n := ipsFor(10, 2*time.Second); n != MinIPs {
 		t.Errorf("ipsFor = %d; want the minimum %d", n, MinIPs)
+	}
+}
+
+// The pilot's busiest hour, 13,210 requests on 10 IPs at a 2 s gap, is 99%
+// of what they can make: the report says the counts are a floor.
+func TestFullBusiestHour(t *testing.T) {
+	r := Report{Channels: 2646, Hours: 48, Gap: "2s", Proxies: 10, PeakHourRequests: 13210,
+		Groups: []KindCost{{Kind: GroupChannel, Cost: Cost{Requests: 369498}}}}
+	r.project(nil)
+	if r.PeakUse < 0.98 || r.PeakUse > 1 {
+		t.Errorf("busiest hour use = %.3f; want 0.99", r.PeakUse)
+	}
+	full := false
+	for _, n := range r.Notes {
+		full = full || strings.Contains(n, "they were full")
+	}
+	if !full {
+		t.Errorf("no note that the IPs were full: %q", r.Notes)
 	}
 }

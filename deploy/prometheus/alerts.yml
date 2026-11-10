@@ -15,6 +15,16 @@ groups:
         annotations:
           runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
           summary: "{{ $value }} proxy IP(s) in quarantine"
+      # Every IP quarantined (the owner, 11 November): from the database,
+      # through the scheduler, so it fires even while the worker isn't Ready
+      # or isn't scraped. Meanwhile the worker takes no jobs.
+      - alert: AllProxiesQuarantined
+        expr: max(yt_proxies_quarantined) > 0 and max(yt_proxies_quarantined) >= max(yt_proxies_reporting)
+        for: 10m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "Every proxy IP is quarantined ({{ $value }}): nothing is collected"
+          description: "See 'ytcollect proxies'; once the IPs are replaced or the blocks have passed, 'ytcollect proxies release -all'."
       # REQ-010 fix 7 (standard C5): the pool can't run dry unnoticed. Fewer
       # than 3 usable IPs, or under half the pool, for 15 minutes. Player
       # rests don't count: the player is blocked often by design.

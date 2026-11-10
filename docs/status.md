@@ -12,8 +12,8 @@ The current state of the YouTube collector, for the owner and the master session
   - the pilot ran across UTC days 7, 8 and 9 November, so by 16:30Z on 9 November all 10 IPs were quarantined.
 
   The quarantine is held in memory, so a worker restart clears it. The master reads the pool's metrics first and then restarts
-  the worker. Without a fix it happens again about three days later. **A fix is proposed to the owner** (below); it changes how
-  yts backs off after blocks, so it waits for their yes. The relay is fine.
+  the worker. Without a fix it happens again about three days later. **The owner approved the fix on 11 November**; it is built
+  (below). The relay is fine.
 - **Built and merged:** every production step of the plan (1–20). That is the collector, comments, posts and playlists, discovery,
   capacity planning, privacy tools (dormant), images, the archive, webhooks, and the Docker Compose deployment, all with tests. See
   [plan.md](plan.md) §10.
@@ -70,7 +70,7 @@ The current state of the YouTube collector, for the owner and the master session
   - **Next:** the pilot report (fix 11) after 18:29 on 9 November. The relay sends the outbox as it fills (above).
 - **Legal sign-off:** received (D29). Comments and all their public data are collected.
 
-## Proposed to the owner (11 November): the quarantine rule
+## Approved by the owner (11 November): the quarantine rule
 
 What stays the same: the 2 s pace, the rests after a block (30 min, 2 h, 12 h, 24 h), trying another IP after a block, parking a
 request blocked on 3 IPs, the pool brake and the WEB client.
@@ -145,6 +145,12 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- The quarantine rule (11 November, the owner: "ok fix the quarantine rule"): a day counts only after 3 page blocks (player
+  blocks never count), and an IP is quarantined after 3 such days in a row. Migration `0015_proxy_quarantine.sql` adds two
+  columns to `proxy_health` (`quarantined_since`, `released_at`): a quarantine outlives a restart, and the new command
+  `ytcollect proxies` (list, `release ID`, `release -all`) lifts it. New gauge `yt_proxies_reporting` and alert
+  `AllProxiesQuarantined` (from the database, through the scheduler). While no IP is usable, the worker takes no jobs.
+  Runbook §7.
 - The media hand-off (11 November, the owner: "yes", and avatars and banners "collect them for analysis then delete them as
   well"): channel avatars and banners are handed off and deleted like thumbnails, by default. New relay flag `-media-kinds` and
   chart value `relay.media.kinds` (default `[thumb, avatar, banner]`; `author_avatar` adds commenters' avatars). Turning the

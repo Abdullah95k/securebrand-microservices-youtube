@@ -48,6 +48,10 @@ type Worker struct {
 	OnResult func(kind string, err error, took time.Duration) // metrics; nil = none
 	// OnDead is called when a job reaches its failure limit; nil = none.
 	OnDead func(kind string)
+	// Paused, when set, is asked before each lease: while it gives a reason,
+	// no job is taken (for example while no proxy IP is usable), so jobs
+	// keep their place instead of failing.
+	Paused func() string
 
 	switches Switches
 	swAt     time.Time
@@ -129,7 +133,21 @@ func (w *Worker) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	defer w.stop(&wg, interrupt)
 	idle := poll.Backoff{Max: w.Idle}
+	paused := ""
 	for ctx.Err() == nil {
+		if w.Paused != nil {
+			why := w.Paused()
+			switch {
+			case why != "" && paused == "":
+				w.Log.Warn("not taking jobs", "why", why)
+			case why == "" && paused != "":
+				w.Log.Info("taking jobs again", "after", paused)
+			}
+			if paused = why; why != "" {
+				idle.Wait(ctx)
+				continue
+			}
+		}
 		free := w.Concurrency - len(slots)
 		kinds := w.kinds(ctx)
 		var jobs []queue.Job

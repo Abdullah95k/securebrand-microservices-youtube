@@ -56,6 +56,7 @@ Usage: ytcollect <command> [flags]
   keywords   import the seed list; add, list, set or remove keywords ("ytcollect keywords" for details)
   health     the job queue by kind and priority, and switched-off features
   jobs       dead jobs (too many failures): list them, or requeue them once the cause is fixed
+  proxies    the proxy IPs' health; release a quarantined IP
   report     measured cost per channel per day and in total, projected to 1,000 and 10,000 channels with the IPs needed
   outbox     events waiting for Kafka; "outbox check" maps them to the platform contract and lists any it refuses
   erase      record an erasure request (author, channel, video, comment or post); a worker carries it out
@@ -103,7 +104,7 @@ func main() {
 			log.Info("database up to date", "applied", strings.Join(applied, ","))
 			return grantPlatformRoles(ctx, pool, log)
 		})
-	case "channels", "keywords", "health", "jobs", "report", "outbox", "switch", "scheduler", "worker", "websub", "relay", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
+	case "channels", "keywords", "health", "jobs", "proxies", "report", "outbox", "switch", "scheduler", "worker", "websub", "relay", "erase", "erasures", "privacy-audit", "export", "archive", "webhooks", "suppression":
 		switch cmd {
 		case "scheduler", "worker", "websub", "relay":
 			log.Info("starting", "command", cmd, "version", version.Version, "revision", version.Revision)
@@ -126,6 +127,8 @@ func main() {
 			err = healthCmd(ctx, pool, os.Stdout)
 		case "jobs":
 			err = jobsCmd(ctx, pool, os.Stdout, args)
+		case "proxies":
+			err = proxiesCmd(ctx, pool, os.Stdout, args, time.Now())
 		case "report":
 			err = reportCmd(ctx, pool, os.Stdout, args, time.Now())
 		case "outbox":

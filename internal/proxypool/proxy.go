@@ -10,6 +10,9 @@
 //   - when several IPs of one subnet are blocked, the whole subnet cools down;
 //   - a pool brake slows everything when >20% of IPs are blocked within an
 //     hour, and pauses everything when >50% are.
+//   - an IP blocked on page requests at least 3 times a day, 3 days in a
+//     row, is quarantined (player blocks don't count); it stays out until
+//     it is released (Unquarantine).
 //
 // The pool never solves CAPTCHAs or bot checks; it only decides which IP may
 // send the next request and when.

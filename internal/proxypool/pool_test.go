@@ -109,26 +109,84 @@ func TestHealthIsPerEndpointClass(t *testing.T) {
 	}
 }
 
-func TestQuarantineAfterBlocksOnThreeDays(t *testing.T) {
-	ps := makeProxies(t, "192.0.2.1:80", "198.51.100.1:80")
-	p := New(ps, Config{Jitter: noJitter, BrakePauseFraction: 0.99, BrakeSlowFraction: 0.99}, 1)
-	for day := 0; day < 3; day++ {
-		now := t0.Add(time.Duration(day) * 24 * time.Hour)
-		st := p.byID[ps[0].ID()]
-		if st.quarantined {
-			t.Fatalf("quarantined too early, day %d", day)
-		}
+// block records n blocks of class c on the proxy at now.
+func block(p *Pool, id string, now time.Time, c Class, n int) {
+	st := p.byID[id]
+	for i := 0; i < n; i++ {
 		st.inFlight = true
-		p.releaseAt(now, st, ClassBrowse, Blocked)
+		p.releaseAt(now, st, c, Blocked)
 	}
-	if !p.byID[ps[0].ID()].quarantined {
-		t.Fatal("want quarantine after blocks on 3 distinct days")
+}
+
+// An IP is quarantined after 3 bad days in a row (3 or more page blocks a
+// UTC day); not for the player's blocks, nor a few blocks a day, nor bad
+// days with a good one between them (the pilot's case, 7–9 November 2026:
+// one player block a day on every IP took them all under the old rule).
+func TestQuarantineAfterThreeBadDaysInARow(t *testing.T) {
+	ps := makeProxies(t, "192.0.2.1:80", "198.51.100.1:80")
+	id := ps[0].ID()
+	day := func(d int) time.Time { return t0.Add(time.Duration(d) * 24 * time.Hour) }
+	fresh := func() *Pool {
+		return New(ps, Config{Jitter: noJitter, BrakePauseFraction: 0.99, BrakeSlowFraction: 0.99}, 1)
 	}
-	if s, _ := p.pickAt(t0.Add(30*24*time.Hour), ClassBrowse, map[string]bool{ps[1].ID(): true}, ""); s != nil {
+
+	// Player blocks every day, however many: never.
+	p := fresh()
+	for d := 0; d < 5; d++ {
+		block(p, id, day(d), ClassPlayer, 10)
+	}
+	if p.byID[id].quarantined {
+		t.Fatal("player blocks must not quarantine an IP")
+	}
+	// Two page blocks a day: not a bad day.
+	p = fresh()
+	for d := 0; d < 5; d++ {
+		block(p, id, day(d), ClassBrowse, 2)
+	}
+	if p.byID[id].quarantined {
+		t.Fatal("two page blocks a day must not quarantine an IP")
+	}
+	// Bad days 0, 1, 3, 4: never three in a row.
+	p = fresh()
+	for _, d := range []int{0, 1, 3, 4} {
+		block(p, id, day(d), ClassBrowse, 3)
+	}
+	if p.byID[id].quarantined {
+		t.Fatal("bad days with a good one between them must not quarantine an IP")
+	}
+	// Three bad days in a row: quarantined on the third, from then on.
+	p = fresh()
+	for d := 0; d < 3; d++ {
+		if p.byID[id].quarantined {
+			t.Fatalf("quarantined too early, day %d", d)
+		}
+		block(p, id, day(d).Add(time.Duration(d)*time.Hour), ClassBrowse, 3)
+	}
+	if st := p.byID[id]; !st.quarantined || !st.quarantinedAt.Equal(day(2).Add(2*time.Hour)) {
+		t.Fatalf("want quarantine on the third bad day, got %v at %v", st.quarantined, st.quarantinedAt)
+	}
+	if s, _ := p.pickAt(day(30), ClassBrowse, map[string]bool{ps[1].ID(): true}, ""); s != nil {
 		t.Error("a quarantined IP must not be used")
 	}
-	if !p.Unquarantine(ps[0].ID()) || p.byID[ps[0].ID()].quarantined {
+	if !p.Usable() {
+		t.Error("the other IP is still usable")
+	}
+	if got := p.Stats().Proxies[0]; !got.Quarantined || got.QuarantinedSince.IsZero() {
+		t.Errorf("stats %+v", got)
+	}
+	if !p.Unquarantine(id) || p.byID[id].quarantined {
 		t.Error("Unquarantine should restore the IP")
+	}
+	// Restored after a restart; with every IP out, nothing is usable.
+	since := day(9)
+	if !p.Quarantine(id, since) || !p.Quarantine(ps[1].ID(), since) || p.Quarantine("px-unknown", since) {
+		t.Fatal("Quarantine restores known IPs only")
+	}
+	if p.Usable() {
+		t.Error("every IP is quarantined: nothing is usable")
+	}
+	if !p.byID[id].quarantinedAt.Equal(since) {
+		t.Error("a restored quarantine keeps its time")
 	}
 }
 

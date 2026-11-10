@@ -374,6 +374,30 @@ scheduler:
 When the stretch sits at 8 and `yt_freshness_debt_hours` still grows, the work that is never slowed fills the IPs alone: add IPs, or
 find fewer channels.
 
+**Quarantined IPs.** An IP blocked on page requests at least 3 times in a day (UTC), 3 days in a row, is quarantined: no job
+uses it. Player blocks never count; the player is blocked often by design. A quarantine outlives a restart. See them:
+
+```bash
+ytcollect proxies
+```
+
+Release one once its provider has replaced it, or once you are sure the blocks have passed (the worker picks it up within a
+minute):
+
+```bash
+ytcollect proxies release px-0a1b2c
+```
+
+Or every quarantined IP:
+
+```bash
+ytcollect proxies release -all
+```
+
+**Alert `AllProxiesQuarantined`**: every IP is quarantined, so nothing is collected. The worker takes no jobs meanwhile, so none
+fail or are pushed back. The alert comes from the database, so it fires even when the worker isn't Ready. Replace the IPs, or
+release them when the blocks have passed.
+
 **Health endpoints.** The worker (`:9101`) and the scheduler (`:9102`) answer on their ops port. The push receiver answers on its own
 port (`:8080`).
 

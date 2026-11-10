@@ -250,3 +250,44 @@ func TestWorkerRecordsUsage(t *testing.T) {
 		}
 	}
 }
+
+// While Paused gives a reason (no usable proxy IP), no job is leased: it
+// keeps its place and its attempt count, and runs once the pause ends.
+func TestWorkerPausedTakesNoJobs(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	_ = queue.Put(ctx, pool, "video", "fakeP", "", queue.P0, time.Now().Add(-time.Minute))
+	var paused atomic.Bool
+	paused.Store(true)
+	var ran atomic.Int32
+	w := &worker.Worker{Pool: pool, Owner: "test", Concurrency: 1, Idle: 10 * time.Millisecond, Lease: time.Minute,
+		Paused: func() string {
+			if paused.Load() {
+				return "every proxy IP is quarantined"
+			}
+			return ""
+		},
+		Handlers: map[string]worker.Handler{"video": func(context.Context, queue.Job) (time.Time, error) {
+			ran.Add(1)
+			return time.Now().Add(time.Hour), nil
+		}}}
+	wctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { _ = w.Run(wctx); close(done) }()
+	time.Sleep(150 * time.Millisecond)
+	var attempts int
+	_ = pool.QueryRow(ctx, `SELECT attempts FROM schedule WHERE entity_id = 'fakeP'`).Scan(&attempts)
+	if ran.Load() != 0 || attempts != 0 {
+		t.Errorf("paused: ran %d times, %d attempts; want none", ran.Load(), attempts)
+	}
+	paused.Store(false)
+	deadline := time.Now().Add(3 * time.Second)
+	for ran.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if ran.Load() != 1 {
+		t.Errorf("after the pause the job ran %d times; want 1", ran.Load())
+	}
+}

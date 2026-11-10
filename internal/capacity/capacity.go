@@ -66,11 +66,21 @@ type Worker struct {
 	IntervalS    float64   `json:"interval_s"`
 	BackfillDays int       `json:"backfill_days,omitempty"` // for "ytcollect report"
 	At           time.Time `json:"at"`
+	// Stopped is set when the worker shuts down, so the planner stops
+	// counting it at once (a new pod announces itself while the old one's
+	// announcement is still fresh). The report still reads the rest.
+	Stopped time.Time `json:"stopped,omitempty"`
 }
 
 // Announce records a worker's capacity (workers call it every few minutes).
 func Announce(ctx context.Context, q db.Querier, owner string, w Worker) error {
 	return db.SetSetting(ctx, q, "capacity/"+owner, w)
+}
+
+// Withdraw marks a worker's announcement stopped (at shutdown).
+func Withdraw(ctx context.Context, q db.Querier, owner string, w Worker, at time.Time) error {
+	w.Stopped = at
+	return Announce(ctx, q, owner, w)
 }
 
 // Options tune a planner run.
@@ -91,8 +101,9 @@ type Report struct {
 	SpareTimePerHour   float64            `json:"spare_time_per_hour"` // P4 work, not in the demand
 	Stretch            float64            `json:"stretch"`
 	MinStretch         float64            `json:"min_stretch,omitempty"`
-	DebtHours          map[string]float64 `json:"debt_hours"`      // overdue job-hours per tier
-	RecommendedIPs     int                `json:"recommended_ips"` // to do it all without a stretch
+	DebtHours          map[string]float64 `json:"debt_hours"`       // overdue job-hours per tier, P4 work left out
+	SpareDebtHours     float64            `json:"spare_debt_hours"` // overdue job-hours of P4 work (images, enrichment)
+	RecommendedIPs     int                `json:"recommended_ips"`  // to do it all without a stretch
 	Workers            int                `json:"workers"`
 	Measured           map[string]float64 `json:"measured_cost,omitempty"` // requests per job, last day
 }
@@ -127,7 +138,7 @@ func PlanWith(ctx context.Context, q db.Querier, now time.Time, o Options) (Repo
 			return r, err
 		}
 		var w Worker
-		if json.Unmarshal(raw, &w) != nil || now.Sub(w.At) > 15*time.Minute || w.IntervalS <= 0 {
+		if json.Unmarshal(raw, &w) != nil || now.Sub(w.At) > 15*time.Minute || w.IntervalS <= 0 || !w.Stopped.IsZero() {
 			continue
 		}
 		r.Workers++
@@ -200,10 +211,13 @@ func PlanWith(ctx context.Context, q db.Querier, now time.Time, o Options) (Repo
 	}
 	rows.Close()
 	r.DemandPerHour = r.FixedPerHour + r.StretchablePerHour
-	// Freshness debt: how far behind the overdue jobs are, per tier.
-	rows, err = q.Query(ctx, `SELECT COALESCE(c.tier, '-'), sum(EXTRACT(EPOCH FROM $1::timestamptz - s.due_at) / 3600)
+	// Freshness debt: how far behind the overdue jobs are, per tier. P4 work
+	// runs in spare time, so its backlog is reported apart; "-" is work of
+	// no listed channel (discovery, and videos of unlisted channels).
+	rows, err = q.Query(ctx, `SELECT CASE WHEN s.priority >= $2 THEN 'spare' ELSE COALESCE(c.tier, '-') END,
+			sum(EXTRACT(EPOCH FROM $1::timestamptz - s.due_at) / 3600)
 		FROM schedule s LEFT JOIN channels c ON c.id = s.channel_id
-		WHERE s.due_at < $1::timestamptz - interval '15 minutes' AND s.dead_at IS NULL GROUP BY 1`, now)
+		WHERE s.due_at < $1::timestamptz - interval '15 minutes' AND s.dead_at IS NULL GROUP BY 1`, now, queue.P4)
 	if err != nil {
 		return r, err
 	}
@@ -213,6 +227,10 @@ func PlanWith(ctx context.Context, q db.Querier, now time.Time, o Options) (Repo
 		if err := rows.Scan(&tier, &h); err != nil {
 			rows.Close()
 			return r, err
+		}
+		if tier == "spare" {
+			r.SpareDebtHours = math.Round(h*10) / 10
+			continue
 		}
 		r.DebtHours[tier] = math.Round(h*10) / 10
 	}

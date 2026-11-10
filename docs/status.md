@@ -149,6 +149,10 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- The capacity planner (11 November, after the first plan on `519c220`): a stopping worker marks its announcement stopped
+  (new field `stopped` in `capacity/<worker>`), so a restart no longer counts its IPs twice for 15 minutes. The P4 backlog
+  (images, enrichment) is no longer freshness debt: `capacity_reports.debt` and `yt_freshness_debt_hours` leave it out, and
+  `spare_debt_hours` reports it apart.
 - The quarantine rule (11 November, the owner: "ok fix the quarantine rule"): a day counts only after 3 page blocks (player
   blocks never count), and an IP is quarantined after 3 such days in a row. Migration `0015_proxy_quarantine.sql` adds two
   columns to `proxy_health` (`quarantined_since`, `released_at`): a quarantine outlives a restart, and the new command

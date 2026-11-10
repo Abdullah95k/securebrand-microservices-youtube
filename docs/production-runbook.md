@@ -360,7 +360,11 @@ the schedule asks for:
   - refreshes that can be: tiers C, D and M's channel snapshots, posts, playlists, video stats and comment scans.
 
   Images and commenter enrichment, the lowest priority, are left out: they run in whatever time is left and never slow a
-  refresh (the log's `spare_time_per_hour`).
+  refresh (the log's `spare_time_per_hour`). Their backlog is not freshness debt either: the log shows it as
+  `spare_debt_hours`, apart from the tiers. Debt under "-" is work of no listed channel: discovery's searches and candidate
+  checks, and videos of channels not on the list.
+
+A worker that shuts down marks itself stopped, so the pod that replaces it isn't counted twice.
 
 When that is more than the IPs can do, the planner refreshes C, D and M less often (the "stretch", at most 8 times), by up to 1.5
 times per hour. New uploads are found as soon as before: the feeds and tab checks are never slowed. The scheduler's log line

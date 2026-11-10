@@ -176,3 +176,40 @@ func TestPlanFloorAndNoWorker(t *testing.T) {
 		t.Errorf("stretch %v with no live worker; want it kept at 2.5", r.Stretch)
 	}
 }
+
+// A worker that stopped is no longer supply, even while its announcement is
+// fresh: the pod that replaced it announces itself too (10 November: the
+// first plan after a restart counted 10 IPs twice).
+func TestPlanSkipsAStoppedWorker(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	old := capacity.Worker{Proxies: 2, IntervalS: 4, At: f.at}
+	if err := capacity.Announce(ctx, f.pool, "w-old", old); err != nil {
+		t.Fatal(err)
+	}
+	if r := f.plan(capacity.Options{}); r.Workers != 2 {
+		t.Fatalf("%d workers before the stop", r.Workers)
+	}
+	if err := capacity.Withdraw(ctx, f.pool, "w-old", old, f.at); err != nil {
+		t.Fatal(err)
+	}
+	r := f.plan(capacity.Options{})
+	if r.Workers != 1 {
+		t.Errorf("%d workers; the stopped one must not count", r.Workers)
+	}
+	near(t, "supply", r.SupplyPerHour, 2*3600/4.7*0.7, 0.01)
+}
+
+// Overdue P4 work (images, enrichment) runs in spare time: its backlog is
+// reported apart and never counts as a tier's freshness debt.
+func TestPlanKeepsSpareTimeBacklogOutOfDebt(t *testing.T) {
+	f := setup(t)
+	f.exec(`UPDATE schedule SET due_at = now() - interval '5 hours' WHERE kind = 'media' AND entity_id IN ('thumb:fakeIMG0', 'thumb:fakeIMG1')`)
+	f.exec(`INSERT INTO schedule (kind, entity_id, priority, due_at) VALUES ('search', 'fake overdue term', 2, now() - interval '3 hours')`)
+	r := f.plan(capacity.Options{})
+	near(t, "spare-time debt", r.SpareDebtHours, 10, 0.2)
+	if _, ok := r.DebtHours["spare"]; ok {
+		t.Error("spare-time work must not be a tier")
+	}
+	near(t, "debt of no listed channel", r.DebtHours["-"], 3, 0.2)
+}

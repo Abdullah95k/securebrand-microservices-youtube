@@ -607,7 +607,7 @@ coverage grows.
 | **discovery** | Candidates from search hits and the channel graph; candidate check (About + channel-scoped search); core/mention classification; re-checks |
 | **registry** | The list: channel IDs, type (core/mention), tier, status (candidate / listed / dormant / no-match / suppressed), backfill progress |
 | **capacity planner** | Hourly supply vs demand; stretches long-tail intervals when short; reports freshness debt and recommended IPs/servers |
-| **scheduler** | A "next check time" per channel, video, comment stream and post. Priority queues: P0 new uploads and new-video details, P1 new comments, P2 refreshes and sweeps, P3 backfill and candidate checks, P4 commenter enrichment |
+| **scheduler** | A "next check time" per channel, video, comment stream and post. Priority queues: P0 new uploads and new-video details (and, since D-052, the feed and tab checks that find them), P1 new comments, P2 refreshes and sweeps, P3 backfill and candidate checks, P4 commenter enrichment. A job's priority follows what it does each run, and within a priority tiers A and B go first (D-052) |
 | **proxy-manager** | IP pool, health per IP **and per endpoint type**, subnet grouping, per-IP budgets, cooldowns, failover, the 3-IP park rule, the pool brake (§3). Credentials loaded from a file and never logged |
 | **scraper-fetcher** | InnerTube client: logged-out web client (`hl=ar`, `gl=IQ`), continuations, image CDN, client version auto-detected daily. Raw responses kept only for parse failures and a 1% sample (3 days) |
 | **parser** | Versioned, type-based parsers; validates fields and reports **field fill rates** (§8.11) |

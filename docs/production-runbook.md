@@ -366,6 +366,22 @@ the schedule asks for:
 
 A worker that shuts down marks itself stopped, so the pod that replaces it isn't counted twice.
 
+**The order of the queue** (the owner, D-052, 11 November). Workers take due jobs by priority. Within a priority, tier A's jobs
+go first, then tier B's, then the rest (tiers C, D and M, and jobs of no listed channel). Within a tier, the oldest due job
+goes first.
+
+- **P0:** new uploads' first reading, and the feed and tab checks that find them. A live stream stays at P0 while it is live or
+  about to start.
+- **P1:** comment scans of videos and posts under two days old.
+- **P2:** refreshes: later readings of a video, comment scans once it is two days old, channel snapshots, posts, sweeps and
+  searches.
+- **P3:** backfill, the first comment scan of a backfilled video or post, playlists and candidate checks.
+- **P4:** commenter profiles and images, in spare time only.
+
+A job's priority follows what it does each time it runs: after its first reading, a video's next run is a P2 refresh. The
+queue table in `ytcollect health` shows this as most video jobs at P2 and only new ones at P0. If P0 or P1 holds thousands
+of due jobs, the IPs can't keep up even with new work: that is the time to add IPs.
+
 When that is more than the IPs can do, the planner refreshes C, D and M less often (the "stretch", at most 8 times), by up to 1.5
 times per hour. New uploads are found as soon as before: the feeds and tab checks are never slowed. The scheduler's log line
 "capacity plan" shows both parts, the stretch and the IPs that would make it unnecessary (`recommended_ips`).

@@ -148,6 +148,39 @@ func (r *rig) pagesRead(prefix string) int {
 	return n
 }
 
+// A comment scan's next run is P1 while the video is new, P2 (a refresh)
+// once it is two days old, and a backfilled video's P3 scan is P2 after
+// its first run (D-052).
+func TestScanPriorityFollowsTheVideosAge(t *testing.T) {
+	r := newRig(t)
+	r.serve(fakeComments(3))
+	ctx := context.Background()
+	at := func(prio int) int {
+		t.Helper()
+		if _, err := r.pool.Exec(ctx, `INSERT INTO schedule (kind, entity_id, channel_id, priority, due_at)
+			VALUES ('comments', $1, $2, $3, now()) ON CONFLICT (kind, entity_id) DO UPDATE SET priority = $3`, vid, ch, prio); err != nil {
+			t.Fatal(err)
+		}
+		pctx, _ := provenance.With(ctx, provenance.Job{ID: "comments/" + vid + "/1", Kind: queue.KindComments})
+		if _, err := r.eng.Handlers()[queue.KindComments](pctx, queue.Job{Kind: queue.KindComments, EntityID: vid, ChannelID: ch, Priority: prio}); err != nil {
+			t.Fatal(err)
+		}
+		return r.count(t, `SELECT priority FROM schedule WHERE kind = 'comments' AND entity_id = $1`, vid)
+	}
+	if p := at(queue.P1); p != queue.P1 {
+		t.Errorf("a 2-hour-old video's next scan at P%d; want P1", p)
+	}
+	if _, err := r.pool.Exec(ctx, `UPDATE videos SET published_at = now() - interval '3 days' WHERE id = $1`, vid); err != nil {
+		t.Fatal(err)
+	}
+	if p := at(queue.P1); p != queue.P2 {
+		t.Errorf("a 3-day-old video's next scan at P%d; want P2", p)
+	}
+	if p := at(queue.P3); p != queue.P2 {
+		t.Errorf("after a backfilled video's first scan: P%d; want P2", p)
+	}
+}
+
 func TestFirstReadScansEditsRepliesAndDeletions(t *testing.T) {
 	r := newRig(t)
 	cs := fakeComments(10)

@@ -12,12 +12,16 @@ The current state of the YouTube collector, for the owner and the master session
   for the master's pin: `34ff031`** (PR 84): `ytcollect health` shows the overdue work by tier, and the outbox-age alert leaves
   out refused events.
 - **Being looked at (11 November):**
-  - **tiers A and B are falling behind, and feed checks run hours late in every tier** (health at 06:54Z and 07:56Z): priority
-    2 (feed checks and refreshes) got almost no time, and priority 3 none, because priorities 0 and 1 took it all. The cause is
-    in the code: a job keeps the priority it was first queued with, so every later reading of a video first found as new
-    stays at priority 0, and its comment rechecks at 1. Three fixes are with the owner:
-    [`master/yts-queue-order.md`](master/yts-queue-order.md). Fix 1 puts feed checks at priority 0, Fix 2 puts tiers A and B
-    first within a priority, and Fix 3 makes later readings refreshes. Nothing changes before the owner answers.
+  - **tiers A and B were falling behind, and feed checks ran hours late in every tier** (health at 06:54Z and 07:56Z): priority
+    2 (feed checks and refreshes) got almost no time, and priority 3 none, because priorities 0 and 1 took it all. The cause was
+    in the code: a job kept the priority it was first queued with, so every later reading of a video first found as new
+    stayed at priority 0, and its comment rechecks at 1. [`master/yts-queue-order.md`](master/yts-queue-order.md) has the
+    analysis. **The owner approved all three fixes (D-052), and they are built:**
+    - Fix 1 (PR 89): feed and tab checks at priority 0.
+    - Fix 2 (PR 90): tiers A and B first within a priority.
+    - Fix 3 (PR 91): a video's later readings, and comment checks once the video or post is two days old, at priority 2.
+
+    They go out in one deploy. The master reads health about an hour after it.
   - **3 channel events refused** by the contract checks since about 85 hours ago (retried at each relay restart): each
     channel's page gave neither a title nor a handle, and an account needs one or the other. Fixed (PR 87): such a channel
     goes out as a partial account (what is known; consumers keep the name they have), and its page is kept as a parse
@@ -172,6 +176,14 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- The queue's order (D-052), on yts's own `schedule` table only:
+  - Migration `0017` moves feed and tab checks to P0.
+  - Migration `0018` adds the column `schedule.tier_rank`, the function `queue_tier_rank` and two triggers that keep it in
+    step with the channel's tier, and rebuilds the index `schedule_due` on (priority, tier_rank, due_at).
+  - Migration `0019` moves the rows already queued, by the rule the workers now follow: a job's priority follows what it
+    does each run.
+
+  The capacity planner counts C, D and M's later video readings as refreshes it can slow, as the handler already did.
 - `content.account.v1`: a monitored channel whose page gave neither a title nor a handle is sent as a partial account
   (`envelope.partial`, as for commenters without a name) instead of being refused. A channel page without a title is now
   recorded as a parse failure even when it has tabs.

@@ -66,6 +66,38 @@ func Put(ctx context.Context, q db.Querier, kind, id, channelID string, prio int
 	return err
 }
 
+// NewFor is how long a video or post counts as new: its comment scans are
+// new comments (P1) until then, and refreshes (P2) after (D-052).
+const NewFor = 48 * time.Hour
+
+// ScanPriority is the priority of a comment scan's next run, by the age of
+// its video or post: P1 while it is new, P2 (a refresh) after. An unknown
+// age (0) counts as new.
+func ScanPriority(age time.Duration) int {
+	if age < NewFor {
+		return P1
+	}
+	return P2
+}
+
+// Reprioritize sets the priority of a job's next runs: what a job does
+// each time decides its priority (the owner, D-052, 11 November). A job
+// used to keep the priority it was first queued with, so every later
+// reading of a video found as new stayed at P0, ahead of every refresh.
+// The row changes only while it still has the priority the job ran with,
+// so a check-now that raised it during the run is kept.
+func Reprioritize(ctx context.Context, q db.Querier, j Job, prio int) error {
+	if prio == j.Priority {
+		return nil
+	}
+	if prio < P0 || prio > P4 {
+		return fmt.Errorf("queue: priority %d out of range", prio)
+	}
+	_, err := q.Exec(ctx, `UPDATE schedule SET priority = $3 WHERE kind = $1 AND entity_id = $2 AND priority = $4`,
+		j.Kind, j.EntityID, prio, j.Priority)
+	return err
+}
+
 // Ensure adds a row only if there is none (an existing row keeps its time).
 func Ensure(ctx context.Context, q db.Querier, kind, id, channelID string, prio int, due time.Time) (bool, error) {
 	tag, err := q.Exec(ctx, `INSERT INTO schedule (kind, entity_id, channel_id, priority, due_at)

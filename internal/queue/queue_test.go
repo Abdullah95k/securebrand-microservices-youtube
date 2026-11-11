@@ -131,6 +131,56 @@ func TestLeaseTakesTiersAAndBFirst(t *testing.T) {
 	}
 }
 
+// After a run, a job's priority follows what it did (D-052): a video read
+// once is a refresh. A check-now that raised it during the run is kept.
+func TestReprioritize(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := time.Now().Add(-time.Minute)
+	must(queue.Put(ctx, pool, "video", "fakeRP1", "", queue.P0, past))
+	must(queue.Put(ctx, pool, "comments", "fakeRP2", "", queue.P1, past))
+	jobs, err := queue.Lease(ctx, pool, "w1", nil, 10, time.Minute)
+	must(err)
+	if len(jobs) != 2 {
+		t.Fatalf("leased %v", jobs)
+	}
+	for _, j := range jobs {
+		if j.Kind == "comments" {
+			must(queue.Now(ctx, pool, "comments", "fakeRP2", "", queue.P0)) // a check-now during the run
+		}
+		must(queue.Reprioritize(ctx, pool, j, queue.P2))
+	}
+	prio := func(kind, id string) int {
+		t.Helper()
+		var p int
+		must(pool.QueryRow(ctx, `SELECT priority FROM schedule WHERE kind = $1 AND entity_id = $2`, kind, id).Scan(&p))
+		return p
+	}
+	if p := prio("video", "fakeRP1"); p != queue.P2 {
+		t.Errorf("the video read once is at P%d; want P2", p)
+	}
+	if p := prio("comments", "fakeRP2"); p != queue.P0 {
+		t.Errorf("the check-now's P0 must be kept, not P%d", p)
+	}
+	if err := queue.Reprioritize(ctx, pool, jobs[0], 7); err == nil {
+		t.Error("priority 7 is out of range")
+	}
+	for _, c := range []struct {
+		age  time.Duration
+		want int
+	}{{0, queue.P1}, {47 * time.Hour, queue.P1}, {48 * time.Hour, queue.P2}, {30 * 24 * time.Hour, queue.P2}} {
+		if got := queue.ScanPriority(c.age); got != c.want {
+			t.Errorf("a comment scan at age %v: P%d, want P%d", c.age, got, c.want)
+		}
+	}
+}
+
 func TestLeaseExpiresAndConcurrentWorkersNeverShare(t *testing.T) {
 	pool := dbtest.New(t)
 	ctx := context.Background()

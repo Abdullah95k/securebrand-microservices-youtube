@@ -158,6 +158,8 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- Go 1.27.4 (11 November): `go.mod` and the build image (`golang:1.27.4-trixie`, pinned by digest), for GO-2026-6859 (a race
+  in `net/http` when a request body hits `MaxBytesReader`'s limit). Nothing else changes.
 - `ytcollect proxies` splits blocks into page and player blocks: migration `0016_proxy_player_blocks.sql` adds
   `proxy_health.player_blocks`. The capacity plan adds `demand_by_kind` (its log line: `top_kinds` and `spare_debt_hours`), and
   the scheduler exports `yt_capacity_fixed_per_hour`, `yt_capacity_stretchable_per_hour`, `yt_capacity_spare_time_per_hour` and

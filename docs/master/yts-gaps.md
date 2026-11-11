@@ -58,7 +58,7 @@ tests. **Plans only:** nothing is built until the owner approves.
 | H4 Cost report per 1,000 accounts | **Partly** | The capacity planner (supply, demand, recommended IPs, hourly); estimates in `yts-operations.md` §13. Nothing measured on the production collector yet | From the pilot report (D5) | In D5 |
 | I1 Least privilege | **Partly** | One database role owns everything. The database isn't published to the internet in Compose. One API key | Separate roles: migrator, app, read-only | 0.5 day |
 | I2 Network policies | **Missing** | No Kubernetes yet. The egress list is in `yts-operations.md` §6 | A NetworkPolicy in the chart | 0.5 day |
-| I3 Dependencies current, images scanned | **Partly** | Go 1.27.3 and current modules. The base image is pinned by tag, not digest. No image scan | Pin by digest; a Trivy job in CI | 0.5 day |
+| I3 Dependencies current, images scanned | **Partly** | Go 1.27.4 (11 November, for GO-2026-6859) and current modules. The base image is pinned by tag, not digest. No image scan | Pin by digest; a Trivy job in CI | 0.5 day |
 | I4 API keys per client, scopes | **N/A** | yts has no client API. Its admin is a local command line. Webhook payloads can be pseudonymized | — | — |
 
 **Before production:** about 2–3 weeks for the Kafka work (E1–E5), plus about 2–3 weeks for the rest.

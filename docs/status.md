@@ -8,10 +8,9 @@ The current state of the YouTube collector, for the owner and the master session
   quarantine rule: one block of any kind on 3 different UTC days within a week set an IP aside for good. The pilot ran across
   7, 8 and 9 November, so its 47 player blocks in about 393,000 requests took all 10 IPs. The exits themselves were fine.
   The master restarted the worker at 21:09Z on 10 November, which cleared it.
-- **Live since 11 November, 05:46Z: `f87e02e`** (Go 1.27.4, a security fix; before it `cf43f57` from 00:11Z). **Merged, waiting
-  for the master's pin: `34ff031`** (PR 84): `ytcollect health` shows the overdue work by tier, and the outbox-age alert leaves
-  out refused events.
-- **Being looked at (11 November):**
+- **Live since 11 November, 11:17Z: `624de33`**, the owner's queue order (D-052, below). Before it: `d0b93cd` from 07:32Z
+  (nameless channels as partial accounts), `34ff031` from 06:54Z (health by tier) and `f87e02e` from 05:46Z (Go 1.27.4).
+- **11 November:**
   - **tiers A and B were falling behind, and feed checks ran hours late in every tier** (health at 06:54Z and 07:56Z): priority
     2 (feed checks and refreshes) got almost no time, and priority 3 none, because priorities 0 and 1 took it all. The cause was
     in the code: a job kept the priority it was first queued with, so every later reading of a video first found as new
@@ -21,11 +20,18 @@ The current state of the YouTube collector, for the owner and the master session
     - Fix 2 (PR 90): tiers A and B first within a priority.
     - Fix 3 (PR 91): a video's later readings, and comment checks once the video or post is two days old, at priority 2.
 
-    They go out in one deploy. The master reads health about an hour after it.
+    **Live since 11:17Z (`624de33`).** At 12:23Z all three were doing what they should:
+    - Feed and tab checks were all on time (0 due), so new uploads are found at the set intervals again.
+    - P0 held only 8 new videos, and the rest of the video jobs were P2 refreshes (50,071). P1 comment scans fell from
+      12,745 to 4,257.
+    - Within P2, tier A and B video refreshes were at most an hour late, against tier C's 5h42m.
+
+    Still to come: P2's oldest work (tiers C, D and M and searches, 11 hours late) and tiers A and B's P3 backlog (older
+    videos' comments). The next readings show whether P2 catches up. The P3 backlog also needs the IP decision.
   - **3 channel events refused** by the contract checks since about 85 hours ago (retried at each relay restart): each
-    channel's page gave neither a title nor a handle, and an account needs one or the other. Fixed (PR 87): such a channel
-    goes out as a partial account (what is known; consumers keep the name they have), and its page is kept as a parse
-    failure. The relay sends the 3 when it restarts on the fix, and `OutboxRefused` clears.
+    channel's page gave neither a title nor a handle, and an account needs one or the other. Fixed (PR 87, live since
+    07:32Z): such a channel goes out as a partial account (what is known; consumers keep the name they have), and its page
+    is kept as a parse failure. The 3 went out, nothing is refused, and `OutboxRefused` cleared.
 - **The owner's decisions of 11 November** (live since `cf43f57`; deployed 10 Nov 22:48Z at `519c220`, then `834ea64` and
   `cf43f57`):
   - **the quarantine fix:** only 3 or more page blocks a day count, on 3 days in a row. Quarantines are saved and lifted

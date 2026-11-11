@@ -12,10 +12,12 @@ The current state of the YouTube collector, for the owner and the master session
   for the master's pin: `34ff031`** (PR 84): `ytcollect health` shows the overdue work by tier, and the outbox-age alert leaves
   out refused events.
 - **Being looked at (11 November):**
-  - **tiers A and B are falling behind:** their freshness debt was still rising at 06:22Z (A about 54,000 job-hours, B about
-    94,000), although the planner never slows them. Two likely causes: within a priority the queue takes the oldest job first,
-    whatever the tier; and a channel runs one job at a time, so a channel with many due jobs drains slowly. The new health
-    sections show which. Any fix changes the order of collection, so it goes to the owner first.
+  - **tiers A and B are falling behind, and feed checks run hours late in every tier** (health at 06:54Z and 07:56Z): priority
+    2 (feed checks and refreshes) got almost no time, and priority 3 none, because priorities 0 and 1 took it all. The cause is
+    in the code: a job keeps the priority it was first queued with, so every later reading of a video first found as new
+    stays at priority 0, and its comment rechecks at 1. Three fixes are with the owner:
+    [`master/yts-queue-order.md`](master/yts-queue-order.md). Fix 1 puts feed checks at priority 0, Fix 2 puts tiers A and B
+    first within a priority, and Fix 3 makes later readings refreshes. Nothing changes before the owner answers.
   - **3 channel events refused** by the contract checks since about 85 hours ago (retried at each relay restart): each
     channel's page gave neither a title nor a handle, and an account needs one or the other. Fixed (PR 87): such a channel
     goes out as a partial account (what is known; consumers keep the name they have), and its page is kept as a parse

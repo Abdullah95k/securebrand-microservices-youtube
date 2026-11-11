@@ -167,6 +167,21 @@ func loadMigrations() ([]migration, error) {
 	return out, nil
 }
 
+// MigrationSQL is the text of migration version v, for tests that run a
+// data migration again over rows they made.
+func MigrationSQL(v int) (string, error) {
+	ms, err := loadMigrations()
+	if err != nil {
+		return "", err
+	}
+	for _, m := range ms {
+		if m.version == v {
+			return m.sql, nil
+		}
+	}
+	return "", fmt.Errorf("db: no migration %d", v)
+}
+
 // migrateLock keeps two processes from applying a migration at once.
 const migrateLock = "securebrand-youtube-migrate"
 

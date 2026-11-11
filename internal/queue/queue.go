@@ -22,7 +22,7 @@ import (
 
 // Priorities (plan §8.2).
 const (
-	P0 = 0 // new uploads and new-video details
+	P0 = 0 // new uploads and new-video details, and the feed and tab checks that find them
 	P1 = 1 // new comments
 	P2 = 2 // refreshes and sweeps
 	P3 = 3 // backfill and candidate checks

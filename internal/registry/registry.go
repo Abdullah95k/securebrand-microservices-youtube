@@ -143,7 +143,9 @@ func nullIfEmpty(s string) *string {
 
 // schedule makes sure a listed channel has its recurring jobs. New rows
 // start now (backfill before regular tab checks); existing rows keep their
-// times.
+// times. Feed and tab checks find new uploads, so they run at P0 with the
+// new videos they find (the owner, D-052, 11 November: at P2 they waited
+// hours behind refreshes).
 func schedule(ctx context.Context, q db.Querier, channelID, kind string, tier policy.Tier) error {
 	type job struct {
 		kind string
@@ -153,7 +155,7 @@ func schedule(ctx context.Context, q db.Querier, channelID, kind string, tier po
 	now := time.Now()
 	jobs := []job{
 		{queue.KindChannel, queue.P2, now},
-		{queue.KindRSS, queue.P2, now},
+		{queue.KindRSS, queue.P0, now},
 		{queue.KindPosts, queue.P2, now},
 		{queue.KindPlaylists, queue.P3, now},
 	}
@@ -165,7 +167,7 @@ func schedule(ctx context.Context, q db.Querier, channelID, kind string, tier po
 		if done == nil {
 			jobs = append(jobs, job{queue.KindBackfill, queue.P3, now})
 		}
-		jobs = append(jobs, job{queue.KindTabs, queue.P2, now.Add(policy.TabCheck(tier))})
+		jobs = append(jobs, job{queue.KindTabs, queue.P0, now.Add(policy.TabCheck(tier))})
 	} else {
 		// Mention channels have no tab checks or backfill.
 		for _, k := range []string{queue.KindTabs, queue.KindBackfill} {

@@ -75,3 +75,41 @@ func TestSettings(t *testing.T) {
 		t.Errorf("got %v (ok %v, err %v)", v, ok, err)
 	}
 }
+
+// Migration 17 (D-052) moves the queued feed and tab checks to P0 and
+// leaves every other row as it is.
+func TestFeedAndTabChecksMoveToP0(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO schedule (kind, entity_id, channel_id, priority, due_at) VALUES
+		('rss', 'UCfakeMIG17A', 'UCfakeMIG17A', 2, now()), ('tabs', 'UCfakeMIG17A', 'UCfakeMIG17A', 2, now()),
+		('channel', 'UCfakeMIG17A', 'UCfakeMIG17A', 2, now()), ('comments', 'fakeMIG17v', 'UCfakeMIG17A', 1, now())`); err != nil {
+		t.Fatal(err)
+	}
+	sql, err := db.MigrationSQL(17)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, sql); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pool.Query(ctx, `SELECT kind, priority FROM schedule ORDER BY kind`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]int{}
+	for rows.Next() {
+		var k string
+		var p int
+		if err := rows.Scan(&k, &p); err != nil {
+			t.Fatal(err)
+		}
+		got[k] = p
+	}
+	for k, want := range map[string]int{"rss": 0, "tabs": 0, "channel": 2, "comments": 1} {
+		if got[k] != want {
+			t.Errorf("%s at P%d; want P%d", k, got[k], want)
+		}
+	}
+}

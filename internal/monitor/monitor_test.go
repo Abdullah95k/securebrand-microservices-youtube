@@ -71,7 +71,7 @@ func TestDatabaseMetrics(t *testing.T) {
 	for _, want := range []string{
 		"yt_outbox_failed 1",
 		`yt_channels_listed{kind="core",tier="A"} 1`,
-		`yt_queue_due{kind="rss",priority="2"} 1`,
+		`yt_queue_due{kind="rss",priority="0"} 1`,
 		`yt_fill_rate{endpoint="watch",field="title"} 0.9`,
 		`yt_detection_delay_seconds{source="rss"}`,
 		`yt_erasure_requests{status="pending"} 1`,

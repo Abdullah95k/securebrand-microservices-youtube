@@ -42,6 +42,27 @@ func TestAddListSetUnlist(t *testing.T) {
 	if want := "backfill channel playlists posts resolve rss tabs"; got != want {
 		t.Errorf("jobs %q; want %q", got, want)
 	}
+	// Feed and tab checks find new uploads: P0, with the videos they find
+	// (D-052). Refreshes are P2, backfill and playlists P3.
+	prios := map[string]int{}
+	rows, err := pool.Query(ctx, `SELECT kind, priority FROM schedule WHERE channel_id = $1`, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var k string
+		var p int
+		if err := rows.Scan(&k, &p); err != nil {
+			t.Fatal(err)
+		}
+		prios[k] = p
+	}
+	rows.Close()
+	for k, want := range map[string]int{"rss": 0, "tabs": 0, "channel": 2, "posts": 2, "playlists": 3, "backfill": 3} {
+		if prios[k] != want {
+			t.Errorf("%s at P%d; want P%d", k, prios[k], want)
+		}
+	}
 	c, err := registry.Get(ctx, pool, ch)
 	if err != nil || c.Handle != "@fakechannel" || c.Status != "listed" || c.Tier != policy.A {
 		t.Fatalf("channel %+v, err %v", c, err)

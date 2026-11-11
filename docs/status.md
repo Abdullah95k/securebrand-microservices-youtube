@@ -8,8 +8,18 @@ The current state of the YouTube collector, for the owner and the master session
   quarantine rule: one block of any kind on 3 different UTC days within a week set an IP aside for good. The pilot ran across
   7, 8 and 9 November, so its 47 player blocks in about 393,000 requests took all 10 IPs. The exits themselves were fine.
   The master restarted the worker at 21:09Z on 10 November, which cleared it.
-- **Live since 11 November, 00:11Z: `cf43f57`** (deployed 10 Nov 22:48Z at `519c220`, then `834ea64` and `cf43f57`). It brings
-  the owner's decisions of 11 November:
+- **Live since 11 November, 05:46Z: `f87e02e`** (Go 1.27.4, a security fix; before it `cf43f57` from 00:11Z). **Merged, waiting
+  for the master's pin: `34ff031`** (PR 84): `ytcollect health` shows the overdue work by tier, and the outbox-age alert leaves
+  out refused events.
+- **Being looked at (11 November):**
+  - **tiers A and B are falling behind:** their freshness debt was still rising at 06:22Z (A about 54,000 job-hours, B about
+    94,000), although the planner never slows them. Two likely causes: within a priority the queue takes the oldest job first,
+    whatever the tier; and a channel runs one job at a time, so a channel with many due jobs drains slowly. The new health
+    sections show which. Any fix changes the order of collection, so it goes to the owner first.
+  - **3 channel events refused** by the contract checks since about 85 hours ago (retried at each relay restart). The reason
+    comes from `ytcollect outbox check` after the pin. Everything else sends.
+- **The owner's decisions of 11 November** (live since `cf43f57`; deployed 10 Nov 22:48Z at `519c220`, then `834ea64` and
+  `cf43f57`):
   - **the quarantine fix:** only 3 or more page blocks a day count, on 3 days in a row. Quarantines are saved and lifted
     with `ytcollect proxies release`. A database-backed alert fires if every IP is out, and the worker waits instead of
     failing jobs. Since the deploy: no page blocks, a few player blocks at each restart, nothing quarantined.

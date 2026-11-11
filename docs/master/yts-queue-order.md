@@ -99,6 +99,9 @@ The change: a job's priority follows what it does each time it runs.
 
 What it means:
 
+- **Size:** at 10:56 the queue held 41,175 video jobs at priority 0, of which only 77 were waiting. Almost all of them are
+  later readings of videos already read once. It also held 12,745 comment checks and 4,201 video jobs at priority 1. Fix 3
+  moves almost all of them to priority 2, where nothing was running at 10:56.
 - **Effect:** priorities 0 and 1 hold only new work again, so new videos and new comments stay on time with room to spare.
   Refreshes of every kind share priority 2 by due time. With Fix 2, tier A's go first, then B's.
 - **Cost:** no extra requests. Refreshes of older videos wait in line with the other refreshes instead of ahead of

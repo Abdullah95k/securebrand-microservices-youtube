@@ -105,6 +105,14 @@ func TestPlanFitsTheIPs(t *testing.T) {
 	near(t, "stretchable", r.StretchablePerHour, 1000+8.0/24, 0.01)
 	near(t, "demand", r.DemandPerHour, r.FixedPerHour+r.StretchablePerHour, 0.001)
 	near(t, "spare-time work", r.SpareTimePerHour, 2400*2.0/24, 0.01) // images, 2 requests each by the estimate
+	near(t, "comment scans", r.DemandByKind["comments"], 1000, 0.01)
+	near(t, "searches", r.DemandByKind["search"], 200, 0.01)
+	if _, ok := r.DemandByKind["media"]; ok {
+		t.Error("spare-time work is not in the demand by kind")
+	}
+	if got := r.TopKinds(2); got != "comments=1000 search=200" {
+		t.Errorf("top kinds %q", got)
+	}
 	// 1,000.3 / (1,072.3 - 201.75) = 1.149.
 	near(t, "stretch", r.Stretch, 1.15, 0.001)
 	if r.RecommendedIPs != 3 {

@@ -325,7 +325,7 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			if err == nil {
 				log.Info("capacity plan", "supply_per_hour", int(r.SupplyPerHour), "demand_per_hour", int(r.DemandPerHour),
 					"fixed_per_hour", int(r.FixedPerHour), "stretchable_per_hour", int(r.StretchablePerHour),
-					"spare_time_per_hour", int(r.SpareTimePerHour),
+					"spare_time_per_hour", int(r.SpareTimePerHour), "spare_debt_hours", r.SpareDebtHours, "top_kinds", r.TopKinds(6),
 					"stretch", r.Stretch, "min_stretch", *minStretch, "recommended_ips", r.RecommendedIPs, "debt_hours", r.DebtHours)
 			}
 			return err

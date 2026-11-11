@@ -144,10 +144,22 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 	var supply, demand float64
 	var stretch float32
 	var ips *int
-	var debt []byte
-	err = pool.QueryRow(ctx, `SELECT supply_per_hour, demand_per_hour, stretch, recommended_ips, debt FROM capacity_reports ORDER BY at DESC LIMIT 1`).
-		Scan(&supply, &demand, &stretch, &ips, &debt)
+	var debt, detail []byte
+	err = pool.QueryRow(ctx, `SELECT supply_per_hour, demand_per_hour, stretch, recommended_ips, debt, detail FROM capacity_reports ORDER BY at DESC LIMIT 1`).
+		Scan(&supply, &demand, &stretch, &ips, &debt, &detail)
 	if err == nil {
+		var parts struct {
+			Fixed       float64 `json:"fixed_per_hour"`
+			Stretchable float64 `json:"stretchable_per_hour"`
+			SpareTime   float64 `json:"spare_time_per_hour"`
+			SpareDebt   float64 `json:"spare_debt_hours"`
+		}
+		if json.Unmarshal(detail, &parts) == nil {
+			reg.Set("yt_capacity_fixed_per_hour", "Requests per hour of work the stretch can't slow.", nil, parts.Fixed)
+			reg.Set("yt_capacity_stretchable_per_hour", "Requests per hour of refreshes the stretch can slow, without any stretch.", nil, parts.Stretchable)
+			reg.Set("yt_capacity_spare_time_per_hour", "Requests per hour of lowest-priority work (images, enrichment), done in spare time.", nil, parts.SpareTime)
+			reg.Set("yt_capacity_spare_debt_hours", "Overdue job-hours of lowest-priority work (images, enrichment).", nil, parts.SpareDebt)
+		}
 		reg.Set("yt_capacity_supply_per_hour", "Requests per hour the proxies can do at 70% busy.", nil, supply)
 		reg.Set("yt_capacity_demand_per_hour", "Requests per hour the schedule asks for, without any stretch.", nil, demand)
 		reg.Set("yt_capacity_stretch", "Interval stretch for tiers C, D and M (1 = none).", nil, float64(stretch))
@@ -259,12 +271,12 @@ func Pool(ctx context.Context, q db.Querier, reg *metrics.Registry, owner string
 		if p.Quarantined && !p.QuarantinedSince.IsZero() {
 			since = &p.QuarantinedSince
 		}
-		if _, err := q.Exec(ctx, `INSERT INTO proxy_health (proxy_key, label, subnet, proxy_kind, state, cooldown_until, requests_24h, blocks_24h, updated_at, quarantined_since)
-			VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+		if _, err := q.Exec(ctx, `INSERT INTO proxy_health (proxy_key, label, subnet, proxy_kind, state, cooldown_until, requests_24h, blocks_24h, updated_at, quarantined_since, player_blocks)
+			VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 			ON CONFLICT (proxy_key) DO UPDATE SET subnet = EXCLUDED.subnet, proxy_kind = EXCLUDED.proxy_kind, state = EXCLUDED.state,
 				cooldown_until = EXCLUDED.cooldown_until, requests_24h = EXCLUDED.requests_24h, blocks_24h = EXCLUDED.blocks_24h,
-				updated_at = EXCLUDED.updated_at, quarantined_since = EXCLUDED.quarantined_since`,
-			p.ID, p.Subnet, string(p.Kind), state, cool, p.Requests, p.Blocks, now, since); err != nil {
+				updated_at = EXCLUDED.updated_at, quarantined_since = EXCLUDED.quarantined_since, player_blocks = EXCLUDED.player_blocks`,
+			p.ID, p.Subnet, string(p.Kind), state, cool, p.Requests, p.Blocks, now, since, p.BlocksByClass[proxypool.ClassPlayer]); err != nil {
 			return err
 		}
 	}

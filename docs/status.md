@@ -149,6 +149,10 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- `ytcollect proxies` splits blocks into page and player blocks: migration `0016_proxy_player_blocks.sql` adds
+  `proxy_health.player_blocks`. The capacity plan adds `demand_by_kind` (its log line: `top_kinds` and `spare_debt_hours`), and
+  the scheduler exports `yt_capacity_fixed_per_hour`, `yt_capacity_stretchable_per_hour`, `yt_capacity_spare_time_per_hour` and
+  `yt_capacity_spare_debt_hours`.
 - The capacity planner (11 November, after the first plan on `519c220`): a stopping worker marks its announcement stopped
   (new field `stopped` in `capacity/<worker>`), so a restart no longer counts its IPs twice for 15 minutes. The P4 backlog
   (images, enrichment) is no longer freshness debt: `capacity_reports.debt` and `yt_freshness_debt_hours` leave it out, and

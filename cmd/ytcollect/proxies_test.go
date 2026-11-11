@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,9 @@ func TestProxiesCommand(t *testing.T) {
 		('px-0c0c0c', 'px-0c0c0c', 'sn-3', 'ok', NULL, now())`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `UPDATE proxy_health SET blocks_24h = 5, player_blocks = 4 WHERE proxy_key = 'px-0c0c0c'`); err != nil {
+		t.Fatal(err)
+	}
 	run := func(args ...string) (string, error) {
 		var b strings.Builder
 		err := proxiesCmd(ctx, pool, &b, args, time.Now())
@@ -26,6 +30,9 @@ func TestProxiesCommand(t *testing.T) {
 	out, err := run()
 	if err != nil || !strings.Contains(out, "px-0a0a0a") || !strings.Contains(out, "quarantined") || strings.Count(out, "\n") != 4 {
 		t.Fatalf("list (%v):\n%s", err, out)
+	}
+	if !strings.Contains(out, "PAGE BLOCKS") || !regexp.MustCompile(`px-0c0c0c .* 1 +4 +`).MatchString(out) {
+		t.Errorf("want 1 page block and 4 player blocks for px-0c0c0c:\n%s", out)
 	}
 	if out, err := run("release", "px-0a0a0a"); err != nil || !strings.Contains(out, "1 IP(s) released") {
 		t.Fatalf("release one (%v): %s", err, out)

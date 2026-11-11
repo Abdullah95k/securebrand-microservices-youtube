@@ -166,6 +166,36 @@ func healthCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	over, conc, err := queue.OverdueWork(ctx, pool)
+	if err != nil {
+		return err
+	}
+	if len(over) > 0 {
+		fmt.Fprintln(out, "\nOverdue work by tier (\"-\": no listed channel), kind and priority:")
+		tw = tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "TIER\tPRIORITY\tKIND\tOVERDUE JOBS\tDEBT HOURS\tOLDEST")
+		for _, o := range over {
+			fmt.Fprintf(tw, "%s\tP%d\t%s\t%d\t%.0f\t%s\n", o.Tier, o.Priority, o.Kind, o.Jobs, o.DebtHours, o.Oldest.Round(time.Minute))
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+	if len(conc) > 0 {
+		fmt.Fprintln(out, "\nOne job per channel runs at a time. Overdue jobs by tier, and how many the 10 busiest channels hold:")
+		tw = tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "TIER\tCHANNELS WITH OVERDUE JOBS\tOVERDUE JOBS\tHELD BY THE 10 BUSIEST\tMOST ON ONE CHANNEL")
+		for _, c := range conc {
+			pct := 0.0
+			if c.Jobs > 0 {
+				pct = float64(c.TopJobs) / float64(c.Jobs) * 100
+			}
+			fmt.Fprintf(tw, "%s\t%d\t%d\t%d (%.0f%%)\t%d\n", c.Tier, c.Channels, c.Jobs, c.TopJobs, pct, c.TopLargest)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
 	var listed, inputsFailed int
 	_ = pool.QueryRow(ctx, `SELECT count(*) FROM channels WHERE status = 'listed'`).Scan(&listed)
 	_ = pool.QueryRow(ctx, `SELECT count(*) FROM channel_inputs WHERE error IS NOT NULL`).Scan(&inputsFailed)

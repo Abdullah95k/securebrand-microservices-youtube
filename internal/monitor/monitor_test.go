@@ -3,6 +3,8 @@ package monitor_test
 import (
 	"context"
 	"errors"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +50,12 @@ func TestDatabaseMetrics(t *testing.T) {
 		announced_at, delete_after, attempt, deleted_at, delete_reason) VALUES
 		('thumb', 'fakeMONv1', 'a', 'k1', 'x', 'image/jpeg', 100, $1, $1, $1, $1, 1, $1, 'processed'),
 		('thumb', 'fakeMONv2', 'b', 'k2', 'x', 'image/jpeg', 200, $1, $1, $1, $1, 1, NULL, NULL)`, now.Add(-3*time.Hour))
+	// The outbox: one event refused 85 hours ago, one waiting 10 minutes.
+	// The backlog's age is the waiting one's; the refused one is counted
+	// apart (10 November: 3 refused events kept OutboxBacklog firing).
+	_, _ = pool.Exec(ctx, `INSERT INTO event_outbox (kind, entity_id, partition_key, observed_at, payload, created_at, failure) VALUES
+		('channel', 'UCfakeMONITOR00000000001', 'UCfakeMONITOR00000000001', now(), '{}', now() - interval '85 hours', 'refused'),
+		('comment', 'fakeMONc1', 'fakeMv1', now(), '{}', now() - interval '10 minutes', NULL)`)
 	reg := metrics.New()
 	if err := monitor.DB(ctx, pool, reg, now); err != nil {
 		t.Fatal(err)
@@ -55,7 +63,13 @@ func TestDatabaseMetrics(t *testing.T) {
 	var b strings.Builder
 	_, _ = reg.WriteTo(&b)
 	out := b.String()
+	if m := regexp.MustCompile(`(?m)^yt_outbox_oldest_unsent_seconds (\S+)$`).FindStringSubmatch(out); m == nil {
+		t.Error("no yt_outbox_oldest_unsent_seconds")
+	} else if v, _ := strconv.ParseFloat(m[1], 64); v < 500 || v > 900 {
+		t.Errorf("oldest waiting event %v s old; want the waiting one's 600, not the refused one's", v)
+	}
 	for _, want := range []string{
+		"yt_outbox_failed 1",
 		`yt_channels_listed{kind="core",tier="A"} 1`,
 		`yt_queue_due{kind="rss",priority="2"} 1`,
 		`yt_fill_rate{endpoint="watch",field="title"} 0.9`,

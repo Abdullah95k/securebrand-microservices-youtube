@@ -272,3 +272,61 @@ func TestDeadJobsAndRequeue(t *testing.T) {
 		t.Errorf("failures after a success = %d", failures)
 	}
 }
+
+// Overdue work by tier, kind and priority, and how much of each tier's the
+// 10 busiest channels hold. Jobs not yet due, running or dead aren't
+// overdue.
+func TestOverdueWork(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO channels (id, tier, status) VALUES ('UCfakeOVERDUEA0000000001', 'A', 'listed'), ('UCfakeOVERDUEA0000000002', 'A', 'listed'),
+		('UCfakeOVERDUEM0000000001', 'M', 'listed')`)
+	// Channel A1: 3 comment scans 2 hours overdue; A2: 1 refresh an hour
+	// overdue; M1: 1 comment scan an hour overdue; a search 3 hours overdue.
+	exec(`INSERT INTO schedule (kind, entity_id, channel_id, priority, due_at) VALUES
+		('comments', 'fakeOVv1', 'UCfakeOVERDUEA0000000001', 1, now() - interval '2 hours'),
+		('comments', 'fakeOVv2', 'UCfakeOVERDUEA0000000001', 1, now() - interval '2 hours'),
+		('comments', 'fakeOVv3', 'UCfakeOVERDUEA0000000001', 1, now() - interval '2 hours'),
+		('video', 'fakeOVv4', 'UCfakeOVERDUEA0000000002', 2, now() - interval '1 hour'),
+		('comments', 'fakeOVv5', 'UCfakeOVERDUEM0000000001', 1, now() - interval '1 hour'),
+		('search', 'fake overdue', NULL, 2, now() - interval '3 hours'),
+		('comments', 'fakeOVv6', 'UCfakeOVERDUEA0000000001', 1, now() + interval '1 hour')`)
+	exec(`INSERT INTO schedule (kind, entity_id, channel_id, priority, due_at, dead_at) VALUES
+		('comments', 'fakeOVdead', 'UCfakeOVERDUEA0000000001', 1, now() - interval '9 hours', now())`)
+	over, conc, err := queue.OverdueWork(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]queue.Overdue{}
+	for _, o := range over {
+		got[o.Tier+"/"+o.Kind] = o
+	}
+	if o := got["A/comments"]; o.Jobs != 3 || o.Priority != 1 || o.DebtHours < 5.9 || o.DebtHours > 6.1 {
+		t.Errorf("A comment scans %+v; want 3 jobs, about 6 debt hours", o)
+	}
+	if o := got["A/video"]; o.Jobs != 1 || o.Priority != 2 {
+		t.Errorf("A refresh %+v", o)
+	}
+	if o := got["-/search"]; o.Jobs != 1 || o.Oldest < 2*time.Hour+59*time.Minute {
+		t.Errorf("search %+v; want 1 job about 3 hours overdue", o)
+	}
+	if len(over) != 4 {
+		t.Errorf("%d rows; the job not yet due and the dead one aren't overdue: %+v", len(over), over)
+	}
+	byTier := map[string]queue.Concentration{}
+	for _, c := range conc {
+		byTier[c.Tier] = c
+	}
+	if c := byTier["A"]; c.Channels != 2 || c.Jobs != 4 || c.TopJobs != 4 || c.TopLargest != 3 {
+		t.Errorf("tier A concentration %+v; want 2 channels, 4 jobs, the busiest with 3", c)
+	}
+	if _, ok := byTier["-"]; ok {
+		t.Error("jobs of no listed channel have no concentration row")
+	}
+}

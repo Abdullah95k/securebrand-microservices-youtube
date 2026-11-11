@@ -158,6 +158,9 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- `ytcollect health` adds the overdue work by tier, kind and priority, and how much of each tier's the 10 busiest channels hold
+  (counts only). `yt_outbox_oldest_unsent_seconds` no longer counts refused events (they are `yt_outbox_failed`): 3 refused
+  events kept `OutboxBacklog` firing.
 - Go 1.27.4 (11 November): `go.mod` and the build image (`golang:1.27.4-trixie`, pinned by digest), for GO-2026-6859 (a race
   in `net/http` when a request body hits `MaxBytesReader`'s limit). Nothing else changes.
 - `ytcollect proxies` splits blocks into page and player blocks: migration `0016_proxy_player_blocks.sql` adds

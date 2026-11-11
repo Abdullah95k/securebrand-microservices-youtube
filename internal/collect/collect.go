@@ -153,8 +153,14 @@ func (s *Service) channel(ctx context.Context, j queue.Job) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	if res.Channel.Title == "" && len(res.Channel.Tabs) == 0 {
-		s.parseFailure(ctx, "browse:channel", "channel", j.EntityID, "channel page without a title or tabs")
+	if res.Channel.Title == "" {
+		// Kept as a parse failure, with the raw answer, so the page can be
+		// looked at; the channel is still stored, and its event is partial.
+		msg := "channel page without a title"
+		if len(res.Channel.Tabs) == 0 {
+			msg += " or tabs"
+		}
+		s.parseFailure(ctx, "browse:channel", "channel", j.EntityID, msg)
 	}
 	if res.Channel.ID == "" {
 		res.Channel.ID = j.EntityID

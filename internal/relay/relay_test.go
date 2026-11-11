@@ -217,6 +217,9 @@ func TestRefusedAndOversizedEvents(t *testing.T) {
 	at := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
 	for _, sql := range []string{
 		`INSERT INTO channels (id, kind, tier, status) VALUES ('UCfakeRELAY0000000000001', 'core', 'B', 'listed')`,
+		// A negative count: the contract refuses the video's metrics.
+		`INSERT INTO videos (id, channel_id, kind, title, live_status, published_at, published_precision_s, views)
+			VALUES ('fakeRLv0', 'UCfakeRELAY0000000000001', 'video', 'refused', 'none', '2026-11-07 08:00:00+00', 0, -10)`,
 		`INSERT INTO videos (id, channel_id, kind, title, live_status, published_at, published_precision_s)
 			VALUES ('fakeRLv1', 'UCfakeRELAY0000000000001', 'video', 'fine', 'none', '2026-11-07 08:00:00+00', 0)`,
 		`INSERT INTO videos (id, channel_id, kind, title, description, live_status, published_at, published_precision_s)
@@ -227,17 +230,17 @@ func TestRefusedAndOversizedEvents(t *testing.T) {
 		}
 	}
 	ev := outbox.New(ctx, at)
-	for _, w := range []struct {
-		tb outbox.Table
-		id string
-	}{{outbox.Channels, "UCfakeRELAY0000000000001"}, {outbox.Videos, "fakeRLv1"}, {outbox.Videos, "fakeRLv2"}} {
-		if _, err := ev.Content(ctx, pool, w.tb, w.id); err != nil {
+	if _, err := ev.Metrics(ctx, pool, outbox.Videos, "fakeRLv0"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"fakeRLv1", "fakeRLv2"} {
+		if _, err := ev.Content(ctx, pool, outbox.Videos, id); err != nil {
 			t.Fatal(err)
 		}
 	}
 	c, cl := kafka(t)
 	r := newRelay(pool, cl, nil)
-	// The nameless channel is refused at once; the oversized video aborts
+	// The negative count is refused at once; the oversized video aborts
 	// its batch, is set aside, and the batch goes again without it.
 	res, err := r.Once(ctx)
 	if err == nil || res.Refused != 2 {
@@ -255,7 +258,7 @@ func TestRefusedAndOversizedEvents(t *testing.T) {
 		failures[id] = f
 	}
 	rows.Close()
-	if !strings.Contains(failures["UCfakeRELAY0000000000001"], "neither display_name nor handle") ||
+	if !strings.Contains(failures["fakeRLv0"], "counts.views is negative") ||
 		!strings.Contains(failures["fakeRLv2"], "kafka:") || len(failures) != 2 {
 		t.Errorf("failures %v", failures)
 	}

@@ -16,8 +16,10 @@ The current state of the YouTube collector, for the owner and the master session
     94,000), although the planner never slows them. Two likely causes: within a priority the queue takes the oldest job first,
     whatever the tier; and a channel runs one job at a time, so a channel with many due jobs drains slowly. The new health
     sections show which. Any fix changes the order of collection, so it goes to the owner first.
-  - **3 channel events refused** by the contract checks since about 85 hours ago (retried at each relay restart). The reason
-    comes from `ytcollect outbox check` after the pin. Everything else sends.
+  - **3 channel events refused** by the contract checks since about 85 hours ago (retried at each relay restart): each
+    channel's page gave neither a title nor a handle, and an account needs one or the other. Fixed (PR 87): such a channel
+    goes out as a partial account (what is known; consumers keep the name they have), and its page is kept as a parse
+    failure. The relay sends the 3 when it restarts on the fix, and `OutboxRefused` clears.
 - **The owner's decisions of 11 November** (live since `cf43f57`; deployed 10 Nov 22:48Z at `519c220`, then `834ea64` and
   `cf43f57`):
   - **the quarantine fix:** only 3 or more page blocks a day count, on 3 days in a row. Quarantines are saved and lifted
@@ -168,6 +170,9 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- `content.account.v1`: a monitored channel whose page gave neither a title nor a handle is sent as a partial account
+  (`envelope.partial`, as for commenters without a name) instead of being refused. A channel page without a title is now
+  recorded as a parse failure even when it has tabs.
 - `ytcollect health` adds the overdue work by tier, kind and priority, and how much of each tier's the 10 busiest channels hold
   (counts only). `yt_outbox_oldest_unsent_seconds` no longer counts refused events (they are `yt_outbox_failed`): 3 refused
   events kept `OutboxBacklog` firing.

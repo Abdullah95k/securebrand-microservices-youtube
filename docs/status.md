@@ -28,6 +28,17 @@ The current state of the YouTube collector, for the owner and the master session
 
     Still to come: P2's oldest work (tiers C, D and M and searches, 11 hours late) and tiers A and B's P3 backlog (older
     videos' comments). The next readings show whether P2 catches up. The P3 backlog also needs the IP decision.
+
+    **By 14:20Z the 10 IPs were full.** They made 12,325 requests an hour, and the busiest hour reached 96% of what 10
+    IPs can make. That is not the 10-jobs-at-once limit: only 7 jobs were running.
+    - New uploads were found in 25 minutes at the median and 90 at the 90th percentile.
+    - No job failed, and there were 0.2 blocks per 1,000 requests.
+    - Tier A stayed on time.
+    - Tier B fell behind by about an hour each hour. Tiers C, D and M, older videos' comments, images and commenter
+      profiles don't keep up.
+
+    About 16–18 IPs keep everything running at today's slowing, and about 20 also clear the backlog. The owner decides
+    after the 24-hour capacity plan tonight. The database grows about 1.3 GB a day at this pace.
   - **3 channel events refused** by the contract checks since about 85 hours ago (retried at each relay restart): each
     channel's page gave neither a title nor a handle, and an account needs one or the other. Fixed (PR 87, live since
     07:32Z): such a channel goes out as a partial account (what is known; consumers keep the name they have), and its page

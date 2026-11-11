@@ -148,6 +148,11 @@ func TestAddByHandleBackfillsAndCollectsVideos(t *testing.T) {
 	if n := r.count(t, `SELECT count(*) FROM schedule WHERE kind IN ('resolve', 'backfill')`); n != 0 {
 		t.Error("one-off jobs must be gone")
 	}
+	// Each video was read once, so its later readings are refreshes: P2,
+	// whatever it was queued at (D-052).
+	if n := r.count(t, `SELECT count(*) FROM schedule WHERE kind = 'video' AND priority <> 2`); n != 0 {
+		t.Errorf("%d videos read once are not at P2", n)
+	}
 	if n := r.count(t, `SELECT count(*) FROM channel_inputs WHERE input = '@fakecollect' AND channel_id = $1`, chID); n != 1 {
 		t.Error("the input should record what it resolved to")
 	}

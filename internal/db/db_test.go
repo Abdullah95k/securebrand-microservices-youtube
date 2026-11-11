@@ -113,3 +113,66 @@ func TestFeedAndTabChecksMoveToP0(t *testing.T) {
 		}
 	}
 }
+
+// Migration 19 (D-052) moves the rows already queued by the rule the
+// workers now follow: a video read once is a refresh (P2), unless live or
+// about to start; a comment check is P1 while its video or post is under
+// two days old, P2 after, and a backfilled one's P3 once it has run.
+func TestRefreshesMoveToP2(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	for _, sql := range []string{
+		`INSERT INTO videos (id, channel_id, kind, published_at, last_checked, live_status) VALUES
+			('fakeM19read', 'UCfakeMIG19', 'video', now() - interval '5 days', now(), 'none'),
+			('fakeM19unread', 'UCfakeMIG19', 'video', now() - interval '1 hour', NULL, NULL),
+			('fakeM19live', 'UCfakeMIG19', 'live', now() - interval '1 hour', now(), 'live'),
+			('fakeM19soon', 'UCfakeMIG19', 'live', NULL, now(), 'upcoming'),
+			('fakeM19new', 'UCfakeMIG19', 'video', now() - interval '1 hour', now(), 'none'),
+			('fakeM19back', 'UCfakeMIG19', 'video', now() - interval '90 days', now(), 'none'),
+			('fakeM19back2', 'UCfakeMIG19', 'video', now() - interval '90 days', NULL, NULL)`,
+		`INSERT INTO posts (id, channel_id, published_at) VALUES
+			('UgkxFAKEM19old', 'UCfakeMIG19', now() - interval '5 days'), ('UgkxFAKEM19new', 'UCfakeMIG19', now() - interval '1 hour')`,
+		`INSERT INTO schedule (kind, entity_id, channel_id, priority, due_at, last_ok) VALUES
+			('video', 'fakeM19read', 'UCfakeMIG19', 0, now(), now()),
+			('video', 'fakeM19unread', 'UCfakeMIG19', 0, now(), NULL),
+			('video', 'fakeM19live', 'UCfakeMIG19', 0, now(), now()),
+			('video', 'fakeM19soon', 'UCfakeMIG19', 0, now(), now()),
+			('video', 'fakeM19back', 'UCfakeMIG19', 3, now(), now()),
+			('comments', 'fakeM19read', 'UCfakeMIG19', 1, now(), now()),
+			('comments', 'fakeM19new', 'UCfakeMIG19', 1, now(), now()),
+			('comments', 'fakeM19back', 'UCfakeMIG19', 3, now(), now()),
+			('comments', 'fakeM19back2', 'UCfakeMIG19', 3, now(), NULL),
+			('post_comments', 'UgkxFAKEM19old', 'UCfakeMIG19', 1, now(), now()),
+			('post_comments', 'UgkxFAKEM19new', 'UCfakeMIG19', 1, now(), now()),
+			('rss', 'UCfakeMIG19', 'UCfakeMIG19', 0, now(), now())`,
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sql, err := db.MigrationSQL(19)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, sql); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		kind, id string
+		want     int
+	}{
+		{"video", "fakeM19read", 2}, {"video", "fakeM19unread", 0}, {"video", "fakeM19live", 0}, {"video", "fakeM19soon", 0},
+		{"video", "fakeM19back", 2},
+		{"comments", "fakeM19read", 2}, {"comments", "fakeM19new", 1}, {"comments", "fakeM19back", 2}, {"comments", "fakeM19back2", 3},
+		{"post_comments", "UgkxFAKEM19old", 2}, {"post_comments", "UgkxFAKEM19new", 1},
+		{"rss", "UCfakeMIG19", 0},
+	} {
+		var p int
+		if err := pool.QueryRow(ctx, `SELECT priority FROM schedule WHERE kind = $1 AND entity_id = $2`, c.kind, c.id).Scan(&p); err != nil {
+			t.Fatal(err)
+		}
+		if p != c.want {
+			t.Errorf("%s %s at P%d; want P%d", c.kind, c.id, p, c.want)
+		}
+	}
+}

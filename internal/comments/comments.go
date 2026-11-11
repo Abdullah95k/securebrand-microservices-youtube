@@ -594,6 +594,10 @@ func (e *Engine) scan(ctx context.Context, j queue.Job) (time.Time, error) {
 	if e.Stretch != nil {
 		d = policy.Stretch(d, v.tier, e.Stretch())
 	}
+	// New comments (P1) while the video is new, refreshes (P2) after (D-052).
+	if err := queue.Reprioritize(ctx, e.Pool, j, queue.ScanPriority(age)); err != nil {
+		return time.Time{}, err
+	}
 	return e.now().Add(d), nil
 }
 
@@ -681,6 +685,10 @@ func (e *Engine) scanPost(ctx context.Context, j queue.Job) (time.Time, error) {
 	}
 	if e.Stretch != nil {
 		d = policy.Stretch(d, v.tier, e.Stretch())
+	}
+	// New comments (P1) while the post is new, refreshes (P2) after (D-052).
+	if err := queue.Reprioritize(ctx, e.Pool, j, queue.ScanPriority(e.age(v))); err != nil {
+		return time.Time{}, err
 	}
 	return e.now().Add(d), nil
 }

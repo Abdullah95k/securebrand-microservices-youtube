@@ -380,7 +380,7 @@ func (s *Service) video(ctx context.Context, j queue.Job) (time.Time, error) {
 	}
 	if !out.CommentsOff && policy.CommentScan(ci.tier, age) > 0 {
 		prio := queue.P1
-		if age > 2*24*time.Hour {
+		if age > queue.NewFor {
 			prio = queue.P3 // backfilled videos: comments after the new ones
 		}
 		if _, err := queue.Ensure(ctx, s.Pool, queue.KindComments, j.EntityID, channelID, prio, s.now()); err != nil {
@@ -389,6 +389,13 @@ func (s *Service) video(ctx context.Context, j queue.Job) (time.Time, error) {
 	}
 	if out.LiveStatus == "live" {
 		return s.now().Add(policy.LiveViewers(ci.tier)), nil
+	}
+	// Read once: its later readings are refreshes (P2), not new-video reads
+	// (D-052). A stream about to start keeps its priority until it starts.
+	if out.LiveStatus != "upcoming" {
+		if err := queue.Reprioritize(ctx, s.Pool, j, queue.P2); err != nil {
+			return time.Time{}, err
+		}
 	}
 	return s.now().Add(s.stretch(policy.VideoStats(ci.tier, age), ci.tier)), nil
 }

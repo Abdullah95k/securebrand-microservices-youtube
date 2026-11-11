@@ -1,8 +1,10 @@
 # yts: why tiers A and B fall behind, and three fixes to approve
 
 For the owner, from the yts session. Written 11 November 2026, from `ytcollect health` at 09:54 and 10:56 Iraq time
-(counts only). Nothing here is built yet. All three fixes change the order in which yts collects, so they wait for your
-answer.
+(counts only).
+
+**Approved and built.** The owner answered at 13:36 Iraq time on 11 November (D-052): "Yes to all 3 fixes." Fix 1 is
+PR 89, Fix 2 is PR 90 and Fix 3 is PR 91, all in one deploy.
 
 ## Update, 10:56 Iraq time: priority 2 gets almost no time
 

@@ -79,7 +79,10 @@ func Now(ctx context.Context, q db.Querier, kind, id, channelID string, prio int
 }
 
 // Lease takes up to n due jobs of the given kinds (all kinds when empty),
-// highest priority and oldest due first, for the lease duration.
+// for the lease duration: highest priority first; within a priority, tier
+// A's jobs, then tier B's, then the rest (the owner, D-052: tier_rank,
+// which migration 18's triggers keep in step with the channel's tier);
+// then oldest due first.
 func Lease(ctx context.Context, pool *pgxpool.Pool, owner string, kinds []string, n int, lease time.Duration) ([]Job, error) {
 	if n <= 0 {
 		return nil, nil
@@ -96,7 +99,7 @@ func Lease(ctx context.Context, pool *pgxpool.Pool, owner string, kinds []string
 			  AND ($1::text[] IS NULL OR cardinality($1::text[]) = 0 OR kind = ANY($1))
 			  AND (channel_id IS NULL OR NOT EXISTS (
 			        SELECT 1 FROM schedule b WHERE b.channel_id = s.channel_id AND b.lease_until >= now()))
-			ORDER BY priority, due_at
+			ORDER BY priority, tier_rank, due_at
 			LIMIT $2
 			FOR UPDATE SKIP LOCKED`, kinds, n*4)
 		if err != nil {

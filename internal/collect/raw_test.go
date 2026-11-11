@@ -11,8 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abdullah95k/securebrand-contracts/conformance"
+	contentv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/content/v1"
+
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/contract"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fakeyt"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/rawstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
@@ -82,5 +87,34 @@ func TestParseFailureKeepsTheRawPage(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("raw_ref %q doesn't point to the channel page kept with its reason", ref)
+	}
+
+	// The channel is stored all the same, with no name: its event is a
+	// partial account the contract takes (11 November: 3 were refused).
+	rows, err := outbox.Unsent(ctx, r.pool, 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &contract.Mapper{Options: conformance.Options{Production: true}}
+	accounts := 0
+	for _, row := range rows {
+		if row.Kind != outbox.KindChannel || row.EntityID != chID {
+			continue
+		}
+		msgs, err := m.Map(row)
+		if err != nil {
+			t.Fatalf("the nameless channel's event: %v", err)
+		}
+		for _, msg := range msgs {
+			if a, ok := msg.Msg.(*contentv1.Account); ok {
+				accounts++
+				if !a.GetEnvelope().GetPartial() || a.GetDisplayName() != "" {
+					t.Errorf("nameless channel account %v", a)
+				}
+			}
+		}
+	}
+	if accounts == 0 {
+		t.Error("no account event for the nameless channel")
 	}
 }

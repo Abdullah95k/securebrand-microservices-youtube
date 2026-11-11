@@ -15,9 +15,10 @@ func TestOutboxCommand(t *testing.T) {
 	ctx := context.Background()
 	at := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
 	for _, sql := range []string{
-		`INSERT INTO videos (id, channel_id, kind, title, live_status, published_at, published_precision_s)
-			VALUES ('fakeOBv1', 'UCfakeOUTBOXCMD000000001', 'video', 'A video', 'none', '2026-11-07 08:00:00+00', 0)`,
-		// A channel with no name: the contract refuses its account.
+		// A negative count: the contract refuses the video and its metrics.
+		`INSERT INTO videos (id, channel_id, kind, title, live_status, published_at, published_precision_s, views)
+			VALUES ('fakeOBv1', 'UCfakeOUTBOXCMD000000001', 'video', 'A video', 'none', '2026-11-07 08:00:00+00', 0, -10)`,
+		// A channel with no name: a partial account, which the contract takes.
 		`INSERT INTO channels (id, kind, tier, status) VALUES ('UCfakeOUTBOXCMD000000001', 'core', 'B', 'listed')`,
 	} {
 		if _, err := pool.Exec(ctx, sql); err != nil {
@@ -41,11 +42,11 @@ func TestOutboxCommand(t *testing.T) {
 	}
 	out.Reset()
 	err := outboxCmd(ctx, pool, &out, []string{"check"})
-	if err == nil || !strings.Contains(err.Error(), "1 of 3 events") {
+	if err == nil || !strings.Contains(err.Error(), "2 of 3 events") {
 		t.Errorf("check: err %v", err)
 	}
-	for _, want := range []string{"content.post.v1", "content.metrics.v1", "channel UCfakeOUTBOXCMD000000001 (refused by the contract)",
-		"neither display_name nor handle"} {
+	for _, want := range []string{"content.account.v1", "video fakeOBv1 (refused by the contract)",
+		"video_metrics fakeOBv1 (refused by the contract)", "counts.views is negative"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("check output lacks %q:\n%s", want, out.String())
 		}

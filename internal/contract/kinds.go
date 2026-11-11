@@ -14,9 +14,13 @@ func (b *builder) channel() ([]Message, error) {
 		return nil, err
 	}
 	id := accountID(c.ID)
-	partial := c.RemovedAt != nil
-	a := &contentv1.Account{Envelope: b.envelope("account", id, c.ID, partial)}
-	if partial {
+	// A removal is partial: keys and status. So is a channel whose page
+	// gave no name, neither title nor handle (11 November: 3 such events
+	// were refused): what is set is known, and the name is not, so
+	// consumers keep the name they have, as for commenters (author).
+	nameless := deref(c.Title) == "" && deref(c.Handle) == ""
+	a := &contentv1.Account{Envelope: b.envelope("account", id, c.ID, c.RemovedAt != nil || nameless)}
+	if c.RemovedAt != nil {
 		a.Status = gone(*c.RemovedAt, "not_found")
 	} else {
 		a.Type = contentv1.AccountType_ACCOUNT_TYPE_CHANNEL

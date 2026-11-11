@@ -204,13 +204,36 @@ func TestListedCommenterNotDuplicated(t *testing.T) {
 	}
 }
 
+// A channel whose page gave no name is a partial account: what is known,
+// and nothing blanked (11 November: the contract refused 3 such events).
+func TestNamelessChannelIsPartial(t *testing.T) {
+	m := &contract.Mapper{Options: prod}
+	msgs, err := m.Map(row("channel", chID, chID, `{"id":"`+chID+`","kind":"core","status":"listed","tier":"A",
+		"description":"kept","subscribers_min":1200,"subscribers_text":"1.2K subscribers"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := msgs[0].Msg.(*contentv1.Account)
+	if !a.GetEnvelope().GetPartial() || a.GetDisplayName() != "" || a.GetHandle() != "" || a.GetBio().GetText() != "kept" ||
+		a.GetCounts().GetFollowers() == nil || a.GetScope() != contentv1.CollectionScope_COLLECTION_SCOPE_FULL {
+		t.Errorf("nameless channel %v", a)
+	}
+	msgs, err = m.Map(row("channel", chID, chID, `{"id":"`+chID+`","kind":"core","status":"listed","title":"Fake channel"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := msgs[0].Msg.(*contentv1.Account); a.GetEnvelope().GetPartial() || a.GetDisplayName() != "Fake channel" {
+		t.Errorf("a named channel is a full account: %v", a)
+	}
+}
+
 // What the contract refuses is not published: Map says why.
 func TestRejectedByTheContract(t *testing.T) {
 	m := &contract.Mapper{Options: prod}
-	_, err := m.Map(row("channel", chID, chID, `{"id":"`+chID+`","kind":"core","status":"listed"}`))
+	_, err := m.Map(row("video_metrics", "fakeKV7", "fakeKV7", `{"counts":{"views":-10},"channel_id":"`+chID+`"}`))
 	var rej *contract.Rejected
-	if !errors.As(err, &rej) || rej.Topic != contract.TopicAccount || !strings.Contains(err.Error(), "neither display_name nor handle") {
-		t.Errorf("a channel with no name: %v", err)
+	if !errors.As(err, &rej) || rej.Topic != contract.TopicMetrics || !strings.Contains(err.Error(), "counts.views is negative") {
+		t.Errorf("a negative count: %v", err)
 	}
 	if _, err := m.Map(row("nonsense", "x", "x", `{}`)); !errors.Is(err, contract.ErrUnknownKind) {
 		t.Errorf("unknown kind: %v", err)

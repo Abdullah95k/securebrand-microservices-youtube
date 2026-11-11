@@ -8,16 +8,25 @@ The current state of the YouTube collector, for the owner and the master session
   quarantine rule: one block of any kind on 3 different UTC days within a week set an IP aside for good. The pilot ran across
   7, 8 and 9 November, so its 47 player blocks in about 393,000 requests took all 10 IPs. The exits themselves were fine.
   The master restarted the worker at 21:09Z on 10 November, which cleared it.
-- **Merged on 11 November for the next pin, `519c220`** (the owner's decisions, through the master):
-  - **the quarantine fix:** only 3 or more page blocks a day count, on 3 days in a row. Quarantines are saved and lifted with
-    `ytcollect proxies release`. A database-backed alert fires if every IP is out, and the worker waits instead of failing jobs.
+- **Live since 11 November, 00:11Z: `cf43f57`** (deployed 10 Nov 22:48Z at `519c220`, then `834ea64` and `cf43f57`). It brings
+  the owner's decisions of 11 November:
+  - **the quarantine fix:** only 3 or more page blocks a day count, on 3 days in a row. Quarantines are saved and lifted
+    with `ytcollect proxies release`. A database-backed alert fires if every IP is out, and the worker waits instead of
+    failing jobs. Since the deploy: no page blocks, a few player blocks at each restart, nothing quarantined.
   - **the slower refresh:** the capacity planner fits the work to the 10 IPs at 70% busy. It refreshes tiers C, D and M less
-    often as needed, never A and B, and never new-upload detection.
-  - **avatars and banners:** handed off to analysis and deleted, like thumbnails; `relay.media.handoff: true` turns the
-    hand-off on;
-  - **the report:** IP counts that allow for each answer's time.
+    often (up to 8 times), never A and B, and never new-upload detection. Images and commenter enrichment run only in spare
+    time.
+  - **avatars and banners:** handed off to analysis and deleted, like thumbnails; the hand-off is on.
+  - **the report's IP counts:** they now allow for each answer's time.
+- **Capacity, first plans after the deploy** (supply 9,333 requests an hour):
+  - the work that is never slowed is already about 10,800 an hour, and the stretch is climbing to its cap of 8;
+  - comment scans are about 80% of the demand (video comments 16,312 an hour, post comments 6,417), because most videos
+    are under a week old and on the frequent rungs;
+  - there is no spare time yet, so images (and the hand-off to analysis) and commenter enrichment wait. Part of the
+    demand is the backlog of the 28-hour stop.
 
-  The relay is fine.
+  The plan 24 hours on (about 23:56Z on 11 November) gives the steady figure. Then the owner decides between more IPs and
+  scanning young videos' comments less often.
 - **Built and merged:** every production step of the plan (1–20). That is the collector, comments, posts and playlists, discovery,
   capacity planning, privacy tools (dormant), images, the archive, webhooks, and the Docker Compose deployment, all with tests. See
   [plan.md](plan.md) §10.

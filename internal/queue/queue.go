@@ -337,3 +337,75 @@ func Stats(ctx context.Context, q db.Querier) ([]Depth, error) {
 	}
 	return out, rows.Err()
 }
+
+// Overdue is the work waiting past its due time for one tier, kind and
+// priority (tier "-": jobs of no listed channel).
+type Overdue struct {
+	Tier      string
+	Kind      string
+	Priority  int
+	Jobs      int64
+	DebtHours float64
+	Oldest    time.Duration
+}
+
+// Concentration says how much of a tier's overdue work sits with a few
+// channels: one job per channel runs at a time, so a channel with many
+// overdue jobs drains one by one.
+type Concentration struct {
+	Tier       string
+	Channels   int64 // channels with overdue jobs
+	Jobs       int64 // their overdue jobs
+	TopJobs    int64 // the overdue jobs of the 10 channels with the most
+	TopLargest int64 // the most overdue jobs any one channel has
+}
+
+// OverdueWork is the overdue work by tier, kind and priority (not dead,
+// not running), and per tier how much of it the 10 busiest channels hold.
+// Counts only: no channel or item IDs.
+func OverdueWork(ctx context.Context, q db.Querier) ([]Overdue, []Concentration, error) {
+	rows, err := q.Query(ctx, `SELECT COALESCE(c.tier, '-'), s.kind, s.priority, count(*),
+			sum(EXTRACT(EPOCH FROM now() - s.due_at)) / 3600, EXTRACT(EPOCH FROM now() - min(s.due_at))
+		FROM schedule s LEFT JOIN channels c ON c.id = s.channel_id
+		WHERE s.due_at < now() AND s.dead_at IS NULL AND (s.lease_until IS NULL OR s.lease_until < now())
+		GROUP BY 1, 2, 3 ORDER BY 1, 3, 2`)
+	if err != nil {
+		return nil, nil, err
+	}
+	var over []Overdue
+	for rows.Next() {
+		var o Overdue
+		var secs float64
+		if err := rows.Scan(&o.Tier, &o.Kind, &o.Priority, &o.Jobs, &o.DebtHours, &secs); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		o.Oldest = time.Duration(secs * float64(time.Second))
+		over = append(over, o)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	rows, err = q.Query(ctx, `WITH per AS (
+			SELECT c.tier, s.channel_id, count(*) AS n,
+				row_number() OVER (PARTITION BY c.tier ORDER BY count(*) DESC) AS rank
+			FROM schedule s JOIN channels c ON c.id = s.channel_id
+			WHERE s.due_at < now() AND s.dead_at IS NULL AND (s.lease_until IS NULL OR s.lease_until < now())
+			GROUP BY 1, 2)
+		SELECT tier, count(*), sum(n)::bigint, (sum(n) FILTER (WHERE rank <= 10))::bigint, max(n)
+		FROM per GROUP BY 1 ORDER BY 1`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var conc []Concentration
+	for rows.Next() {
+		var c Concentration
+		if err := rows.Scan(&c.Tier, &c.Channels, &c.Jobs, &c.TopJobs, &c.TopLargest); err != nil {
+			return nil, nil, err
+		}
+		conc = append(conc, c)
+	}
+	return over, conc, rows.Err()
+}

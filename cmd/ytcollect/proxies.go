@@ -17,7 +17,8 @@ quarantined: no job uses it until it is released. The quarantine outlives a
 restart. Release an IP once its provider has replaced it, or when you are sure
 the blocks have passed; the worker picks a release up within a minute.
 
-  ytcollect proxies                       every IP: state, rest, quarantine, requests and blocks
+  ytcollect proxies                       every IP: state, rest, quarantine, requests, page and player blocks
+                                          (counts since the worker started; player blocks never quarantine)
   ytcollect proxies release ID            release one quarantined IP (its ID from the list)
   ytcollect proxies release -all          release every quarantined IP
 
@@ -56,14 +57,14 @@ func proxiesCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer, args []s
 func proxiesList(ctx context.Context, pool *pgxpool.Pool, out io.Writer, now time.Time) error {
 	rows, err := pool.Query(ctx, `SELECT proxy_key, subnet, state, cooldown_until, quarantined_since,
 			released_at IS NOT NULL AND quarantined_since IS NOT NULL AND released_at >= quarantined_since,
-			requests_24h, blocks_24h, updated_at
+			requests_24h, blocks_24h, player_blocks, updated_at
 		FROM proxy_health ORDER BY proxy_key`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	tw := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "IP\tSUBNET\tSTATE\tRESTING UNTIL\tQUARANTINED SINCE\tREQUESTS\tBLOCKS\tSAVED")
+	fmt.Fprintln(tw, "IP\tSUBNET\tSTATE\tRESTING UNTIL\tQUARANTINED SINCE\tREQUESTS\tPAGE BLOCKS\tPLAYER BLOCKS\tSAVED")
 	n := 0
 	stamp := func(t *time.Time) string {
 		if t == nil {
@@ -75,9 +76,9 @@ func proxiesList(ctx context.Context, pool *pgxpool.Pool, out io.Writer, now tim
 		var key, subnet, state string
 		var cool, since *time.Time
 		var released bool
-		var requests, blocks int64
+		var requests, blocks, player int64
 		var saved time.Time
-		if err := rows.Scan(&key, &subnet, &state, &cool, &since, &released, &requests, &blocks, &saved); err != nil {
+		if err := rows.Scan(&key, &subnet, &state, &cool, &since, &released, &requests, &blocks, &player, &saved); err != nil {
 			return err
 		}
 		if cool != nil && !cool.After(now) {
@@ -86,8 +87,8 @@ func proxiesList(ctx context.Context, pool *pgxpool.Pool, out io.Writer, now tim
 		if released {
 			state += " (released)"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s ago\n", key, subnet, state, stamp(cool), stamp(since), requests, blocks,
-			now.Sub(saved).Round(time.Second))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s ago\n", key, subnet, state, stamp(cool), stamp(since), requests,
+			max(blocks-player, 0), player, now.Sub(saved).Round(time.Second))
 		n++
 	}
 	if err := rows.Err(); err != nil {

@@ -381,7 +381,8 @@ When the stretch sits at 8 and `yt_freshness_debt_hours` still grows, the work t
 find fewer channels.
 
 **Quarantined IPs.** An IP blocked on page requests at least 3 times in a day (UTC), 3 days in a row, is quarantined: no job
-uses it. Player blocks never count; the player is blocked often by design. A quarantine outlives a restart. See them:
+uses it. Player blocks never count; the player is blocked often by design. A quarantine outlives a restart. See them, with
+each IP's page and player blocks since the worker started:
 
 ```bash
 ytcollect proxies

@@ -22,6 +22,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,17 +97,20 @@ type Report struct {
 	SupplyPerHour float64   `json:"supply_per_hour"` // at usage.TargetUse
 	// DemandPerHour is the work the schedule asks for without any stretch:
 	// FixedPerHour, which the stretch can't slow, plus StretchablePerHour.
-	DemandPerHour      float64            `json:"demand_per_hour"`
-	FixedPerHour       float64            `json:"fixed_per_hour"`
-	StretchablePerHour float64            `json:"stretchable_per_hour"`
-	SpareTimePerHour   float64            `json:"spare_time_per_hour"` // P4 work, not in the demand
-	Stretch            float64            `json:"stretch"`
-	MinStretch         float64            `json:"min_stretch,omitempty"`
-	DebtHours          map[string]float64 `json:"debt_hours"`       // overdue job-hours per tier, P4 work left out
-	SpareDebtHours     float64            `json:"spare_debt_hours"` // overdue job-hours of P4 work (images, enrichment)
-	RecommendedIPs     int                `json:"recommended_ips"`  // to do it all without a stretch
-	Workers            int                `json:"workers"`
-	Measured           map[string]float64 `json:"measured_cost,omitempty"` // requests per job, last day
+	DemandPerHour      float64 `json:"demand_per_hour"`
+	FixedPerHour       float64 `json:"fixed_per_hour"`
+	StretchablePerHour float64 `json:"stretchable_per_hour"`
+	SpareTimePerHour   float64 `json:"spare_time_per_hour"` // P4 work, not in the demand
+	// DemandByKind splits the demand (fixed and stretchable, without any
+	// stretch) by job kind, in requests per hour.
+	DemandByKind   map[string]float64 `json:"demand_by_kind,omitempty"`
+	Stretch        float64            `json:"stretch"`
+	MinStretch     float64            `json:"min_stretch,omitempty"`
+	DebtHours      map[string]float64 `json:"debt_hours"`       // overdue job-hours per tier, P4 work left out
+	SpareDebtHours float64            `json:"spare_debt_hours"` // overdue job-hours of P4 work (images, enrichment)
+	RecommendedIPs int                `json:"recommended_ips"`  // to do it all without a stretch
+	Workers        int                `json:"workers"`
+	Measured       map[string]float64 `json:"measured_cost,omitempty"` // requests per job, last day
 }
 
 // PerIPHour is what one IP makes in an hour at a gap of intervalS seconds,
@@ -121,7 +126,7 @@ func Plan(ctx context.Context, q db.Querier, now time.Time) (Report, error) {
 
 // PlanWith is Plan with options.
 func PlanWith(ctx context.Context, q db.Querier, now time.Time, o Options) (Report, error) {
-	r := Report{At: now, DebtHours: map[string]float64{}, Stretch: 1, Measured: map[string]float64{}}
+	r := Report{At: now, DebtHours: map[string]float64{}, Stretch: 1, Measured: map[string]float64{}, DemandByKind: map[string]float64{}}
 	if o.MinStretch > 1 {
 		r.MinStretch = math.Min(o.MinStretch, MaxStretch)
 	}
@@ -205,8 +210,10 @@ func PlanWith(ctx context.Context, q db.Querier, now time.Time, o Options) (Repo
 			r.SpareTimePerHour += float64(next24) * c / 24
 		case stretched:
 			r.StretchablePerHour += float64(next24) * c * current / 24
+			r.DemandByKind[kind] += float64(next24) * c * current / 24
 		default:
 			r.FixedPerHour += float64(next24) * c / 24
+			r.DemandByKind[kind] += float64(next24) * c / 24
 		}
 	}
 	rows.Close()
@@ -247,6 +254,30 @@ func PlanWith(ctx context.Context, q db.Querier, now time.Time, o Options) (Repo
 		return r, err
 	}
 	return r, db.SetSetting(ctx, q, StretchKey, r.Stretch)
+}
+
+// TopKinds names the job kinds with the most demand, biggest first, as
+// "kind=requests/h" (for the log).
+func (r Report) TopKinds(n int) string {
+	type kv struct {
+		k string
+		v float64
+	}
+	var all []kv
+	for k, v := range r.DemandByKind {
+		if v >= 0.5 {
+			all = append(all, kv{k, v})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].v > all[j].v || (all[i].v == all[j].v && all[i].k < all[j].k) })
+	var parts []string
+	for i, x := range all {
+		if i == n {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s=%.0f", x.k, x.v))
+	}
+	return strings.Join(parts, " ")
 }
 
 // stretchFor is the stretch that fits fixed + stretchable/stretch into

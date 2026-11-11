@@ -61,6 +61,76 @@ func TestLeaseOrderAndOneJobPerChannel(t *testing.T) {
 	}
 }
 
+// Within a priority, tier A's jobs go first, then tier B's, then the rest
+// (C, D, M and jobs of no channel) oldest due first; a higher priority
+// still comes before any tier (the owner, D-052). A channel's tier, set or
+// changed later, carries its queued rows along.
+func TestLeaseTakesTiersAAndBFirst(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := pool.Exec(ctx, `INSERT INTO channels (id, kind, tier, status) VALUES
+		('UCfakeTIERA', 'core', 'A', 'listed'), ('UCfakeTIERB', 'core', 'B', 'listed'),
+		('UCfakeTIERC', 'core', 'C', 'listed'), ('UCfakeTIERC2', 'core', 'C', 'listed')`)
+	must(err)
+	now := time.Now()
+	must(queue.Put(ctx, pool, "comments", "fakeTA", "UCfakeTIERA", queue.P1, now.Add(-1*time.Hour)))
+	must(queue.Put(ctx, pool, "comments", "fakeTB", "UCfakeTIERB", queue.P1, now.Add(-2*time.Hour)))
+	must(queue.Put(ctx, pool, "comments", "fakeTC", "UCfakeTIERC", queue.P1, now.Add(-3*time.Hour)))
+	must(queue.Put(ctx, pool, "search", "fake tier term", "", queue.P1, now.Add(-4*time.Hour)))
+	must(queue.Put(ctx, pool, "video", "fakeTC0", "UCfakeTIERC2", queue.P0, now.Add(-time.Minute)))
+
+	jobs, err := queue.Lease(ctx, pool, "w1", nil, 10, time.Minute)
+	must(err)
+	got := []string{}
+	for _, j := range jobs {
+		got = append(got, j.String())
+	}
+	want := []string{"video/fakeTC0", "comments/fakeTA", "comments/fakeTB", "search/fake tier term", "comments/fakeTC"}
+	if len(got) != len(want) {
+		t.Fatalf("leased %v; want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("leased %v; want %v", got, want)
+		}
+	}
+
+	rank := func(kind, id string) int {
+		t.Helper()
+		var r int
+		must(pool.QueryRow(ctx, `SELECT tier_rank FROM schedule WHERE kind = $1 AND entity_id = $2`, kind, id).Scan(&r))
+		return r
+	}
+	// A channel moved to tier A takes its rows along.
+	_, err = pool.Exec(ctx, `UPDATE channels SET tier = 'A' WHERE id = 'UCfakeTIERC'`)
+	must(err)
+	if r := rank("comments", "fakeTC"); r != 0 {
+		t.Errorf("after the move to tier A: rank %d", r)
+	}
+	// A job queued before its channel is listed takes the tier once it is.
+	must(queue.Put(ctx, pool, "rss", "UCfakeTIERLATE", "UCfakeTIERLATE", queue.P0, now))
+	if r := rank("rss", "UCfakeTIERLATE"); r != 2 {
+		t.Errorf("no channel yet: rank %d", r)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO channels (id, kind, tier, status) VALUES ('UCfakeTIERLATE', 'core', 'B', 'listed')`)
+	must(err)
+	if r := rank("rss", "UCfakeTIERLATE"); r != 1 {
+		t.Errorf("listed in tier B: rank %d", r)
+	}
+	// A row whose channel is filled in later takes that channel's rank.
+	must(queue.Put(ctx, pool, "video", "fakeTLATER", "", queue.P0, now))
+	must(queue.Put(ctx, pool, "video", "fakeTLATER", "UCfakeTIERA", queue.P0, now))
+	if r := rank("video", "fakeTLATER"); r != 0 {
+		t.Errorf("channel filled in: rank %d", r)
+	}
+}
+
 func TestLeaseExpiresAndConcurrentWorkersNeverShare(t *testing.T) {
 	pool := dbtest.New(t)
 	ctx := context.Background()

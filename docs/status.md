@@ -66,7 +66,9 @@ The current state of the YouTube collector, for the owner and the master session
   - **the slower refresh:** the capacity planner fits the work to the 10 IPs at 70% busy. It refreshes tiers C, D and M less
     often (up to 8 times), never A and B, and never new-upload detection. Images and commenter enrichment run only in spare
     time.
-  - **avatars and banners:** handed off to analysis and deleted, like thumbnails; the hand-off is on.
+  - **avatars and banners:** handed off to analysis and deleted; the hand-off is on. **Thumbnails are held** (D-052, 11
+    November: "Not now for thumbnails"): `worker.mediaHold: [thumb]` keeps their jobs queued without downloading them.
+    Images run only in spare time, so none have run yet.
   - **the report's IP counts:** they now allow for each answer's time.
 - **Capacity, first plans after the deploy** (supply 9,333 requests an hour):
   - the work that is never slowed is already about 10,800 an hour, and the stretch is climbing to its cap of 8;

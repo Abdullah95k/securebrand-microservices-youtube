@@ -810,6 +810,14 @@ there, for the kinds in `relay.media.kinds`: thumbnails, channel avatars and ban
 3. Every 10 minutes it deletes each file that analysis has acknowledged (processed, skipped, or failed for good), and each file
    whose deadline has passed, and says so on `content.media.deleted.v1`.
 
+**Held kinds.** `worker.mediaHold` lists image kinds that are not downloaded for now. Their jobs stay queued and come back
+every 7 days, without a request, until the kind is released.
+- Production holds `thumb` (the owner, D-052, 11 November: "Not now for thumbnails"). Channel avatars and banners are
+  collected and handed off (D-050).
+- To release thumbnails, remove `thumb` from `worker.mediaHold`. The queued jobs then download at the lowest priority, in
+  spare time.
+- To stop all image downloads at once, without a deploy, run `ytcollect switch media off`; `on` restarts them.
+
 The record of every image (its row, and `content.media.v1`) stays forever; only the file goes. With the hand-off off
 (`relay.media.handoff: false`, or without Kafka) nothing is announced and nothing is deleted. A deleted avatar or banner is not
 downloaded again: yts knows it by its address and its content, so only a new picture is fetched (and handed off).

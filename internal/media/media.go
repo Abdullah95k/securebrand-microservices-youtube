@@ -75,7 +75,15 @@ type Service struct {
 	Log     *slog.Logger
 	Now     func() time.Time
 	CDNBase string // thumbnails; default https://i.ytimg.com
+	// Hold are the image kinds not downloaded for now (the owner, D-052, 11
+	// November: "Not now for thumbnails"). Their jobs stay queued and come
+	// back every HoldRecheck, with no request, until the kind is released.
+	Hold map[string]bool
 }
+
+// HoldRecheck is how long a held image job waits before it is looked at
+// again (it makes no request while held).
+const HoldRecheck = 7 * 24 * time.Hour
 
 func (s *Service) now() time.Time {
 	if s.Now != nil {
@@ -156,6 +164,9 @@ func (s *Service) fetch(ctx context.Context, j queue.Job) (time.Time, error) {
 	kind, id, _ := strings.Cut(j.EntityID, ":")
 	if _, known := map[string]bool{Thumb: true, Avatar: true, Banner: true, AuthorAvatar: true}[kind]; !known || !validID.MatchString(id) {
 		return time.Time{}, nil // not a job this version knows: drop it
+	}
+	if s.Hold[kind] {
+		return s.now().Add(HoldRecheck), nil // held: kept queued, not downloaded
 	}
 	if s.suppressed(privacyKind(kind), id) {
 		return time.Time{}, nil
@@ -242,6 +253,23 @@ func (s *Service) fetch(ctx context.Context, j queue.Job) (time.Time, error) {
 // November, channel avatars and banners too; post images come with fix 21).
 // Commenters' avatars are kept unless listed (the relay's -media-kinds).
 var HandoffKinds = []string{Thumb, Avatar, Banner}
+
+// ParseHold reads a comma-separated list of image kinds held from
+// download (the worker's -media-hold); empty holds none.
+func ParseHold(s string) (map[string]bool, error) {
+	hold := map[string]bool{}
+	if strings.TrimSpace(s) == "" {
+		return hold, nil
+	}
+	kinds, err := ParseKinds(s)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range kinds {
+		hold[k] = true
+	}
+	return hold, nil
+}
 
 // ParseKinds reads a comma-separated list of image kinds to hand off.
 func ParseKinds(s string) ([]string, error) {

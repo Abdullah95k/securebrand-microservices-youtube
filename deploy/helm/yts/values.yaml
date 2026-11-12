@@ -104,6 +104,9 @@ worker:
   backfillDays: 365       # days of each channel's past uploads
   rawSample: "0.01"       # share of ordinary raw responses kept forever
   raw30d: true            # also write the rest under yts/30d/
+  # Image kinds not downloaded for now (thumb, avatar, banner, author_avatar):
+  # their jobs stay queued and make no request until the kind is released.
+  mediaHold: []
   opsPort: 9101           # /metrics, /healthz, /readyz
   extraArgs: []
   goMemLimit: 850MiB

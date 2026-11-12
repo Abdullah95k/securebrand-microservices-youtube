@@ -46,6 +46,9 @@ spec:
             - -backfill-days={{ .Values.worker.backfillDays }}
             - -raw-sample={{ .Values.worker.rawSample }}
             - -raw-30d={{ .Values.worker.raw30d }}
+            {{- with .Values.worker.mediaHold }}
+            - -media-hold={{ join "," . }}
+            {{- end }}
             - -metrics-addr=:{{ .Values.worker.opsPort }}
             {{- range .Values.worker.extraArgs }}
             - {{ . | quote }}

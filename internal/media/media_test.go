@@ -66,6 +66,59 @@ func files(t *testing.T, dir string) int {
 	return n
 }
 
+// A held kind (the owner, D-052: "Not now for thumbnails") is kept queued
+// and comes back in a week, with no request and nothing stored; other kinds
+// download as before.
+func TestHeldKindIsNotDownloaded(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 12, 1, 0, 0, 0, time.UTC)
+	if err := registry.List(ctx, pool, nil, ch, registry.Input{Input: ch, Tier: policy.B}); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	img := &images{ct: "image/jpeg", files: map[string]string{
+		"https://i.ytimg.com/vi/fakeMv1/hqdefault.jpg": "thumb-one",
+		"https://yt3.ggpht.com/fakeavatar=s900":        "avatar-one",
+	}}
+	hold, err := media.ParseHold("thumb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &media.Service{Pool: pool, Images: img, Store: media.FileStore{Dir: dir}, Log: quiet, Now: func() time.Time { return now }, Hold: hold}
+	wr := &writer.Writer{Pool: pool, Media: true, Now: func() time.Time { return now }}
+	if _, err := wr.Listed(ctx, ch, ytparse.VideoItem{VideoID: "fakeMv1", Title: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wr.Channel(ctx, writer.Channel{ID: ch, Title: "c", AvatarURL: "//yt3.ggpht.com/fakeavatar=s900"}); err != nil {
+		t.Fatal(err)
+	}
+	run := func(entity string) time.Time {
+		t.Helper()
+		next, err := svc.Handlers()[queue.KindMedia](ctx, queue.Job{Kind: queue.KindMedia, EntityID: entity, Attempts: 1})
+		if err != nil {
+			t.Fatalf("%s: %v", entity, err)
+		}
+		return next
+	}
+	if next := run("thumb:fakeMv1"); !next.Equal(now.Add(media.HoldRecheck)) {
+		t.Errorf("held thumbnail comes back at %v, want in a week", next)
+	}
+	if len(img.calls) != 0 || files(t, dir) != 0 || count(t, pool, `SELECT count(*) FROM media WHERE kind = 'thumb'`) != 0 {
+		t.Errorf("a held thumbnail must not be downloaded or stored: %d requests, %d files", len(img.calls), files(t, dir))
+	}
+	run("avatar:" + ch)
+	if len(img.calls) != 1 || count(t, pool, `SELECT count(*) FROM media WHERE kind = 'avatar'`) != 1 {
+		t.Errorf("avatars are not held: %d requests", len(img.calls))
+	}
+	if h, err := media.ParseHold(""); err != nil || len(h) != 0 {
+		t.Errorf("empty hold: %v %v", h, err)
+	}
+	if _, err := media.ParseHold("thumb,poster"); err == nil {
+		t.Error("an unknown kind must be refused")
+	}
+}
+
 func TestMediaJobs(t *testing.T) {
 	pool := dbtest.New(t)
 	ctx := context.Background()

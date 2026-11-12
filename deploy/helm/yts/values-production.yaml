@@ -40,6 +40,9 @@ worker:
   backfillDays: 7
   rawSample: "0.01"
   raw30d: true
+  # The owner, D-052 (11 November): "Not now for thumbnails". Channel avatars
+  # and banners are collected for analysis (D-050).
+  mediaHold: [thumb]
 
 websub:
   enabled: false

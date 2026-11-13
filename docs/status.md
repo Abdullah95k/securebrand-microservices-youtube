@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **11 November 2026 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **13 November 2026 (Iraq time)**.
 
 ## Where it stands
 
@@ -8,8 +8,14 @@ The current state of the YouTube collector, for the owner and the master session
   quarantine rule: one block of any kind on 3 different UTC days within a week set an IP aside for good. The pilot ran across
   7, 8 and 9 November, so its 47 player blocks in about 393,000 requests took all 10 IPs. The exits themselves were fine.
   The master restarted the worker at 21:09Z on 10 November, which cleared it.
-- **Live since 11 November, 11:17Z: `624de33`**, the owner's queue order (D-052, below). Before it: `d0b93cd` from 07:32Z
-  (nameless channels as partial accounts), `34ff031` from 06:54Z (health by tier) and `f87e02e` from 05:46Z (Go 1.27.4).
+- **Live since 12 November, 04:05 Iraq time (01:05Z): `6dfa4c7`**, the thumbnail hold (D-052: "Not now for thumbnails").
+  The worker's start log says `image downloads held` for `thumb`. Before it: `624de33` from 11 November 11:17Z, the owner's
+  queue order (D-052, below), `d0b93cd` from 07:32Z (nameless channels as partial accounts), `34ff031` from 06:54Z (health
+  by tier) and `f87e02e` from 05:46Z (Go 1.27.4).
+- **Waiting:**
+  - the owner's answer on buying about 30 IPs (the 24-hour plan below);
+  - from the master, ClickHouse bytes per yt event and PostgreSQL CPU and IOPS, to add analysis storage and database load
+    to [`master/yts-coverage-sizing.md`](master/yts-coverage-sizing.md).
 - **11 November:**
   - **tiers A and B were falling behind, and feed checks ran hours late in every tier** (health at 06:54Z and 07:56Z): priority
     2 (feed checks and refreshes) got almost no time, and priority 3 none, because priorities 0 and 1 took it all. The cause was
@@ -318,6 +324,9 @@ Waiting: `ytprobe-detect`'s memory (REQ-004 §5), from the owner's `docker stats
   acknowledgements)? The relay reads it only once Kafka is there.
 - For the owner: yts also downloads channel avatars, banners and commenters' avatars, and keeps them. Only thumbnails are handed
   to analysis and deleted after it (and post images once fix 21 collects them). Keep downloading the others, or stop?
+  **Answered 11 November (D-050)** for listed channels' avatars and banners: handed off to analysis and deleted, like
+  thumbnails. Commenters' avatars are still downloaded and kept; the relay's `-media-kinds` can hand them off too if the
+  owner wants.
 
 ## Standing rules (from the owner, 5 November)
 

@@ -370,7 +370,6 @@ func (w *Writer) Video(ctx context.Context, v Video) (VideoOutcome, error) {
 	w.Fill.Observe("watch", "date_text", v.Watch.DateText != "")
 	if v.HasPlayer {
 		w.Fill.Observe("player", "publish_date", v.Player.PublishDate != "")
-		w.Fill.Observe("player", "length", v.Player.LengthSec > 0)
 		w.Fill.Observe("player", "category", v.Player.Category != "")
 	}
 	title, desc := v.Watch.Title, v.Watch.Description
@@ -393,6 +392,13 @@ func (w *Writer) Video(ctx context.Context, v Video) (VideoOutcome, error) {
 		kind, live = "live", "live" // "… watching now"
 	}
 	out.LiveStatus = live
+	// A stream that is live or about to start has no length yet, and its
+	// player is read at every live check: counted, the length's fill rate
+	// would follow the evening's live streams instead of the page
+	// (FillRateDrop on player.length, 13 November).
+	if v.HasPlayer && live != "live" && live != "upcoming" {
+		w.Fill.Observe("player", "length", v.Player.LengthSec > 0)
+	}
 	var published *time.Time
 	var precision *int
 	if t, p, ok := parsePublish(v.Player.PublishDate); ok {

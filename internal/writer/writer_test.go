@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/db/dbtest"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fill"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
@@ -116,6 +117,38 @@ func TestChannelChangesAndSnapshots(t *testing.T) {
 	// Events: the first read (content and counts), the new title (the
 	// counts did not change), nothing for the first miss, the removal.
 	sameEvents(t, "channel", r.events(t, ch), "channel", "channel_snapshot", "channel", "channel")
+}
+
+// A live stream's player has no length: its readings don't count towards
+// the length's fill rate, so the evening's live streams don't look like a
+// page change (FillRateDrop, 13 November). Its other player fields count.
+func TestLiveStreamsLeaveTheLengthFillRateAlone(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	r.w.Fill = &fill.Recorder{}
+	for _, v := range []writer.Video{
+		{ID: "fakeVIDlen1", ChannelID: ch, HasPlayer: true, Watch: ytparse.WatchInfo{Title: "t"},
+			Player: ytparse.PlayerInfo{PublishDate: "2026-11-13T08:00:00Z", Category: "News", LengthSec: 90}},
+		{ID: "fakeVIDlive", ChannelID: ch, HasPlayer: true, Watch: ytparse.WatchInfo{Title: "t"},
+			Player: ytparse.PlayerInfo{PublishDate: "2026-11-13T08:00:00Z", Category: "News", IsLive: true, WasLive: true}},
+	} {
+		if _, err := r.w.Video(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.w.Fill.Flush(ctx, r.pool, r.now); err != nil {
+		t.Fatal(err)
+	}
+	for field, want := range map[string][2]int{"length": {1, 1}, "category": {2, 2}} {
+		var seen, present int
+		if err := r.pool.QueryRow(ctx, `SELECT seen, present FROM field_fill_rates WHERE endpoint = 'player' AND field = $1`, field).
+			Scan(&seen, &present); err != nil {
+			t.Fatal(err)
+		}
+		if seen != want[0] || present != want[1] {
+			t.Errorf("player.%s: seen %d, present %d; want %v", field, seen, present, want)
+		}
+	}
 }
 
 func TestVideosRelevancePrecisionAndSuppression(t *testing.T) {

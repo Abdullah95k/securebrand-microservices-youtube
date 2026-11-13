@@ -218,6 +218,9 @@ message Post {
   optional bool has_poll = 21;
   optional bool has_video = 22;
   optional string published_text = 23;
+  // The attached images' addresses, the largest size of each, in order
+  // (fix 21). The files go to analysis as media of kind post_image.
+  repeated string image_urls = 24;
 }
 
 // PostCounts are a community post's counts.
@@ -346,7 +349,7 @@ message AuthorProfile {
 // it is then. The row stays after the file is gone.
 message Media {
   Event event = 1;
-  // thumb, avatar, banner, author_avatar.
+  // thumb, avatar, banner, author_avatar, post_image.
   string kind = 2;
   // The video, channel or commenter it belongs to.
   string entity_id = 3;

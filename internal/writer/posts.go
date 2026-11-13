@@ -3,10 +3,12 @@ package writer
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytparse"
@@ -21,7 +23,8 @@ type PostOutcome struct {
 
 // Post stores a community post with a snapshot of its numbers. An edited
 // text replaces the stored one; the change is logged in video_changes
-// under the post's ID (field "post_text").
+// under the post's ID (field "post_text"). With Media, a post whose images
+// are new or changed has them queued for download (fix 21).
 func (w *Writer) Post(ctx context.Context, channelID string, p ytparse.Post) (PostOutcome, error) {
 	var out PostOutcome
 	if p.ID == "" {
@@ -45,7 +48,8 @@ func (w *Writer) Post(ctx context.Context, channelID string, p ytparse.Post) (Po
 	ev := outbox.New(ctx, now)
 	err := pgx.BeginFunc(ctx, w.Pool, func(tx pgx.Tx) error {
 		var oldText *string
-		err := tx.QueryRow(ctx, `SELECT text FROM posts WHERE id = $1 FOR UPDATE`, p.ID).Scan(&oldText)
+		var oldImages []string
+		err := tx.QueryRow(ctx, `SELECT text, image_urls FROM posts WHERE id = $1 FOR UPDATE`, p.ID).Scan(&oldText, &oldImages)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			out.New = true
@@ -61,8 +65,8 @@ func (w *Writer) Post(ctx context.Context, channelID string, p ytparse.Post) (Po
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO posts (id, channel_id, text, published_at, published_precision_s, published_text,
 				likes_min, likes_text, comments_min, comments_text, relevant, matched_keywords, detail_params,
-				has_image, has_poll, has_video, first_seen, last_checked, source)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17, 'web')
+				has_image, has_poll, has_video, first_seen, last_checked, source, image_urls)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17, 'web', $18)
 			ON CONFLICT (id) DO UPDATE SET text = COALESCE(EXCLUDED.text, posts.text),
 				published_at = CASE WHEN posts.published_precision_s IS NULL
 					OR COALESCE(EXCLUDED.published_precision_s, 2147483647) < posts.published_precision_s
@@ -74,10 +78,18 @@ func (w *Writer) Post(ctx context.Context, channelID string, p ytparse.Post) (Po
 				comments_text = COALESCE(EXCLUDED.comments_text, posts.comments_text),
 				relevant = EXCLUDED.relevant, matched_keywords = EXCLUDED.matched_keywords,
 				detail_params = COALESCE(EXCLUDED.detail_params, posts.detail_params),
+				image_urls = CASE WHEN cardinality(EXCLUDED.image_urls) > 0 THEN EXCLUDED.image_urls ELSE posts.image_urls END,
 				last_checked = EXCLUDED.last_checked, removed_at = NULL`,
 			p.ID, channelID, str(p.Text), published, precision, str(p.PublishedText), likes, likesText, comments, commentsText,
-			out.Relevant, nonNil(kws), str(p.DetailParams), p.HasImage, p.HasPoll, p.HasVideo, now); err != nil {
+			out.Relevant, nonNil(kws), str(p.DetailParams), p.HasImage, p.HasPoll, p.HasVideo, now, nonNil(p.Images)); err != nil {
 			return err
+		}
+		// A page that shows no images keeps the stored ones; new or changed
+		// images are fetched (one job for all of a post's images).
+		if w.Media && len(p.Images) > 0 && !slices.Equal(oldImages, p.Images) {
+			if err := media.Queue(ctx, tx, media.PostImage, p.ID, now); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO post_snapshots (post_id, taken_at, likes_min, comments_min) VALUES ($1, $2, $3, $4)
 			ON CONFLICT DO NOTHING`, p.ID, now, likes, comments); err != nil {

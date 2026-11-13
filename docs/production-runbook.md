@@ -798,10 +798,14 @@ The start-up log line "relay starting" says `transactions=false`.
 
 ## 17. The media hand-off
 
-yts downloads video thumbnails, channel avatars and banners, and commenters' avatars. The contract's rule for media files (R5) is
-that a file is kept until analysis is done with it, and at least 24 hours. The relay does this, once storage and Kafka are both
-there, for the kinds in `relay.media.kinds`: thumbnails, channel avatars and banners by default (the owner, 11 November). Add
-`author_avatar` to hand off commenters' avatars too; kinds not listed are kept.
+yts downloads video thumbnails, channel avatars and banners, community post images (`post_image`, fix 21) and commenters'
+avatars. The contract's rule for media files (R5) is that a file is kept until analysis is done with it, and at least 24 hours.
+The relay does this, once storage and Kafka are both there, for the kinds in `relay.media.kinds`: thumbnails, channel avatars
+and banners (the owner, 11 November) and post images (13 November, "all platforms media") by default. Add `author_avatar` to
+hand off commenters' avatars too; kinds not listed are kept.
+
+A post's images are one job: the Posts tab gives their addresses (the largest size of each), and the job downloads each one not
+stored yet. A post that shows new images is queued again; a page that shows none keeps the stored addresses.
 
 1. Every minute it announces new images of those kinds on `content.media.ready.v1`, each with a deadline 72 hours later
    (`relay.media.keep` in the chart).

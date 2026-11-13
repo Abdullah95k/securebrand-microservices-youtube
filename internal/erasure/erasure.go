@@ -229,13 +229,14 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 			{"playlists", `DELETE FROM playlists WHERE channel_id = $1`},
 			{"search hits", `DELETE FROM search_hits WHERE channel_id = $1`},
 			{"media outbox events", `DELETE FROM event_outbox WHERE kind IN ('media', 'media_ready', 'media_deleted') AND entity_id IN (
-				SELECT kind || ':' || entity_id || ':' || left(sha256, 16) FROM media WHERE kind IN ('avatar', 'banner', 'thumb') AND (entity_id = $1 OR channel_id = $1))`},
+				SELECT kind || ':' || entity_id || ':' || left(sha256, 16) FROM media WHERE kind IN ('avatar', 'banner', 'thumb', 'post_image') AND (entity_id = $1 OR channel_id = $1))`},
 			{"media acknowledgements", `DELETE FROM media_acks WHERE (kind, entity_id, sha256) IN (
-				SELECT kind, entity_id, sha256 FROM media WHERE kind IN ('avatar', 'banner', 'thumb') AND (entity_id = $1 OR channel_id = $1))`},
-			{"media", `DELETE FROM media WHERE kind IN ('avatar', 'banner', 'thumb') AND (entity_id = $1 OR channel_id = $1)`},
+				SELECT kind, entity_id, sha256 FROM media WHERE kind IN ('avatar', 'banner', 'thumb', 'post_image') AND (entity_id = $1 OR channel_id = $1))`},
+			{"media", `DELETE FROM media WHERE kind IN ('avatar', 'banner', 'thumb', 'post_image') AND (entity_id = $1 OR channel_id = $1)`},
 			{"webhook events", `DELETE FROM webhook_events WHERE type <> 'erasure' AND (channel_id = $1 OR entity_id = $1)`},
 			{"media jobs", `DELETE FROM schedule WHERE kind = 'media' AND (entity_id IN ('avatar:' || $1, 'banner:' || $1)
-				OR entity_id IN (SELECT 'thumb:' || id FROM videos WHERE channel_id = $1))`},
+				OR entity_id IN (SELECT 'thumb:' || id FROM videos WHERE channel_id = $1)
+				OR entity_id IN (SELECT 'post_image:' || id FROM posts WHERE channel_id = $1))`},
 			{"videos", `DELETE FROM videos WHERE channel_id = $1`},
 			{"post snapshots", `DELETE FROM post_snapshots WHERE post_id IN (SELECT id FROM posts WHERE channel_id = $1)`},
 			{"posts", `DELETE FROM posts WHERE channel_id = $1`},
@@ -283,8 +284,13 @@ func (s *Service) Erase(ctx context.Context, reqID int64, kind, id string) error
 			{"comments", `DELETE FROM comments WHERE parent_kind = 'post' AND parent_id = $1`},
 			{"post snapshots", `DELETE FROM post_snapshots WHERE post_id = $1`},
 			{"post changes", `DELETE FROM video_changes WHERE video_id = $1`},
+			{"media outbox events", `DELETE FROM event_outbox WHERE kind IN ('media', 'media_ready', 'media_deleted') AND entity_id IN (
+				SELECT kind || ':' || entity_id || ':' || left(sha256, 16) FROM media WHERE kind = 'post_image' AND entity_id = $1)`},
+			{"media acknowledgements", `DELETE FROM media_acks WHERE (kind, entity_id, sha256) IN (
+				SELECT kind, entity_id, sha256 FROM media WHERE kind = 'post_image' AND entity_id = $1)`},
+			{"media", `DELETE FROM media WHERE kind = 'post_image' AND entity_id = $1`},
 			{"webhook events", `DELETE FROM webhook_events WHERE type <> 'erasure' AND entity_id = $1`},
-			{"jobs", `DELETE FROM schedule WHERE entity_id = $1`},
+			{"jobs", `DELETE FROM schedule WHERE entity_id = $1 OR kind = 'media' AND entity_id = 'post_image:' || $1`},
 			{"post", `DELETE FROM posts WHERE id = $1`},
 		}
 	default:
@@ -359,6 +365,7 @@ func (s *Service) Audit(ctx context.Context) (AuditResult, error) {
 		{privacy.Channel, `SELECT entity_id FROM media WHERE kind IN ('avatar', 'banner')
 			UNION SELECT channel_id FROM media WHERE channel_id IS NOT NULL`},
 		{privacy.Author, `SELECT entity_id FROM media WHERE kind = 'author_avatar'`},
+		{privacy.Post, `SELECT entity_id FROM media WHERE kind = 'post_image'`},
 		{privacy.Video, `SELECT entity_id FROM webhook_events WHERE type = 'video.relevant'`},
 		{privacy.Post, `SELECT entity_id FROM webhook_events WHERE type = 'post.relevant'`},
 		{privacy.Channel, `SELECT channel_id FROM webhook_events WHERE channel_id IS NOT NULL`},

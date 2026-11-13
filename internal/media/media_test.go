@@ -228,6 +228,70 @@ func TestMediaJobs(t *testing.T) {
 	}
 }
 
+// Community post images (fix 21): the writer stores a post's image
+// addresses and queues one job, which downloads each image not stored yet;
+// a page that shows no images keeps the stored ones.
+func TestPostImages(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	if err := registry.List(ctx, pool, nil, ch, registry.Input{Input: ch, Tier: policy.B}); err != nil {
+		t.Fatal(err)
+	}
+	const post = "UgkxFAKEMEDIAPOST01"
+	a, b, c := "https://yt3.ggpht.com/fakepostA=s1080", "https://yt3.ggpht.com/fakepostB=s1080", "https://yt3.ggpht.com/fakepostC=s1080"
+	dir := t.TempDir()
+	img := &images{ct: "image/jpeg", files: map[string]string{a: "post-a", b: "post-b", c: "post-c"}}
+	svc := &media.Service{Pool: pool, Images: img, Store: media.FileStore{Dir: dir}, Log: quiet, Now: func() time.Time { return now }}
+	run := func() time.Time {
+		t.Helper()
+		next, err := svc.Handlers()[queue.KindMedia](ctx, queue.Job{Kind: queue.KindMedia, EntityID: media.JobID(media.PostImage, post), Attempts: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return next
+	}
+	wr := &writer.Writer{Pool: pool, Media: true, Now: func() time.Time { return now }}
+	write := func(images ...string) {
+		t.Helper()
+		if _, err := wr.Post(ctx, ch, ytparse.Post{ID: post, ChannelID: ch, Text: "fake post", HasImage: len(images) > 0, Images: images}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write(a, b)
+	if n := count(t, pool, `SELECT count(*) FROM posts WHERE id = $1 AND image_urls = $2`, post, []string{a, b}); n != 1 {
+		t.Fatal("the post's image addresses are stored, in order")
+	}
+	if n := count(t, pool, `SELECT count(*) FROM schedule WHERE kind = 'media' AND entity_id = $1 AND priority = 4`, "post_image:"+post); n != 1 {
+		t.Fatalf("post image jobs queued: %d, want 1 at P4", n)
+	}
+	if next := run(); !next.IsZero() {
+		t.Errorf("a post image job ends once its images are stored: %v", next)
+	}
+	if n := count(t, pool, `SELECT count(*) FROM media WHERE kind = 'post_image' AND entity_id = $1 AND channel_id = $2
+		AND object_key LIKE 'media/post_image/' || $1 || '/%'`, post, ch); n != 2 || files(t, dir) != 2 || len(img.calls) != 2 {
+		t.Fatalf("%d rows, %d files, %d requests; want each of the 2 images once", n, files(t, dir), len(img.calls))
+	}
+	run()
+	if len(img.calls) != 2 {
+		t.Error("images already stored from the same address must not be fetched again")
+	}
+
+	write() // a page that shows no images
+	if n := count(t, pool, `SELECT count(*) FROM posts WHERE id = $1 AND image_urls = $2`, post, []string{a, b}); n != 1 {
+		t.Error("a page without images keeps the stored addresses")
+	}
+	write(a, b, c) // an image added
+	run()
+	if len(img.calls) != 3 || count(t, pool, `SELECT count(*) FROM media WHERE kind = 'post_image'`) != 3 {
+		t.Errorf("only the new image is fetched: %d requests", len(img.calls))
+	}
+	if kinds, err := media.ParseKinds("thumb,post_image"); err != nil || len(kinds) != 2 {
+		t.Errorf("post_image is an image kind: %v %v", kinds, err)
+	}
+}
+
 func TestLoadConfig(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := media.Load(filepath.Join(dir, "missing.json")); err != media.ErrNotConfigured {

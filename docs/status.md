@@ -23,6 +23,8 @@ The current state of the YouTube collector, for the owner and the master session
   still run only in spare time, so none download while the 10 IPs are full. Proposed, for the owner: new videos'
   thumbnails, and avatars and banners on first sight or change, at a priority that runs, so they arrive within hours once
   the 44 IPs are in.
+- **Community post images (fix 21) are built**, under the owner's "all platforms media" (the master's yes, 13 November).
+  One request per image, in spare time like other images. Poll options and the linked video are still to do.
 - **Waiting:** from the master, ClickHouse bytes per yt event and PostgreSQL CPU and IOPS, to add analysis storage and
   database load to [`master/yts-coverage-sizing.md`](master/yts-coverage-sizing.md).
 - **11 November:**
@@ -226,6 +228,12 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- Community post images (fix 21, 13 November; the owner's "all platforms media"):
+  - migration `0020` adds the column `posts.image_urls` and the media kind `post_image` (the `media` table's kind check);
+  - `yt.post.v1` gains the field `image_urls` (24), an addition `buf breaking` accepts;
+  - post images go out as `content.media.v1` records (role `MEDIA_ROLE_CONTENT`, owner the post) and are handed to analysis
+    like thumbnails (`relay.media.kinds` now lists `post_image`), then deleted once analysed. They are erased with the post or
+    its channel.
 - The queue's order (D-052), on yts's own `schedule` table only:
   - Migration `0017` moves feed and tab checks to P0.
   - Migration `0018` adds the column `schedule.tier_rank`, the function `queue_tier_rank` and two triggers that keep it in

@@ -226,10 +226,27 @@ type Post struct {
 	Likes         Count
 	CommentsText  string
 	HasImage      bool
+	Images        []string // the attached images, the largest size of each, in order (fix 21)
 	HasPoll       bool
 	HasVideo      bool
 	Comments      Count  // from the reply button
 	DetailParams  string // opens the post's page (and its comments)
+}
+
+// postImages lists a post attachment's images (one, or several in a
+// postMultiImageRenderer), the largest size of each, in order, once each.
+func postImages(att any) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, r := range jsonx.FindMaps(att, "backstageImageRenderer") {
+		u := largestThumb(jsonx.Get(r, "image"))
+		if u == "" || seen[u] {
+			continue
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+	return out
 }
 
 // ParsePosts reads a Posts/Community tab or its continuation.
@@ -253,6 +270,7 @@ func ParsePosts(data any, now time.Time) ([]Post, string) {
 			}
 			att := jsonx.Get(r, "backstageAttachment")
 			p.HasImage = jsonx.First(att, "backstageImageRenderer") != nil || jsonx.First(att, "postMultiImageRenderer") != nil
+			p.Images = postImages(att)
 			p.HasPoll = jsonx.First(att, "pollRenderer") != nil
 			p.HasVideo = jsonx.First(att, "videoRenderer") != nil
 			p.Published = ParseRelativeTime(p.PublishedText, now)

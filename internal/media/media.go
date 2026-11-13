@@ -30,7 +30,11 @@ const (
 	Avatar       = "avatar"        // a listed channel's avatar
 	Banner       = "banner"        // a listed channel's banner
 	AuthorAvatar = "author_avatar" // an enriched commenter's avatar
+	PostImage    = "post_image"    // a community post's attached image (fix 21); one job for all of a post's images
 )
+
+// knownKinds are the image kinds this version knows.
+var knownKinds = map[string]bool{Thumb: true, Avatar: true, Banner: true, AuthorAvatar: true, PostImage: true}
 
 // MaxBytes is the largest image kept.
 const MaxBytes = 8 << 20
@@ -152,6 +156,8 @@ func privacyKind(kind string) string {
 		return privacy.Video
 	case AuthorAvatar:
 		return privacy.Author
+	case PostImage:
+		return privacy.Post
 	default:
 		return privacy.Channel
 	}
@@ -162,7 +168,7 @@ var extFor = map[string]string{"image/jpeg": "jpg", "image/png": "png", "image/w
 // fetch is the media job: download the image, store it if it is new.
 func (s *Service) fetch(ctx context.Context, j queue.Job) (time.Time, error) {
 	kind, id, _ := strings.Cut(j.EntityID, ":")
-	if _, known := map[string]bool{Thumb: true, Avatar: true, Banner: true, AuthorAvatar: true}[kind]; !known || !validID.MatchString(id) {
+	if !knownKinds[kind] || !validID.MatchString(id) {
 		return time.Time{}, nil // not a job this version knows: drop it
 	}
 	if s.Hold[kind] {
@@ -170,6 +176,9 @@ func (s *Service) fetch(ctx context.Context, j queue.Job) (time.Time, error) {
 	}
 	if s.suppressed(privacyKind(kind), id) {
 		return time.Time{}, nil
+	}
+	if kind == PostImage {
+		return s.fetchPost(ctx, id)
 	}
 	src, channelID, firstSeen, ok, err := s.source(ctx, kind, id)
 	if err != nil || !ok {
@@ -191,40 +200,92 @@ func (s *Service) fetch(ctx context.Context, j queue.Job) (time.Time, error) {
 			return time.Time{}, err
 		}
 	}
-	resp, err := s.Images.Image(ctx, src)
-	if errors.Is(err, innertube.ErrNotFound) {
-		if kind == Thumb && now.Before(firstSeen.Add(thumbWait)) {
-			return now.Add(time.Hour), nil // a brand-new video's thumbnail may not exist yet
-		}
-		return next, nil
+	found, err := s.download(ctx, kind, id, channelID, src, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !found && kind == Thumb && now.Before(firstSeen.Add(thumbWait)) {
+		return now.Add(time.Hour), nil // a brand-new video's thumbnail may not exist yet
+	}
+	return next, nil
+}
+
+// fetchPost downloads a community post's images (fix 21): each one not
+// stored yet, by its address. The job is then done; the writer queues it
+// again when the post shows new images.
+func (s *Service) fetchPost(ctx context.Context, id string) (time.Time, error) {
+	var channelID *string
+	var urls []string
+	err := s.Pool.QueryRow(ctx, `SELECT channel_id, image_urls FROM posts WHERE id = $1`, id).Scan(&channelID, &urls)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, nil // erased, or never stored
 	}
 	if err != nil {
 		return time.Time{}, err
 	}
+	ch := ""
+	if channelID != nil {
+		ch = *channelID
+	}
+	if ch != "" && s.suppressed(privacy.Channel, ch) {
+		return time.Time{}, nil
+	}
+	now := s.now()
+	for _, src := range urls {
+		if strings.HasPrefix(src, "//") {
+			src = "https:" + src
+		}
+		var known bool
+		if err := s.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM media WHERE kind = $1 AND entity_id = $2 AND source_url = $3)`,
+			PostImage, id, src).Scan(&known); err != nil {
+			return time.Time{}, err
+		}
+		if known {
+			continue
+		}
+		if _, err := s.download(ctx, PostImage, id, ch, src, now); err != nil {
+			return time.Time{}, err
+		}
+	}
+	return time.Time{}, nil
+}
+
+// download fetches src and stores it as kind's image of id: a new picture
+// gets its file, its row and its record event; a known one (same content)
+// only has its last sighting moved. found is false when the image does not
+// exist.
+func (s *Service) download(ctx context.Context, kind, id, channelID, src string, now time.Time) (found bool, err error) {
+	resp, err := s.Images.Image(ctx, src)
+	if errors.Is(err, innertube.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
 	if resp.Status != http.StatusOK {
-		return time.Time{}, fmt.Errorf("media: HTTP %d", resp.Status)
+		return false, fmt.Errorf("media: HTTP %d", resp.Status)
 	}
 	ct := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
 	ext, isImage := extFor[ct]
 	if !isImage {
-		return time.Time{}, fmt.Errorf("media: answer is %q, not an image", ct)
+		return true, fmt.Errorf("media: answer is %q, not an image", ct)
 	}
 	if len(resp.Body) == 0 || len(resp.Body) > MaxBytes {
-		return time.Time{}, fmt.Errorf("media: image of %d bytes", len(resp.Body))
+		return true, fmt.Errorf("media: image of %d bytes", len(resp.Body))
 	}
 	sum := sha256.Sum256(resp.Body)
 	hash := hex.EncodeToString(sum[:])
 	tag, err := s.Pool.Exec(ctx, `UPDATE media SET last_seen = $4, source_url = $5 WHERE kind = $1 AND entity_id = $2 AND sha256 = $3`,
 		kind, id, hash, now, src)
 	if err != nil {
-		return time.Time{}, err
+		return true, err
 	}
 	if tag.RowsAffected() == 1 {
-		return next, nil // same picture as before
+		return true, nil // same picture as before
 	}
 	key := fmt.Sprintf("media/%s/%s/%s.%s", kind, id, hash[:16], ext)
 	if err := s.Store.Put(ctx, key, ct, resp.Body); err != nil {
-		return time.Time{}, err
+		return true, err
 	}
 	var ch *string
 	if channelID != "" {
@@ -245,14 +306,15 @@ func (s *Service) fetch(ctx context.Context, j queue.Job) (time.Time, error) {
 		_, err := ev.MediaEvent(ctx, tx, outbox.KindMedia, outbox.MediaKey{Kind: kind, EntityID: id, SHA256: hash})
 		return err
 	})
-	return next, err
+	return true, err
 }
 
 // HandoffKinds are the images announced to analysis and deleted once it is
 // done, by default (the owner: thumbnails, kept until analysed; on 11
-// November, channel avatars and banners too; post images come with fix 21).
-// Commenters' avatars are kept unless listed (the relay's -media-kinds).
-var HandoffKinds = []string{Thumb, Avatar, Banner}
+// November, channel avatars and banners too; on 13 November, "all platforms
+// media", so community post images too: fix 21). Commenters' avatars are
+// kept unless listed (the relay's -media-kinds).
+var HandoffKinds = []string{Thumb, Avatar, Banner, PostImage}
 
 // ParseHold reads a comma-separated list of image kinds held from
 // download (the worker's -media-hold); empty holds none.
@@ -280,10 +342,8 @@ func ParseKinds(s string) ([]string, error) {
 		if k == "" || seen[k] {
 			continue
 		}
-		switch k {
-		case Thumb, Avatar, Banner, AuthorAvatar:
-		default:
-			return nil, fmt.Errorf("media: %q is not an image kind (%s, %s, %s or %s)", k, Thumb, Avatar, Banner, AuthorAvatar)
+		if !knownKinds[k] {
+			return nil, fmt.Errorf("media: %q is not an image kind (%s, %s, %s, %s or %s)", k, Thumb, Avatar, Banner, AuthorAvatar, PostImage)
 		}
 		seen[k] = true
 		kinds = append(kinds, k)
@@ -316,10 +376,12 @@ func Keys(ctx context.Context, q db.Querier, kind, id string) ([]string, error) 
 	case privacy.Author:
 		sql = `SELECT object_key FROM media WHERE kind = 'author_avatar' AND entity_id = $1 AND deleted_at IS NULL`
 	case privacy.Channel:
-		sql = `SELECT object_key FROM media WHERE kind IN ('avatar', 'banner', 'thumb') AND (entity_id = $1 OR channel_id = $1)
+		sql = `SELECT object_key FROM media WHERE kind IN ('avatar', 'banner', 'thumb', 'post_image') AND (entity_id = $1 OR channel_id = $1)
 			AND deleted_at IS NULL`
 	case privacy.Video:
 		sql = `SELECT object_key FROM media WHERE kind = 'thumb' AND entity_id = $1 AND deleted_at IS NULL`
+	case privacy.Post:
+		sql = `SELECT object_key FROM media WHERE kind = 'post_image' AND entity_id = $1 AND deleted_at IS NULL`
 	default:
 		return nil, nil
 	}

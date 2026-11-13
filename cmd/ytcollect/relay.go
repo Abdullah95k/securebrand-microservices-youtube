@@ -43,7 +43,7 @@ func relayCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []
 	mediaKeep := fs.Duration("media-keep", handoff.DefaultKeep, "an announced image's deadline: deleted then even without every acknowledgement (at least 24h)")
 	mediaGroup := fs.String("media-group", "yts-media", "the Kafka consumer group that reads the acknowledgements")
 	mediaConsumers := fs.String("media-consumers", strings.Join(contract.DefaultConsumers, ","), "the consumers that must acknowledge each image, comma-separated")
-	mediaKinds := fs.String("media-kinds", strings.Join(media.HandoffKinds, ","), "the images handed off and deleted once analysed, comma-separated: thumb, avatar, banner, author_avatar")
+	mediaKinds := fs.String("media-kinds", strings.Join(media.HandoffKinds, ","), "the images handed off and deleted once analysed, comma-separated: thumb, avatar, banner, post_image, author_avatar")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

@@ -158,6 +158,30 @@ func TestAddByHandleBackfillsAndCollectsVideos(t *testing.T) {
 	}
 }
 
+// D-061: the first reading moves a video's thumbnail up: a new upload's to
+// P1, a backfilled video's to P3, with the channel for the tier order; the
+// channel's avatar is queued at P2 when first seen.
+func TestThumbnailsQueuedByAge(t *testing.T) {
+	r := newRig(t, []fakeyt.FakeChannel{fakeChannel()})
+	r.svc.Write.Media = true // no media handler here: the image jobs stay queued
+	ctx := context.Background()
+	if err := registry.AddInput(ctx, r.pool, registry.Input{Input: "@fakecollect", Tier: policy.A}); err != nil {
+		t.Fatal(err)
+	}
+	r.work(t, 3*time.Second)
+	for video, prio := range map[string]int{"fakeCV1": queue.P1, "fakeCV2": queue.P3} {
+		if n := r.count(t, `SELECT count(*) FROM schedule WHERE kind = 'media' AND entity_id = $1 AND priority = $2
+			AND channel_id = $3 AND tier_rank = 0`, "thumb:"+video, prio, chID); n != 1 {
+			var got int
+			_ = r.pool.QueryRow(ctx, `SELECT priority FROM schedule WHERE kind = 'media' AND entity_id = $1`, "thumb:"+video).Scan(&got)
+			t.Errorf("%s's thumbnail at P%d, want P%d with its channel", video, got, prio)
+		}
+	}
+	if n := r.count(t, `SELECT count(*) FROM schedule WHERE kind = 'media' AND entity_id = $1 AND priority = 2`, "avatar:"+chID); n != 1 {
+		t.Error("the channel's avatar is queued at P2 when first seen")
+	}
+}
+
 func TestUnknownHandleAndErasedChannel(t *testing.T) {
 	r := newRig(t, []fakeyt.FakeChannel{fakeChannel()})
 	ctx := context.Background()

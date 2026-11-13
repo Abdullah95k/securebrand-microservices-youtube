@@ -22,6 +22,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/outbox"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ytparse"
 )
 
@@ -166,7 +167,8 @@ func (w *Writer) Channel(ctx context.Context, c Channel) ([]string, error) {
 				old, new *string
 			}{{media.Avatar, old.avatar, str(c.AvatarURL)}, {media.Banner, old.banner, str(c.BannerURL)}} {
 				if m.new != nil && (m.old == nil || *m.old != *m.new) {
-					if err := media.Queue(ctx, tx, m.kind, c.ID, now); err != nil {
+					// New or changed: P2, with the channel (D-061).
+					if err := media.QueueFor(ctx, tx, m.kind, c.ID, c.ID, queue.P2, now); err != nil {
 						return err
 					}
 				}

@@ -20,9 +20,11 @@ The current state of the YouTube collector, for the owner and the master session
   (`worker.mediaHold: [author_avatar]`) until the owner decides.
 - **The owner's decision of 13 November (D-061): "youtube thumbnails turned on"**, replacing D-052's hold; of avatars
   and banners, "yes i need them" (listed channels only). The thumbnail hold is lifted in the production values. Images
-  still run only in spare time, so none download while the 10 IPs are full. Proposed, for the owner: new videos'
-  thumbnails, and avatars and banners on first sight or change, at a priority that runs, so they arrive within hours once
-  the 44 IPs are in.
+  still run only in spare time, so none download while the 10 IPs are full. **Built with the master's yes** ("that is how
+  'youtube thumbnails turned on' is meant to work"): a new video's first thumbnail at P1, with its channel so tiers A and B
+  go first; a backfilled video's at P3; the recheck a week on at P3; a listed channel's new or changed avatar or banner at
+  P2; older images in spare time. With 44 IPs that is about 1,400 requests an hour at P1, 3–4% of the IPs; a thumbnail
+  arrives within about an hour of the video's first reading.
 - **Community post images (fix 21) are built**, under the owner's "all platforms media" (the master's yes, 13 November).
   One request per image, in spare time like other images. Poll options and the linked video are still to do.
 - **Waiting:** from the master, ClickHouse bytes per yt event and PostgreSQL CPU and IOPS, to add analysis storage and

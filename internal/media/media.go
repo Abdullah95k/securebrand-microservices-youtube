@@ -57,8 +57,33 @@ func Queue(ctx context.Context, q db.Querier, kind, id string, now time.Time) er
 	return queue.Put(ctx, q, queue.KindMedia, JobID(kind, id), "", queue.P4, now)
 }
 
+// QueueFor asks for kind's image of id to be (re)read now at prio, with
+// the channel it belongs to, so the queue's tier order applies (the owner,
+// D-061, 13 November: "youtube thumbnails turned on"): a new video's first
+// thumbnail at P1, a backfilled video's at P3 (FirstThumbPriority), a
+// listed channel's new or changed avatar or banner at P2. Images already
+// queued keep their place, or move up; older ones stay in spare time (P4).
+func QueueFor(ctx context.Context, q db.Querier, kind, id, channelID string, prio int, now time.Time) error {
+	return queue.Put(ctx, q, queue.KindMedia, JobID(kind, id), channelID, prio, now)
+}
+
+// FirstThumbPriority is the priority of a video's first thumbnail, by the
+// video's age: P1 while it is new (an unknown age, 0, counts as new), P3
+// for an older one found by the backfill, as for its first comment scan.
+func FirstThumbPriority(age time.Duration) int {
+	if age < queue.NewFor {
+		return queue.P1
+	}
+	return queue.P3
+}
+
+// ThumbRecheckPriority is the priority of a thumbnail's second reading, a
+// week after the video was first seen (D-061).
+const ThumbRecheckPriority = queue.P3
+
 // QueueNew is Queue for a video seen for the first time: an existing job
-// (or one already finished) is left alone.
+// (or one already finished) is left alone. The video's first reading then
+// moves it up (QueueFor with FirstThumbPriority).
 func QueueNew(ctx context.Context, q db.Querier, kind, id string, now time.Time) error {
 	_, err := queue.Ensure(ctx, q, queue.KindMedia, JobID(kind, id), "", queue.P4, now)
 	return err
@@ -206,6 +231,13 @@ func (s *Service) fetch(ctx context.Context, j queue.Job) (time.Time, error) {
 	}
 	if !found && kind == Thumb && now.Before(firstSeen.Add(thumbWait)) {
 		return now.Add(time.Hour), nil // a brand-new video's thumbnail may not exist yet
+	}
+	// The recheck a week on is not a new video's thumbnail: P3, unless the
+	// first reading itself ran in spare time (an older image).
+	if kind == Thumb && !next.IsZero() && j.Priority < ThumbRecheckPriority {
+		if err := queue.Reprioritize(ctx, s.Pool, j, ThumbRecheckPriority); err != nil {
+			return time.Time{}, err
+		}
 	}
 	return next, nil
 }

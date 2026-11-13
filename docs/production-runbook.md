@@ -372,11 +372,13 @@ goes first.
 
 - **P0:** new uploads' first reading, and the feed and tab checks that find them. A live stream stays at P0 while it is live or
   about to start.
-- **P1:** comment scans of videos and posts under two days old.
+- **P1:** comment scans of videos and posts under two days old, and a new video's first thumbnail (D-061).
 - **P2:** refreshes: later readings of a video, comment scans once it is two days old, channel snapshots, posts, sweeps and
-  searches.
-- **P3:** backfill, the first comment scan of a backfilled video or post, playlists and candidate checks.
-- **P4:** commenter profiles and images, in spare time only.
+  searches; and a listed channel's new or changed avatar or banner (D-061).
+- **P3:** backfill, the first comment scan and the first thumbnail of a backfilled video or post, a thumbnail's recheck a
+  week on, playlists and candidate checks.
+- **P4:** commenter profiles and the other images (older ones queued before D-061, post images, commenters' avatars), in
+  spare time only.
 
 A job's priority follows what it does each time it runs: after its first reading, a video's next run is a P2 refresh. The
 queue table in `ytcollect health` shows this as most video jobs at P2 and only new ones at P0. If P0 or P1 holds thousands
@@ -819,8 +821,10 @@ every 7 days, without a request, until the kind is released.
 - Production holds `author_avatar`, commenters' avatars: D-061 covers listed channels only, and keeping commenters' pictures
   was never decided. Thumbnails were held from 12 to 13 November (D-052, "Not now for thumbnails") and released by the
   owner's D-061 ("youtube thumbnails turned on"). Listed channels' avatars and banners are collected and handed off (D-050).
-- To release a held kind, remove it from `worker.mediaHold`. Its queued jobs then download at their own priority (images:
-  the lowest, in spare time).
+- To release a held kind, remove it from `worker.mediaHold`. Its queued jobs then download at their own priority (§7): a
+  new video's first thumbnail at P1 (the video's first reading moves it up, with the channel, so tiers A and B go first), a
+  backfilled video's at P3, the recheck a week on at P3, a listed channel's new or changed avatar or banner at P2, and the
+  rest in spare time (P4).
 - To stop all image downloads at once, without a deploy, run `ytcollect switch media off`; `on` restarts them.
 
 The record of every image (its row, and `content.media.v1`) stays forever; only the file goes. With the hand-off off

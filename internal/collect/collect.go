@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
@@ -377,6 +378,14 @@ func (s *Service) video(ctx context.Context, j queue.Job) (time.Time, error) {
 	age := time.Duration(0)
 	if !out.Published.IsZero() {
 		age = s.now().Sub(out.Published)
+	}
+	// The first reading moves the thumbnail queued at first sight up: a new
+	// video's at P1, a backfilled one's at P3, with the channel for the
+	// tier order (the owner, D-061: "youtube thumbnails turned on").
+	if s.Write.Media && lastChecked == nil {
+		if err := media.QueueFor(ctx, s.Pool, media.Thumb, j.EntityID, channelID, media.FirstThumbPriority(age), s.now()); err != nil {
+			return time.Time{}, err
+		}
 	}
 	if !out.CommentsOff && policy.CommentScan(ci.tier, age) > 0 {
 		prio := queue.P1

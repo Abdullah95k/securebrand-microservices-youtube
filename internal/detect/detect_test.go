@@ -70,6 +70,33 @@ func run(t *testing.T, pool *pgxpool.Pool, h map[string]worker.Handler) {
 	_ = w.Run(ctx)
 }
 
+// runUntil runs the worker until done reports true, or for at most 10
+// seconds. A fixed window is too short when CI's shared database is busy
+// creating other packages' databases.
+func runUntil(t *testing.T, pool *pgxpool.Pool, h map[string]worker.Handler, done func() bool) {
+	t.Helper()
+	w := &worker.Worker{Pool: pool, Owner: "t", Handlers: h, Concurrency: 2, Idle: 10 * time.Millisecond, Log: quiet}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		_ = w.Run(ctx)
+	}()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for !done() {
+		select {
+		case <-ctx.Done():
+			<-stopped
+			return
+		case <-tick.C:
+		}
+	}
+	cancel()
+	<-stopped
+}
+
 func TestFeedsQueueNewUploads(t *testing.T) {
 	yt, pool, rss := Rig(t)
 	now := time.Now().Add(-10 * time.Minute)
@@ -159,7 +186,7 @@ func TestFeedOutageReadsTabs(t *testing.T) {
 		defer mu.Unlock()
 		return append([]string(nil), calls...)
 	}
-	run(t, pool, rss.Handlers())
+	runUntil(t, pool, rss.Handlers(), func() bool { return len(recent()) >= 2 })
 	if got := recent(); len(got) != 2 {
 		t.Fatalf("tabs read for %v; want both channels after their 404s", got)
 	}
@@ -185,8 +212,10 @@ func TestFeedOutageReadsTabs(t *testing.T) {
 	mu.Lock()
 	calls = nil
 	mu.Unlock()
-	_, _ = pool.Exec(context.Background(), `UPDATE schedule SET due_at = now() WHERE kind = 'rss'`)
-	run(t, pool, rss.Handlers())
+	if _, err := pool.Exec(context.Background(), `UPDATE schedule SET due_at = now() WHERE kind = 'rss'`); err != nil {
+		t.Fatal(err)
+	}
+	runUntil(t, pool, rss.Handlers(), func() bool { return len(recent()) >= 2 })
 	feedsAfter := 0
 	for _, r := range yt.Requests() {
 		if r.Endpoint == "feed" {

@@ -122,6 +122,8 @@ kubectl -n yts exec deploy/yts-scheduler -- ytcollect outbox check
 | `worker.mediaHold` | `[]` (production: `[author_avatar]`) | Image kinds not downloaded for now; their jobs stay queued |
 | `worker.commentCap`, `worker.player` | `20000`, `true` | Comments per first read; the player endpoint |
 | `scheduler.minStretch` | `1` | Refresh tiers C, D and M at least this many times less often (1 to 8); 1: only as much as the capacity planner needs to fit the IPs. New-upload detection and tiers A and B are never slowed |
+| `scheduler.fbDiscovery.enabled`, `.url`, `.dailyLimit`, `.secret.name`, `.secret.key` | `false`, `""`, `200`, `""`, `api_key` | Facebook discovery (D-065): every 10 minutes the scheduler sends the Facebook links on listed channels' About panels and descriptions to the Facebook collector at `url`, each once, at most `dailyLimit` a day; the key is mounted from the Secret `secret.name` (key `secret.key`) |
+| `networkPolicy.egress.fbDiscovery` | off | The Facebook collector's API when it runs in the cluster: `namespace`, `podLabels`, `port` (an https address outside it needs nothing) |
 | `storage.media`, `storage.raw` | on, `fromPlatformCredentials` | The endpoint, region, buckets and keys from `platform-credentials`; media under `yts/` |
 | `database.platformCredentials` | `true` | The platform's `POSTGRES_*` files, each command with its least role, over TLS |
 | `relay.media.handoff`, `relay.media.kinds` | `false`, `[thumb, avatar, banner, post_image]` | Hand stored images of these kinds to analysis and delete them once analysed or after `relay.media.keep` (72h); `author_avatar` adds commenters' avatars |

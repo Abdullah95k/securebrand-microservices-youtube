@@ -20,6 +20,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/discovery"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/enrich"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/erasure"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/fbdisc"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/metrics"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/monitor"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/ops"
@@ -28,6 +29,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/secrets"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/suggest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
@@ -235,8 +237,23 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 	fs := flag.NewFlagSet("scheduler", flag.ContinueOnError)
 	metricsAddr := fs.String("metrics-addr", ":9102", "the ops port: /metrics, /healthz and /readyz (empty: off)")
 	minStretch := fs.Float64("min-stretch", 1, "refresh tiers C, D and M at least this many times less often (1: only as the capacity planner needs; at most 8)")
+	fbURL := fs.String("fb-url", "", "the Facebook collector's API address: send it the Facebook links of listed channels (D-065; empty: off)")
+	fbKeyFile := fs.String("fb-key-file", "/etc/yts-fb-discovery/key", "the file holding the Facebook collector's API key (with -fb-url)")
+	fbDaily := fs.Int("fb-daily", fbdisc.DefaultDaily, "most new Facebook links sent a day (UTC)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	var fb *fbdisc.Sender
+	if *fbURL != "" {
+		if *fbDaily <= 0 {
+			return fmt.Errorf("scheduler: -fb-daily must be at least 1")
+		}
+		key, err := secrets.ReadFile(*fbKeyFile)
+		if err != nil || key == "" {
+			return fmt.Errorf("scheduler: the Facebook collector's key file can't be read (-fb-key-file)")
+		}
+		fb = &fbdisc.Sender{Pool: pool, URL: *fbURL, Key: key, Daily: *fbDaily, Log: log}
+		log.Info("facebook discovery on", "daily", *fbDaily)
 	}
 	if *minStretch < 1 || *minStretch > capacity.MaxStretch {
 		return fmt.Errorf("scheduler: -min-stretch %v is not between 1 and %v", *minStretch, capacity.MaxStretch)
@@ -373,6 +390,16 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 				}
 			}
 			log.Info("keyword suggestions and precision", "suggested", n, "activated", activated, "low_precision_keywords", low)
+			return err
+		}},
+		{name: "facebook discovery", every: 10 * time.Minute, run: func() error {
+			if fb == nil {
+				return nil
+			}
+			st, err := fb.Run(ctx)
+			if st.Found+st.Sent > 0 {
+				log.Info("facebook links", "new", st.Found, "sent", st.Sent, "paused", st.Paused)
+			}
 			return err
 		}},
 		{name: "enrichment order", every: 24 * time.Hour, run: func() error {

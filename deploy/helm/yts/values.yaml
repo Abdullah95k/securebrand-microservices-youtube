@@ -129,6 +129,19 @@ scheduler:
   # 1: only as much as the capacity planner needs to fit the IPs. New-upload
   # detection and tiers A and B are never slowed. Runbook §7.
   minStretch: 1
+  # Facebook discovery (the owner, D-065): every 10 minutes the scheduler
+  # sends the Facebook links found on listed channels' About panels and
+  # descriptions to the Facebook collector, each link once, at most
+  # dailyLimit a day. No extra request to YouTube. Off by default.
+  fbDiscovery:
+    enabled: false
+    url: ""                 # the Facebook collector's API address (from fbs)
+    dailyLimit: 200
+    # The Kubernetes Secret holding its API key: mounted into the scheduler
+    # only, read from the file, never logged.
+    secret:
+      name: ""
+      key: api_key
   extraArgs: []
   goMemLimit: 850MiB
   resources:
@@ -246,6 +259,13 @@ networkPolicy:
       namespace: platform
       podLabels:
         app: schema-registry
+      port: 8080
+    # The Facebook collector's API, when it is in the cluster (D-065). An
+    # https address outside it is already allowed by httpsCIDRs.
+    fbDiscovery:
+      enabled: false
+      namespace: fbs
+      podLabels: {}
       port: 8080
     # The proxy exits. At install the chart reads the ports from the
     # proxies secret; these ports are used only when it can't be read, and

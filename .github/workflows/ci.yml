@@ -183,10 +183,16 @@ jobs:
             --set storage.raw.enabled=true \
             --set database.platformCredentials=false --set 'networkPolicy.egress.proxies.ports={8080,3128}' \
             --set 'networkPolicy.egress.managedServices.ports={25060,25073}' --set networkPolicy.egress.schemaRegistry.enabled=true \
-            --set relay.enabled=true --set relay.canary=true > out/everything.yaml
+            --set relay.enabled=true --set relay.canary=true \
+            --set scheduler.fbDiscovery.enabled=true --set scheduler.fbDiscovery.url=https://fbs.invalid \
+            --set scheduler.fbDiscovery.secret.name=fbs-discovery-key \
+            --set networkPolicy.egress.fbDiscovery.enabled=true --set networkPolicy.egress.fbDiscovery.podLabels.app=fbs-api > out/everything.yaml
           # The relay: off in the production values (the pilot has no Kafka), there when switched on.
           if grep -q 'name: yts-relay$' out/production.yaml; then echo "the relay must be off in values-production.yaml"; exit 1; fi
           grep -q 'name: yts-relay$' out/everything.yaml || { echo "relay.enabled=true rendered no relay"; exit 1; }
+          # Facebook discovery (D-065): off unless switched on; then the scheduler has its address and key file.
+          if grep -q -- '-fb-url=' out/production.yaml; then echo "facebook discovery must be off in values-production.yaml"; exit 1; fi
+          grep -q -- '-fb-url=https://fbs.invalid' out/everything.yaml || { echo "fbDiscovery.enabled=true gave the scheduler no -fb-url"; exit 1; }
           # Every pod in production names the registry's pull secret (the cluster adds it only to the default account).
           test "$(grep -c 'imagePullSecrets:' out/production.yaml)" -ge 2 || { echo "production pods must name imagePullSecrets"; exit 1; }
       - name: the chart refuses unsafe or incomplete values
@@ -195,6 +201,8 @@ jobs:
           refuses --set image.repository=registry.invalid/yts --set worker.replicas=2
           refuses --set image.repository=registry.invalid/yts --set storage.raw.enabled=true --set storage.raw.fromPlatformCredentials=false
           refuses --set image.repository=registry.invalid/yts --set websub.enabled=true
+          refuses --set image.repository=registry.invalid/yts --set scheduler.fbDiscovery.enabled=true --set scheduler.fbDiscovery.secret.name=k
+          refuses --set image.repository=registry.invalid/yts --set scheduler.fbDiscovery.enabled=true --set scheduler.fbDiscovery.url=https://fbs.invalid
           refuses
       - name: Kubernetes schemas (kubeconform)
         run: |

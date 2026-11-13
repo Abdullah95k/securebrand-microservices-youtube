@@ -36,6 +36,13 @@ spec:
             - scheduler
             - -metrics-addr=:{{ .Values.scheduler.opsPort }}
             - -min-stretch={{ .Values.scheduler.minStretch }}
+            {{- with .Values.scheduler.fbDiscovery }}
+            {{- if .enabled }}
+            - -fb-url={{ required "scheduler.fbDiscovery.url is required when fbDiscovery is enabled" .url }}
+            - -fb-key-file=/etc/yts-fb-discovery/key
+            - -fb-daily={{ .dailyLimit }}
+            {{- end }}
+            {{- end }}
             {{- range .Values.scheduler.extraArgs }}
             - {{ . | quote }}
             {{- end }}
@@ -67,8 +74,24 @@ spec:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
             {{- include "yts.volumeMounts" . | nindent 12 }}
+            {{- if .Values.scheduler.fbDiscovery.enabled }}
+            - name: fb-discovery
+              mountPath: /etc/yts-fb-discovery
+              readOnly: true
+            {{- end }}
       volumes:
         {{- include "yts.volumes" . | nindent 8 }}
+        {{- with .Values.scheduler.fbDiscovery }}
+        {{- if .enabled }}
+        - name: fb-discovery
+          secret:
+            secretName: {{ required "scheduler.fbDiscovery.secret.name is required when fbDiscovery is enabled" .secret.name }}
+            defaultMode: {{ $.Values.secrets.defaultMode }}
+            items:
+              - key: {{ .secret.key }}
+                path: key
+        {{- end }}
+        {{- end }}
       {{- with .Values.scheduler.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -25,6 +25,11 @@ The current state of the YouTube collector, for the owner and the master session
   go first; a backfilled video's at P3; the recheck a week on at P3; a listed channel's new or changed avatar or banner at
   P2; older images in spare time. With 44 IPs that is about 1,400 requests an hour at P1, 3–4% of the IPs; a thumbnail
   arrives within about an hour of the video's first reading.
+- **The owner's decision of 13 November (D-065): "activate Facebook discovery".** Built: the scheduler sends the Facebook
+  links on listed channels' About panels and descriptions to the Facebook collector, each once, at most 200 a day; off
+  until the master sets the address and the key's Secret (`scheduler.fbDiscovery`). No request to YouTube. Runbook §19.
+- **No new IPs for now** (the owner, 13 November: "for the time being keep running things and make sure its all smooth"):
+  yts stays on its 10 IPs at `6dfa4c7`; `3ff62c4` waits for the IPs and for database room.
 - **Community post images (fix 21) are built**, under the owner's "all platforms media" (the master's yes, 13 November).
   One request per image, in spare time like other images. Poll options and the linked video are still to do.
 - **Waiting:** from the master, ClickHouse bytes per yt event and PostgreSQL CPU and IOPS, to add analysis storage and
@@ -230,6 +235,9 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- Facebook discovery (D-065): migration `0021` adds the table `fb_candidates` (yts's own: the links sent and the
+  collector's answers); the metric `yt_fb_candidates{result}`; the scheduler flags `-fb-url`, `-fb-key-file`, `-fb-daily`
+  and the chart's `scheduler.fbDiscovery` and `networkPolicy.egress.fbDiscovery`.
 - Community post images (fix 21, 13 November; the owner's "all platforms media"):
   - migration `0020` adds the column `posts.image_urls` and the media kind `post_image` (the `media` table's kind check);
   - `yt.post.v1` gains the field `image_urls` (24), an addition `buf breaking` accepts;

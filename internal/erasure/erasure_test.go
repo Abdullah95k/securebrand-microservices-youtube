@@ -259,7 +259,12 @@ func TestErasePostImages(t *testing.T) {
 		t.Error("another post's image stays")
 	}
 
-	// Erasing the channel takes its other posts' images too.
+	// Erasing the channel takes its other posts' images too, and the
+	// Facebook links found on its page (D-065).
+	if _, err := pool.Exec(ctx, `INSERT INTO fb_candidates (ref, channel_id, evidence_url, first_seen)
+		VALUES ('facebook.com/fakeErasePage', $1, 'x', now())`, ch); err != nil {
+		t.Fatal(err)
+	}
 	id, err = s.Request(ctx, privacy.Channel, ch, "")
 	if err != nil {
 		t.Fatal(err)
@@ -270,6 +275,9 @@ func TestErasePostImages(t *testing.T) {
 	}
 	if n := count(t, pool, `SELECT count(*) FROM media WHERE kind = 'post_image'`) + count(t, pool, `SELECT count(*) FROM schedule WHERE entity_id LIKE 'post_image:%'`); n != 0 {
 		t.Errorf("%d post image rows or jobs left after the channel's erasure", n)
+	}
+	if n := count(t, pool, `SELECT count(*) FROM fb_candidates`); n != 0 {
+		t.Errorf("%d of the channel's Facebook links left", n)
 	}
 }
 

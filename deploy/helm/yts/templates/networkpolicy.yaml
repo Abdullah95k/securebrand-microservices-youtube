@@ -100,6 +100,22 @@ spec:
           protocol: TCP
         {{- end }}
       {{- end }}
+    {{- with $np.egress.fbDiscovery }}
+    {{- if .enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .namespace }}
+          {{- with .podLabels }}
+          podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+      ports:
+        - port: {{ .port }}
+          protocol: TCP
+    {{- end }}
+    {{- end }}
     {{- with $np.egress.schemaRegistry }}
     {{- if .enabled }}
     - to:

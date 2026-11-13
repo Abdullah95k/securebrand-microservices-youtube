@@ -857,3 +857,24 @@ On the platform, PostgreSQL is reached only through PgBouncer in transaction mod
   most, so PgBouncer can give its server connection back.
 
 If the database is full for longer than the wait, the migrate Job fails and the deploy stops; run it again once there is room.
+
+## 19. Facebook discovery
+
+The owner, 13 November (D-065): "activate Facebook discovery". When a listed channel's About panel or description has a
+Facebook link (facebook.com and its subdomains, fb.com, fb.me), yts sends it to the Facebook collector, which checks the page
+and may add it to its own schedule. It uses what yts already reads at each channel refresh: no request is made to YouTube for
+it. Commenters are never read.
+
+- **Off by default.** The ops action creates the Secret with the collector's key, then sets `scheduler.fbDiscovery.enabled`,
+  `.url` (the collector's API address) and `.secret.name` (and `.secret.key` if not `api_key`). The key is read from the
+  mounted file and never logged. If the collector runs in the cluster, also set `networkPolicy.egress.fbDiscovery`.
+- **Every 10 minutes** the scheduler records the new links (table `fb_candidates`) and sends the unsent ones, oldest first:
+  `POST <url>/v1/discovery/candidates` with `ref` (the link as found), `source` `yts` and `evidence_url` (the channel's page).
+- **Each link once**, by the link as found. A channel's new links are sent when its page shows them.
+- **At most `dailyLimit` a day** (UTC; 200 to start).
+- **503 or 429** (the collector's mentions are off, or it is busy), **401 or 403** (the key): yts waits an hour and tries
+  again; the links stay unsent. Another 4xx is recorded as `rejected` and not sent again.
+- **What it did:** `yt_fb_candidates{result}`, the links by the collector's answer (`queued`, `on_list`, `added`,
+  `public_waiting`, `checked_recently`, `ignored`, or `rejected`), and `unsent`. The scheduler logs "facebook links" with the
+  new and sent counts, and "facebook discovery paused" when it waits.
+- **Erasure:** erasing a channel deletes its rows here.

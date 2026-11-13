@@ -12,10 +12,19 @@ The current state of the YouTube collector, for the owner and the master session
   The worker's start log says `image downloads held` for `thumb`. Before it: `624de33` from 11 November 11:17Z, the owner's
   queue order (D-052, below), `d0b93cd` from 07:32Z (nameless channels as partial accounts), `34ff031` from 06:54Z (health
   by tier) and `f87e02e` from 05:46Z (Go 1.27.4).
-- **Waiting:**
-  - the owner's answer on buying about 30 IPs (the 24-hour plan below);
-  - from the master, ClickHouse bytes per yt event and PostgreSQL CPU and IOPS, to add analysis storage and database load
-    to [`master/yts-coverage-sizing.md`](master/yts-coverage-sizing.md).
+- **The owner's decision of 13 November (D-060): from 10 to 44 IPs.** 34 new exits go after the 10 in the proxy list,
+  shared with Instagram and TikTok as the 10 are. A worker restart picks them up. What to change and what to read is in
+  [`master/yts-ips-discovery-media.md`](master/yts-ips-discovery-media.md), which also answers the owner's questions on
+  discovery and media, and the client's on count readings and comment picking (CLIENT-REQ-020). Built for the same
+  restart, with the master's yes: 30 jobs at once instead of 10 (`worker.workers: 30`), and commenters' avatars held
+  (`worker.mediaHold: [author_avatar]`) until the owner decides.
+- **The owner's decision of 13 November (D-061): "youtube thumbnails turned on"**, replacing D-052's hold; of avatars
+  and banners, "yes i need them" (listed channels only). The thumbnail hold is lifted in the production values. Images
+  still run only in spare time, so none download while the 10 IPs are full. Proposed, for the owner: new videos'
+  thumbnails, and avatars and banners on first sight or change, at a priority that runs, so they arrive within hours once
+  the 44 IPs are in.
+- **Waiting:** from the master, ClickHouse bytes per yt event and PostgreSQL CPU and IOPS, to add analysis storage and
+  database load to [`master/yts-coverage-sizing.md`](master/yts-coverage-sizing.md).
 - **11 November:**
   - **tiers A and B were falling behind, and feed checks ran hours late in every tier** (health at 06:54Z and 07:56Z): priority
     2 (feed checks and refreshes) got almost no time, and priority 3 none, because priorities 0 and 1 took it all. The cause was
@@ -72,8 +81,9 @@ The current state of the YouTube collector, for the owner and the master session
   - **the slower refresh:** the capacity planner fits the work to the 10 IPs at 70% busy. It refreshes tiers C, D and M less
     often (up to 8 times), never A and B, and never new-upload detection. Images and commenter enrichment run only in spare
     time.
-  - **avatars and banners:** handed off to analysis and deleted; the hand-off is on. **Thumbnails are held** (D-052, 11
-    November: "Not now for thumbnails"): `worker.mediaHold: [thumb]` keeps their jobs queued without downloading them.
+  - **avatars and banners:** handed off to analysis and deleted; the hand-off is on. Thumbnails were held from 12 November
+    (D-052, "Not now for thumbnails"). **The owner released them on 13 November (D-061): "youtube thumbnails turned on"**;
+    of avatars and banners: "yes i need them". `worker.mediaHold` is now empty.
     Images run only in spare time, so none have run yet.
   - **the report's IP counts:** they now allow for each answer's time.
 - **Capacity, first plans after the deploy** (supply 9,333 requests an hour):
@@ -316,6 +326,7 @@ In [`docs/master/`](master/):
 | `yts-contract-review.md` | **REQ-013**: the review of the contract draft v0.1 |
 | `yts-contract-adoption.md` | **REQ-021 and fix 12**: the plan for the outbox, the relay and the `content.*` mapping on contract v1.2.0, with the topics, keys and retention, the master's answers (6 November) and the build order (seven PRs, about 4–5 weeks) |
 | `yts-fixes.md` | REQ-010 progress, one row per fix |
+| `yts-ips-discovery-media.md` | **D-060**: what 44 IPs change and what to read; how discovery finds channels; media for analysis (why videos can't be handed over within the rules); **CLIENT-REQ-020**: count readings and comment picking |
 
 Waiting: `ytprobe-detect`'s memory (REQ-004 §5), from the owner's `docker stats` readings.
 

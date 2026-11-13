@@ -33,16 +33,22 @@ worker:
   # Phase 0 (E1): every page type clean down to 1 s per IP except the
   # player, which is asked sparingly; 2 s leaves a margin.
   interval: 2s
-  workers: 10
+  # 30 jobs at once for the 44 IPs (D-060, 13 November): one job reads one
+  # page after another, so 10 jobs would make at most about 30,000-36,000
+  # requests an hour, below what 44 IPs give (about 41,000 at 70% busy).
+  workers: 30
   drain: 20s
   # The pilot starts with 7 days of past uploads per channel (REQ-010 fix
   # 11); raise to 365 after it.
   backfillDays: 7
   rawSample: "0.01"
   raw30d: true
-  # The owner, D-052 (11 November): "Not now for thumbnails". Channel avatars
-  # and banners are collected for analysis (D-050).
-  mediaHold: [thumb]
+  # The owner, D-061 (13 November): "youtube thumbnails turned on" (it
+  # replaces D-052's "Not now for thumbnails"). Listed channels' avatars and
+  # banners are collected for analysis (D-050; D-061: "yes i need them").
+  # Commenters' avatars are held: D-061 covers listed channels only, and
+  # keeping commenters' pictures was never decided (7 November question).
+  mediaHold: [author_avatar]
 
 websub:
   enabled: false

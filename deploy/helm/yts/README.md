@@ -119,7 +119,7 @@ kubectl -n yts exec deploy/yts-scheduler -- ytcollect outbox check
 | `worker.backfillDays` | `7` (the pilot) | Days of each channel's past uploads; 365 after the pilot |
 | `worker.drain` | `20s` | On shutdown, running jobs get this long; the grace period is 40 s |
 | `worker.rawSample`, `worker.raw30d` | `0.01`, `true` | Raw responses kept forever, and the 30-day rest |
-| `worker.mediaHold` | `[]` (production: `[thumb]`) | Image kinds not downloaded for now; their jobs stay queued |
+| `worker.mediaHold` | `[]` | Image kinds not downloaded for now; their jobs stay queued |
 | `worker.commentCap`, `worker.player` | `20000`, `true` | Comments per first read; the player endpoint |
 | `scheduler.minStretch` | `1` | Refresh tiers C, D and M at least this many times less often (1 to 8); 1: only as much as the capacity planner needs to fit the IPs. New-upload detection and tiers A and B are never slowed |
 | `storage.media`, `storage.raw` | on, `fromPlatformCredentials` | The endpoint, region, buckets and keys from `platform-credentials`; media under `yts/` |

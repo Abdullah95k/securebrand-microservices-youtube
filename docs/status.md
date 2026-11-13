@@ -18,6 +18,10 @@ The current state of the YouTube collector, for the owner and the master session
   discovery and media, and the client's on count readings and comment picking (CLIENT-REQ-020). Proposed there, for the
   owner: 30 jobs at once instead of 10; and holding commenters' avatars (and, while analysis skips them, avatars and
   banners) until decided.
+- **The owner's decision of 13 November (D-061): "youtube thumbnails turned on"**, replacing D-052's hold; of avatars
+  and banners, "yes i need them". The hold is lifted in the production values. Images still run only in spare time, so
+  none download while the 10 IPs are full. Proposed, for the owner: new videos' thumbnails, and avatars and banners on first
+  sight or change, at a priority that runs, so they arrive within hours once the 44 IPs are in.
 - **Waiting:** from the master, ClickHouse bytes per yt event and PostgreSQL CPU and IOPS, to add analysis storage and
   database load to [`master/yts-coverage-sizing.md`](master/yts-coverage-sizing.md).
 - **11 November:**
@@ -76,8 +80,9 @@ The current state of the YouTube collector, for the owner and the master session
   - **the slower refresh:** the capacity planner fits the work to the 10 IPs at 70% busy. It refreshes tiers C, D and M less
     often (up to 8 times), never A and B, and never new-upload detection. Images and commenter enrichment run only in spare
     time.
-  - **avatars and banners:** handed off to analysis and deleted; the hand-off is on. **Thumbnails are held** (D-052, 11
-    November: "Not now for thumbnails"): `worker.mediaHold: [thumb]` keeps their jobs queued without downloading them.
+  - **avatars and banners:** handed off to analysis and deleted; the hand-off is on. Thumbnails were held from 12 November
+    (D-052, "Not now for thumbnails"). **The owner released them on 13 November (D-061): "youtube thumbnails turned on"**;
+    of avatars and banners: "yes i need them". `worker.mediaHold` is now empty.
     Images run only in spare time, so none have run yet.
   - **the report's IP counts:** they now allow for each answer's time.
 - **Capacity, first plans after the deploy** (supply 9,333 requests an hour):

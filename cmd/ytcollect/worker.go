@@ -92,7 +92,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	backfillDays := fs.Int("backfill-days", 365, "how many days of each channel's past uploads the backfill reads (the pilot starts with 7)")
 	rawSample := fs.Float64("raw-sample", 0.01, "share of ordinary raw responses kept forever under yts/keep/ (failures always are)")
 	raw30d := fs.Bool("raw-30d", true, "also write every other raw response under yts/30d/ (the bucket may expire them after 30 days)")
-	mediaHold := fs.String("media-hold", "", "image kinds not downloaded for now, comma-separated (thumb, avatar, banner, author_avatar): their jobs stay queued")
+	mediaHold := fs.String("media-hold", "", "image kinds not downloaded for now, comma-separated (thumb, avatar, banner, author_avatar, post_image): their jobs stay queued")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

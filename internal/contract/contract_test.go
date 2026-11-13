@@ -401,4 +401,27 @@ func TestMedia(t *testing.T) {
 			t.Errorf("%s ready: %v", kind, ready)
 		}
 	}
+
+	// A community post's image (fix 21) belongs to its post, as the post's
+	// own content, and is handed off with its channel as the account.
+	msgs, err = m.Map(row("media", "post_image", "", `{"kind":"post_image","entity_id":"UgkxFAKEMEDPOST","channel_id":"`+chID+`",
+		"sha256":"`+sha+`","object_key":"k","source_url":"https://yt3.ggpht.com/fakepost","content_type":"image/jpeg","bytes":1,
+		"first_seen":"2026-11-13T08:00:00+00:00"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = msgs[0].Msg.(*contentv1.Media)
+	if rec.GetOwnerId() != "yt:post:UgkxFAKEMEDPOST" || rec.GetOwnerKind() != "post" || rec.GetRole() != contentv1.MediaRole_MEDIA_ROLE_CONTENT {
+		t.Errorf("post image: %v", rec)
+	}
+	msgs, err = m.Map(row("media_ready", "post_image", "", `{"kind":"post_image","entity_id":"UgkxFAKEMEDPOST","channel_id":"`+chID+`",
+		"sha256":"`+sha+`","object_key":"post_image/k.jpg","source_url":"https://yt3.ggpht.com/fakepost","content_type":"image/jpeg","bytes":1,
+		"first_seen":"2026-11-13T08:00:00+00:00","announced_at":"2026-11-13T09:00:00+00:00","delete_after":"2026-11-16T09:00:00+00:00","attempt":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready := msgs[0].Msg.(*mediav1.MediaReady); ready.GetOwnerId() != "yt:post:UgkxFAKEMEDPOST" ||
+		ready.GetAccountId() != "yt:account:"+chID || ready.GetRole() != contentv1.MediaRole_MEDIA_ROLE_CONTENT {
+		t.Errorf("post image ready: %v", ready)
+	}
 }

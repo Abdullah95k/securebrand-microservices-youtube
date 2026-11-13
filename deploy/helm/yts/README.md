@@ -124,7 +124,7 @@ kubectl -n yts exec deploy/yts-scheduler -- ytcollect outbox check
 | `scheduler.minStretch` | `1` | Refresh tiers C, D and M at least this many times less often (1 to 8); 1: only as much as the capacity planner needs to fit the IPs. New-upload detection and tiers A and B are never slowed |
 | `storage.media`, `storage.raw` | on, `fromPlatformCredentials` | The endpoint, region, buckets and keys from `platform-credentials`; media under `yts/` |
 | `database.platformCredentials` | `true` | The platform's `POSTGRES_*` files, each command with its least role, over TLS |
-| `relay.media.handoff`, `relay.media.kinds` | `false`, `[thumb, avatar, banner]` | Hand stored images of these kinds to analysis and delete them once analysed or after `relay.media.keep` (72h); `author_avatar` adds commenters' avatars |
+| `relay.media.handoff`, `relay.media.kinds` | `false`, `[thumb, avatar, banner, post_image]` | Hand stored images of these kinds to analysis and delete them once analysed or after `relay.media.keep` (72h); `author_avatar` adds commenters' avatars |
 | `relay.enabled`, `relay.canary` | `false`, `false` | The relay to Kafka: on once Kafka is there, with `canary` while the canary runs (D-012); `relay.batch` events per transaction (500) |
 | `networkPolicy.egress` | the master's ranges | The VPC for the managed services, the schema registry, and the proxy exits (any address until they are bought; their ports from `proxies.yaml`) |
 | `*.resources`, `*.goMemLimit` | as in `values.yaml` | Requests and limits; `GOMEMLIMIT` a little under the limit |

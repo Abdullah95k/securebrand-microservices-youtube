@@ -104,7 +104,8 @@ worker:
   backfillDays: 365       # days of each channel's past uploads
   rawSample: "0.01"       # share of ordinary raw responses kept forever
   raw30d: true            # also write the rest under yts/30d/
-  # Image kinds not downloaded for now (thumb, avatar, banner, author_avatar):
+  # Image kinds not downloaded for now (thumb, avatar, banner, author_avatar,
+  # post_image):
   # their jobs stay queued and make no request until the kind is released.
   mediaHold: []
   opsPort: 9101           # /metrics, /healthz, /readyz
@@ -157,9 +158,10 @@ relay:
   # announced to analysis and deleted once acknowledged, or at the deadline.
   media:
     handoff: true
-    # The images handed off: thumb, avatar, banner, author_avatar (a
-    # commenter's avatar). Those not listed are kept.
-    kinds: [thumb, avatar, banner]
+    # The images handed off: thumb, avatar, banner, post_image (a community
+    # post's image, fix 21), author_avatar (a commenter's avatar). Those not
+    # listed are kept.
+    kinds: [thumb, avatar, banner, post_image]
     keep: 72h             # an announced image's deadline (at least 24h)
     group: yts-media      # the Kafka consumer group reading the acknowledgements
     consumers: [sb-analysis]

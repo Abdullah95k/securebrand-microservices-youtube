@@ -47,7 +47,8 @@ func (m mediaRow) key() outbox.MediaKey {
 func mediaID(k outbox.MediaKey) string { return Platform + ":media:" + k.ID() }
 
 // owner is what an image belongs to, its kind, its account and its role:
-// a thumbnail belongs to its video; an avatar or banner to its channel; a
+// a thumbnail belongs to its video; a community post's image to its post
+// (the post's own content, fix 21); an avatar or banner to its channel; a
 // commenter's avatar to the commenter.
 func (m mediaRow) owner() (id, kind, account string, role contentv1.MediaRole, err error) {
 	switch m.Kind {
@@ -56,6 +57,11 @@ func (m mediaRow) owner() (id, kind, account string, role contentv1.MediaRole, e
 			account = accountID(*m.ChannelID)
 		}
 		return postID(m.EntityID), "post", account, contentv1.MediaRole_MEDIA_ROLE_THUMBNAIL, nil
+	case "post_image":
+		if m.ChannelID != nil && *m.ChannelID != "" {
+			account = accountID(*m.ChannelID)
+		}
+		return postID(m.EntityID), "post", account, contentv1.MediaRole_MEDIA_ROLE_CONTENT, nil
 	case "avatar", "author_avatar":
 		return accountID(m.EntityID), "account", accountID(m.EntityID), contentv1.MediaRole_MEDIA_ROLE_PROFILE_PICTURE, nil
 	case "banner":

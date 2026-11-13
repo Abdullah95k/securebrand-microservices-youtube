@@ -186,6 +186,7 @@ API. "Collector" means yts works it out.
 | `likes` | Likes | int64 (lower bound) + text | 1200 / '1.2K' | often | InnerTube | voteCount | posts.likes_min, likes_text; post_snapshots.likes_min | not published | snapshots | no | Abbreviated. A missing number is stored as 0 (YouTube shows none at zero). |
 | `comments` | Comment count | int64 (lower bound) + text | 45 / '45' | often | InnerTube | reply button | posts.comments_min, comments_text; post_snapshots.comments_min | not published | snapshots | no |  |
 | `has_image, has_poll, has_video` | What is attached | bool ×3 | true, false, false | always | InnerTube | backstageAttachment | posts.has_image, has_poll, has_video | not published | latest | no | Only yes/no. The images, poll options and the linked video ID are dropped; posts.attachments exists but is never filled (gap). |
+| `image_urls` | The attached images (fix 21) | list of text | ["https://yt3.ggpht.example/fakepost=s1080"] | sometimes | InnerTube | backstageImageRenderer (one, or several in postMultiImageRenderer): the largest size of each | posts.image_urls; the files: media kind post_image + object storage | content.media (role CONTENT, owner the post) and the hand-off | latest | sometimes (a picture can show people) | A page that shows no images keeps the stored list. Poll options and the linked video ID are still dropped. |
 
 ### playlist (unified: other)
 
@@ -319,8 +320,9 @@ API. "Collector" means yts works it out.
      commenter with uploads becomes a discovery candidate.
 8. **Media.**
    - **What exists:** video thumbnails, channel avatars and banners, commenter avatars, post images.
-   - **What we save:** the thumbnail (`hqdefault`, 480×360 JPEG), avatars and banners. Images are saved to object storage by SHA-256,
-     only when storage is configured: **off on the pilot**. Post images, video and audio are not saved.
+   - **What we save:** the thumbnail (`hqdefault`, 480×360 JPEG), avatars and banners, and post images (fix 21, the largest size).
+     Images are saved to object storage by SHA-256, only when storage is configured: **off on the pilot**. Video and audio are not
+     saved.
    - **Sizes:** not measured. A 480×360 thumbnail is roughly 15–40 KB (estimate). The largest image kept is 8 MB.
    - **Expiry:** URLs carry no expiry time; they change when the image changes.
    - **What analysis would need:** see `yts-gaps.md`, Plans.

@@ -25,7 +25,7 @@ before the pilot (11), because the cluster can't run yts without them.
 | 18 | Validate every flag and setting at start-up (A4) | | To do | |
 | 19 | Fields: verified badge, members-only, age restriction, joined date, scheduled start, playability status | | To do | |
 | 20 | History and links: post text and About links versioned, comment metrics, description links | | To do | |
-| 21 | Post attachments: images, poll options, linked video | | To do | |
+| 21 | Post attachments: images, poll options, linked video | | Images built, 13 Nov (poll options and linked video to do) | The Posts tab's image addresses (largest size of each, in order) go to `posts.image_urls` (migration 0020, an addition); one media job per post (`post_image:<post>`) downloads each image not stored yet; handed to analysis as the post's content (`MEDIA_ROLE_CONTENT`), deleted once analysed; erased with the post or its channel. Tests `TestParsePostImages`, `TestPostImages`, `TestErasePostImages`, the contract test |
 | 22 | Operations: runbooks, restore test, dashboard, migration check, visitor ID per IP, daily budget | | To do | |
 | 23 | 24-hour soak against the fake YouTube (G3) | | To do | |
 

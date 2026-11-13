@@ -210,6 +210,69 @@ func TestRetentionIsOffByDefault(t *testing.T) {
 	}
 }
 
+// A community post's images (fix 21) go with the post, and with its
+// channel; another post's stay.
+func TestErasePostImages(t *testing.T) {
+	pool := dbtest.New(t)
+	seed(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO posts (id, channel_id, text) VALUES ('UgkxFAKEKEEP', $1, 'q')`, ch); err != nil {
+		t.Fatal(err)
+	}
+	store := media.FileStore{Dir: t.TempDir()}
+	for _, m := range []struct{ post, key string }{
+		{"UgkxFAKEERASE", "media/post_image/UgkxFAKEERASE/aaaa.jpg"},
+		{"UgkxFAKEERASE", "media/post_image/UgkxFAKEERASE/bbbb.jpg"},
+		{"UgkxFAKEKEEP", "media/post_image/UgkxFAKEKEEP/cccc.jpg"},
+	} {
+		if err := store.Put(ctx, m.key, "image/jpeg", []byte("img")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO media (kind, entity_id, channel_id, sha256, object_key, source_url, content_type, bytes, first_seen, last_seen)
+			VALUES ('post_image', $1, $2, $3, $3, 'https://yt3.ggpht.com/x', 'image/jpeg', 3, now(), now())`, m.post, ch, m.key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO schedule (kind, entity_id, priority, due_at) VALUES ('media', 'post_image:UgkxFAKEERASE', 4, now()),
+		('media', 'post_image:UgkxFAKEKEEP', 4, now())`); err != nil {
+		t.Fatal(err)
+	}
+	s := service(t, pool)
+	s.Media = store
+	id, err := s.Request(ctx, privacy.Post, "UgkxFAKEERASE", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runJob(t, s, id)
+	for _, k := range []string{"media/post_image/UgkxFAKEERASE/aaaa.jpg", "media/post_image/UgkxFAKEERASE/bbbb.jpg"} {
+		if _, err := store.Get(ctx, k); !errors.Is(err, media.ErrNotFound) {
+			t.Errorf("%s must be deleted: %v", k, err)
+		}
+	}
+	if n := count(t, pool, `SELECT count(*) FROM media WHERE entity_id = 'UgkxFAKEERASE'`); n != 0 {
+		t.Errorf("%d of the erased post's image rows left", n)
+	}
+	if n := count(t, pool, `SELECT count(*) FROM schedule WHERE entity_id = 'post_image:UgkxFAKEERASE'`); n != 0 {
+		t.Error("the erased post's image job must go")
+	}
+	if _, err := store.Get(ctx, "media/post_image/UgkxFAKEKEEP/cccc.jpg"); err != nil {
+		t.Error("another post's image stays")
+	}
+
+	// Erasing the channel takes its other posts' images too.
+	id, err = s.Request(ctx, privacy.Channel, ch, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runJob(t, s, id)
+	if _, err := store.Get(ctx, "media/post_image/UgkxFAKEKEEP/cccc.jpg"); !errors.Is(err, media.ErrNotFound) {
+		t.Errorf("the channel's post image must be deleted: %v", err)
+	}
+	if n := count(t, pool, `SELECT count(*) FROM media WHERE kind = 'post_image'`) + count(t, pool, `SELECT count(*) FROM schedule WHERE entity_id LIKE 'post_image:%'`); n != 0 {
+		t.Errorf("%d post image rows or jobs left after the channel's erasure", n)
+	}
+}
+
 func TestEraseDeletesImages(t *testing.T) {
 	pool := dbtest.New(t)
 	seed(t, pool)

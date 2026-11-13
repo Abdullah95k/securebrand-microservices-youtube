@@ -2,6 +2,7 @@ package ytparse
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -364,6 +365,43 @@ func TestParsePosts(t *testing.T) {
 	}
 	if next != "POSTNEXT" {
 		t.Errorf("next = %q", next)
+	}
+}
+
+// A post's images (fix 21): one image, or several, the largest size of
+// each, in order.
+func TestParsePostImages(t *testing.T) {
+	img := func(name string) M {
+		return M{"backstageImageRenderer": M{"image": M{"thumbnails": A{
+			M{"url": "https://yt3.ggpht.com/" + name + "=s288", "width": 288, "height": 288},
+			M{"url": "https://yt3.ggpht.com/" + name + "=s1080", "width": 1080, "height": 1080},
+			M{"url": "https://yt3.ggpht.com/" + name + "=s640", "width": 640, "height": 640},
+		}}}}
+	}
+	post := func(id string, att M) M {
+		return M{"backstagePostThreadRenderer": M{"post": M{"backstagePostRenderer": M{
+			"postId": id, "authorEndpoint": M{"browseEndpoint": M{"browseId": fakeCh}},
+			"contentText": M{"runs": A{M{"text": "text"}}}, "backstageAttachment": att,
+		}}}}
+	}
+	d := doc(t, M{"contents": A{
+		post("UgkxFAKEONE", img("fakeimgA")),
+		post("UgkxFAKEMANY", M{"postMultiImageRenderer": M{"images": A{img("fakeimgB"), img("fakeimgC"), img("fakeimgB")}}}),
+		post("UgkxFAKENONE", M{"pollRenderer": M{}}),
+	}})
+	posts, _ := ParsePosts(d, now)
+	if len(posts) != 3 {
+		t.Fatalf("posts: %+v", posts)
+	}
+	want := [][]string{
+		{"https://yt3.ggpht.com/fakeimgA=s1080"},
+		{"https://yt3.ggpht.com/fakeimgB=s1080", "https://yt3.ggpht.com/fakeimgC=s1080"},
+		nil,
+	}
+	for i, p := range posts {
+		if !slices.Equal(p.Images, want[i]) || p.HasImage != (want[i] != nil) {
+			t.Errorf("post %s: images %v, has image %v; want %v", p.ID, p.Images, p.HasImage, want[i])
+		}
 	}
 }
 

@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **13 November 2026 (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **13 November 2026, evening (Iraq time)**.
 
 ## Where it stands
 
@@ -8,8 +8,12 @@ The current state of the YouTube collector, for the owner and the master session
   quarantine rule: one block of any kind on 3 different UTC days within a week set an IP aside for good. The pilot ran across
   7, 8 and 9 November, so its 47 player blocks in about 393,000 requests took all 10 IPs. The exits themselves were fine.
   The master restarted the worker at 21:09Z on 10 November, which cleared it.
-- **Live since 12 November, 04:05 Iraq time (01:05Z): `6dfa4c7`**, the thumbnail hold (D-052: "Not now for thumbnails").
-  The worker's start log says `image downloads held` for `thumb`. Before it: `624de33` from 11 November 11:17Z, the owner's
+- **Live by 13 November, 19:03 Iraq time (16:03Z): `8762275`** (platform PR 148), on the 10 IPs, with two overrides until
+  the new IPs come: `worker.workers=10` and `worker.mediaHold={thumb,author_avatar}`. So on 10 IPs it adds Facebook discovery
+  (off until the collector's address and key exist), post images (spare time) and migrations 0020–0021. Listed channels'
+  new or changed avatars and banners run at P2 (a few a day). The master's go-live check passed 8 of 9 lines; "media
+  acknowledged" waits for thumbnails, which are held. Before it: `6dfa4c7` from 12 November 01:05Z, the thumbnail hold
+  (D-052: "Not now for thumbnails"); `624de33` from 11 November 11:17Z, the owner's
   queue order (D-052, below), `d0b93cd` from 07:32Z (nameless channels as partial accounts), `34ff031` from 06:54Z (health
   by tier) and `f87e02e` from 05:46Z (Go 1.27.4).
 - **The owner's decision of 13 November (D-060): from 10 to 44 IPs.** 34 new exits go after the 10 in the proxy list,
@@ -29,7 +33,7 @@ The current state of the YouTube collector, for the owner and the master session
   links on listed channels' About panels and descriptions to the Facebook collector, each once, at most 200 a day; off
   until the master sets the address and the key's Secret (`scheduler.fbDiscovery`). No request to YouTube. Runbook §19.
 - **No new IPs for now** (the owner, 13 November: "for the time being keep running things and make sure its all smooth"):
-  yts stays on its 10 IPs at `6dfa4c7`; `3ff62c4` waits for the IPs and for database room.
+  yts stays on its 10 IPs. When they come, the two overrides go; the rest is already deployed.
 - **Community post images (fix 21) are built**, under the owner's "all platforms media" (the master's yes, 13 November).
   One request per image, in spare time like other images. Poll options and the linked video are still to do.
 - **Waiting:** from the master, ClickHouse bytes per yt event and PostgreSQL CPU and IOPS, to add analysis storage and

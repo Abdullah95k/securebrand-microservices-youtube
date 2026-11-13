@@ -15,13 +15,14 @@ The current state of the YouTube collector, for the owner and the master session
 - **The owner's decision of 13 November (D-060): from 10 to 44 IPs.** 34 new exits go after the 10 in the proxy list,
   shared with Instagram and TikTok as the 10 are. A worker restart picks them up. What to change and what to read is in
   [`master/yts-ips-discovery-media.md`](master/yts-ips-discovery-media.md), which also answers the owner's questions on
-  discovery and media, and the client's on count readings and comment picking (CLIENT-REQ-020). Proposed there, for the
-  owner: 30 jobs at once instead of 10; and holding commenters' avatars (and, while analysis skips them, avatars and
-  banners) until decided.
+  discovery and media, and the client's on count readings and comment picking (CLIENT-REQ-020). Built for the same
+  restart, with the master's yes: 30 jobs at once instead of 10 (`worker.workers: 30`), and commenters' avatars held
+  (`worker.mediaHold: [author_avatar]`) until the owner decides.
 - **The owner's decision of 13 November (D-061): "youtube thumbnails turned on"**, replacing D-052's hold; of avatars
-  and banners, "yes i need them". The hold is lifted in the production values. Images still run only in spare time, so
-  none download while the 10 IPs are full. Proposed, for the owner: new videos' thumbnails, and avatars and banners on first
-  sight or change, at a priority that runs, so they arrive within hours once the 44 IPs are in.
+  and banners, "yes i need them" (listed channels only). The thumbnail hold is lifted in the production values. Images
+  still run only in spare time, so none download while the 10 IPs are full. Proposed, for the owner: new videos'
+  thumbnails, and avatars and banners on first sight or change, at a priority that runs, so they arrive within hours once
+  the 44 IPs are in.
 - **Waiting:** from the master, ClickHouse bytes per yt event and PostgreSQL CPU and IOPS, to add analysis storage and
   database load to [`master/yts-coverage-sizing.md`](master/yts-coverage-sizing.md).
 - **11 November:**

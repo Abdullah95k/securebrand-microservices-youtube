@@ -812,8 +812,9 @@ there, for the kinds in `relay.media.kinds`: thumbnails, channel avatars and ban
 
 **Held kinds.** `worker.mediaHold` lists image kinds that are not downloaded for now. Their jobs stay queued and come back
 every 7 days, without a request, until the kind is released.
-- Production holds nothing. Thumbnails were held from 12 to 13 November (D-052, "Not now for thumbnails") and released by
-  the owner's D-061 ("youtube thumbnails turned on"). Channel avatars and banners are collected and handed off (D-050).
+- Production holds `author_avatar`, commenters' avatars: D-061 covers listed channels only, and keeping commenters' pictures
+  was never decided. Thumbnails were held from 12 to 13 November (D-052, "Not now for thumbnails") and released by the
+  owner's D-061 ("youtube thumbnails turned on"). Listed channels' avatars and banners are collected and handed off (D-050).
 - To release a held kind, remove it from `worker.mediaHold`. Its queued jobs then download at their own priority (images:
   the lowest, in spare time).
 - To stop all image downloads at once, without a deploy, run `ytcollect switch media off`; `on` restarts them.

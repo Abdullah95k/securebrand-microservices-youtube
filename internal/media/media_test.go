@@ -143,8 +143,9 @@ func TestMediaJobs(t *testing.T) {
 		return next
 	}
 
-	// The writer queues a thumbnail for a new video, and the avatar when the
-	// channel's picture is first seen or changes.
+	// The writer queues a thumbnail for a new video (at P4 until the
+	// video's first reading moves it up), and the avatar when the channel's
+	// picture is first seen or changes: at P2, with its channel (D-061).
 	wr := &writer.Writer{Pool: pool, Media: true, Now: func() time.Time { return now }}
 	if isNew, err := wr.Listed(ctx, ch, ytparse.VideoItem{VideoID: "fakeMv1", Title: "t"}); err != nil || !isNew {
 		t.Fatalf("listed: %v %v", isNew, err)
@@ -152,8 +153,12 @@ func TestMediaJobs(t *testing.T) {
 	if _, err := wr.Channel(ctx, writer.Channel{ID: ch, Title: "c", AvatarURL: "//yt3.ggpht.com/fakeavatar=s900"}); err != nil {
 		t.Fatal(err)
 	}
-	if n := count(t, pool, `SELECT count(*) FROM schedule WHERE kind = 'media' AND entity_id IN ('thumb:fakeMv1', 'avatar:`+ch+`') AND priority = 4`); n != 2 {
-		t.Fatalf("media jobs queued: %d, want 2 at P4", n)
+	if n := count(t, pool, `SELECT count(*) FROM schedule WHERE kind = 'media' AND entity_id = 'thumb:fakeMv1' AND priority = 4`); n != 1 {
+		t.Fatal("a new video's thumbnail is queued at first sight")
+	}
+	if n := count(t, pool, `SELECT count(*) FROM schedule WHERE kind = 'media' AND entity_id = 'avatar:`+ch+`' AND priority = 2
+		AND channel_id = $1 AND tier_rank = 1`, ch); n != 1 {
+		t.Fatal("a listed channel's new avatar is queued at P2 with its channel (tier B's rank)")
 	}
 
 	// Thumbnail: stored by content, read again after a week.
@@ -225,6 +230,51 @@ func TestMediaJobs(t *testing.T) {
 	keys, err := media.Keys(ctx, pool, privacy.Channel, ch)
 	if err != nil || len(keys) != 3 {
 		t.Errorf("a channel's images (avatar and thumbnails): %v %v", keys, err)
+	}
+}
+
+// D-061: a new video's first thumbnail runs at P1 and its recheck a week
+// on at P3; a thumbnail first read in spare time keeps P4 for its recheck.
+func TestThumbnailRecheckPriority(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	if err := registry.List(ctx, pool, nil, ch, registry.Input{Input: ch, Tier: policy.A}); err != nil {
+		t.Fatal(err)
+	}
+	img := &images{ct: "image/jpeg", files: map[string]string{
+		"https://i.ytimg.com/vi/fakeMnew/hqdefault.jpg": "new", "https://i.ytimg.com/vi/fakeMold/hqdefault.jpg": "old"}}
+	svc := &media.Service{Pool: pool, Images: img, Store: media.FileStore{Dir: t.TempDir()}, Log: quiet, Now: func() time.Time { return now }}
+	for _, v := range []string{"fakeMnew", "fakeMold"} {
+		if _, err := pool.Exec(ctx, `INSERT INTO videos (id, channel_id, kind, first_seen) VALUES ($1, $2, 'video', $3)`, v, ch, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := media.QueueFor(ctx, pool, media.Thumb, "fakeMnew", ch, media.FirstThumbPriority(time.Hour), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := media.Queue(ctx, pool, media.Thumb, "fakeMold", now); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, pool, `SELECT count(*) FROM schedule WHERE entity_id = 'thumb:fakeMnew' AND priority = 1 AND tier_rank = 0`); n != 1 {
+		t.Fatal("a new video's first thumbnail runs at P1, tier A first")
+	}
+	for _, c := range []struct {
+		video string
+		prio  int
+		want  int
+	}{{"fakeMnew", queue.P1, queue.P3}, {"fakeMold", queue.P4, queue.P4}} {
+		j := queue.Job{Kind: queue.KindMedia, EntityID: "thumb:" + c.video, ChannelID: ch, Priority: c.prio, Attempts: 1}
+		next, err := svc.Handlers()[queue.KindMedia](ctx, j)
+		if err != nil || !next.Equal(now.Add(media.ThumbRecheck)) {
+			t.Fatalf("%s: next %v, %v", c.video, next, err)
+		}
+		if n := count(t, pool, `SELECT count(*) FROM schedule WHERE entity_id = $1 AND priority = $2`, "thumb:"+c.video, c.want); n != 1 {
+			t.Errorf("%s: the recheck should be at P%d", c.video, c.want)
+		}
+	}
+	if media.FirstThumbPriority(0) != queue.P1 || media.FirstThumbPriority(3*24*time.Hour) != queue.P3 {
+		t.Error("first thumbnails: P1 while new (an unknown age counts as new), P3 for backfilled videos")
 	}
 }
 

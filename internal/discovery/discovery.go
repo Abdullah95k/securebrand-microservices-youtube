@@ -605,10 +605,17 @@ func RecomputeTiers(ctx context.Context, q db.Querier, now time.Time) (int, erro
 // CommenterGraph records, from stored comments, which channels each author
 // comments on (relation "commenter", weight = comments). Enrichment turns
 // commenters with uploads of their own into candidates (plan §5.3).
+//
+// Only new pairs and pairs whose count or last sighting changed are
+// written (14 November: rewriting every pair each day made as much WAL and
+// as many dead rows as the whole table, on a database under strain). It
+// returns how many pairs were added or changed.
 func CommenterGraph(ctx context.Context, q db.Querier) (int64, error) {
 	tag, err := q.Exec(ctx, `INSERT INTO channel_links_graph (from_channel, to_channel, relation, weight, first_seen, last_seen)
 		SELECT author_id, channel_id, 'commenter', count(*), min(first_seen), max(last_seen)
 		FROM comments WHERE author_id IS NOT NULL AND author_id <> channel_id GROUP BY author_id, channel_id
-		ON CONFLICT (from_channel, to_channel, relation) DO UPDATE SET weight = EXCLUDED.weight, last_seen = EXCLUDED.last_seen`)
+		ON CONFLICT (from_channel, to_channel, relation) DO UPDATE SET weight = EXCLUDED.weight, last_seen = EXCLUDED.last_seen
+		WHERE channel_links_graph.weight IS DISTINCT FROM EXCLUDED.weight
+			OR channel_links_graph.last_seen IS DISTINCT FROM EXCLUDED.last_seen`)
 	return tag.RowsAffected(), err
 }

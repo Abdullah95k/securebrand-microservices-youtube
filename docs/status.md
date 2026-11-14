@@ -259,6 +259,8 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 - Incident switches for the scheduler (14 November, the master's ask during the database restarts): chart values
   `scheduler.pauseTasks` (flag `-pause-tasks`) and `scheduler.replicas` (0 pauses it; the chart refuses more than 1).
   Production values unchanged. Runbook §7.
+- The commenter graph (same day): the daily task now writes only new pairs and pairs whose count or last sighting
+  changed, instead of rewriting every row of `channel_links_graph`. Same contents; far less WAL and fewer dead rows.
 - The scheduler's last runs (14 November, with the master's yes): new settings rows `scheduler/last/<task>` (yts's own) for
   the tasks an hour or more apart; a restart no longer re-runs the daily and weekly tasks (so the tiers are recomputed
   weekly as planned, not at every deploy). New metric `yt_capacity_report_timestamp_seconds`, new alert

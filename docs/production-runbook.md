@@ -927,8 +927,26 @@ channels that we didnt discover in other ways".
 - **Where they come from:** the side list of the watch page yts already reads at each video's first full reading (core channels'
   videos, and mention channels' Iraq-relevant ones). No extra request.
 - **Which count:** a suggestion whose title matches the Iraq keywords, from a channel yts does not know yet. It becomes a
-  candidate with the source `suggested` and gets the usual candidate check (3 requests, P3), which lists it as Iraqi or
-  mention, or not at all, by the same rules as search finds. A suggestion of a candidate already waiting counts it again.
+  candidate with the source `suggested` and gets the usual candidate check (3 requests, P3), which lists it, or not, by the
+  same rules as search finds (§21). A suggestion of a candidate already waiting counts it again.
 - **The limit:** at most `worker.suggestedDaily` new candidates a day (UTC; 500, `-suggested-daily`; 0 turns it off).
 - **What to watch:** `yt_discovery_suggested_24h` (new candidates from suggestions in the last day) and the fill rate
   `watch.suggestions`, which falls if YouTube's side list stops matching the parser.
+
+## 21. Discovered channels are treated as listed ones
+
+The owner, 14 November (D-076): "discovered pages should be treated in the same way" as the channels the owner lists.
+
+- **The check is unchanged.** A candidate is admitted when the country on its About panel is Iraq, or its own page matches the
+  keywords, or any of its recent or found items match. Candidates still under check are not collected.
+- **An admitted channel is a core channel,** tiered by size and activity like a listed one: A from 1M subscribers, B from 100K,
+  C below, D if nothing was uploaded in 180 days (the weekly "tiers" task moves both kinds alike). It gets the same jobs: the
+  channel page, feed and tab checks, posts, playlists, every video with its comments, and the full backfill. Before D-076, a
+  channel with only a few matching items became a mention channel (tier M: no tab checks, no backfill, only its Iraq-relevant
+  items in full).
+- **Channels admitted before D-076** as mention channels move to core by the scheduler's hourly task "discovered channels as
+  core" (its log: "discovered mention channels made core"), each with its tier and its backfill queued at P3. Mention channels
+  the owner listed (`ytcollect channels import -kind mention`), and any whose kind or tier was set by hand
+  (`ytcollect channels set`), stay as they are.
+- **What it costs:** a large channel that mentioned Iraq once is now collected in full, in tier A or B (which the stretch never
+  slows). Watch `yt_capacity_*` and `yt_freshness_debt_hours` after the change; `ytcollect health` lists channels by tier.

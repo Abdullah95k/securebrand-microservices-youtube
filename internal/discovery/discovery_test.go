@@ -162,8 +162,16 @@ func TestSearchFindsCandidatesAndListsThem(t *testing.T) {
 	if n := count(t, pool, `SELECT count(*) FROM channels WHERE id = $1 AND kind = 'core' AND tier = 'B' AND added_by = 'discovery'`, chCore); n != 1 {
 		t.Error("the Iraq channel is core, tier B by its 250K subscribers")
 	}
-	if n := count(t, pool, `SELECT count(*) FROM channels WHERE id = $1 AND kind = 'mention' AND tier = 'M'`, chMent); n != 1 {
-		t.Error("the channel with one Basra video in five is a mention channel")
+	// D-076: discovered channels are treated as listed ones, so even the
+	// channel with one Basra video in five is core, tiered by its size, with
+	// its backfill and tab checks.
+	if n := count(t, pool, `SELECT count(*) FROM channels WHERE id = $1 AND kind = 'core' AND tier <> 'M' AND added_by = 'discovery'`, chMent); n != 1 {
+		t.Error("the channel with one Basra video in five is a core channel (D-076)")
+	}
+	for _, k := range []string{queue.KindBackfill, queue.KindTabs} {
+		if n := count(t, pool, `SELECT count(*) FROM schedule WHERE kind = $1 AND entity_id = $2`, k, chMent); n != 1 {
+			t.Errorf("the discovered channel has no %s job", k)
+		}
 	}
 	if n := count(t, pool, `SELECT count(*) FROM channels WHERE id = $1`, chNone); n != 0 {
 		t.Error("the kitchen channel has no matching item: not listed")

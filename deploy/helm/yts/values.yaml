@@ -140,6 +140,12 @@ scheduler:
   # scheduler from starting (its log names the tasks), so a typo can't
   # leave a heavy task running.
   pauseTasks: []
+  # How long sent outbox events stay before the hourly prune deletes them
+  # (a Go duration, at least 1h). The relay has sent them and Kafka keeps
+  # them; the copy here only serves a replay. Unsent events always stay.
+  # The owner set 7 days on 7 November; the standing outbox is about this
+  # many days of events (runbook §16).
+  outboxKeep: 168h
   # Refresh tiers C, D and M at least this many times less often (1 to 8).
   # 1: only as much as the capacity planner needs to fit the IPs. New-upload
   # detection and tiers A and B are never slowed. Runbook §7.

@@ -799,6 +799,12 @@ service on the cluster) sends the outbox to the platform's Kafka: each event as 
 and as yts's own (`yt.*`), in one Kafka transaction per batch. Sent events are deleted after 7 days; unsent ones stay until sent.
 While the relay is off or Kafka is down, events wait in the outbox and go when it is back.
 
+Sent events stay in the outbox for `scheduler.outboxKeep` (default `168h`, the owner's 7 days of 7 November), then the
+scheduler's hourly "outbox prune" deletes them; unsent events are never deleted. So the outbox levels off at that many days
+of events: about 4.1 KB each (4.6 GB on 14 November, with 10 exits for most of the week; about 2–4 times as much a day with
+40). A shorter keep makes it smaller at once (the next hourly prune); Kafka keeps the events, and the copy here only serves a
+replay. The value is the owner's to choose.
+
 What is waiting, by kind:
 
 ```bash

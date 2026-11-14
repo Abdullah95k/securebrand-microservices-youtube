@@ -237,6 +237,7 @@ func switchCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer, args []st
 func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("scheduler", flag.ContinueOnError)
 	metricsAddr := fs.String("metrics-addr", ":9102", "the ops port: /metrics, /healthz and /readyz (empty: off)")
+	outboxKeep := fs.Duration("outbox-keep", outbox.Keep, "how long sent outbox events stay before the hourly prune deletes them (unsent ones always stay; the owner set 7 days on 7 November)")
 	pauseTasks := fs.String("pause-tasks", "", "scheduler tasks not to run for now, comma-separated by name (for an incident; nothing is deleted)")
 	minStretch := fs.Float64("min-stretch", 1, "refresh tiers C, D and M at least this many times less often (1: only as the capacity planner needs; at most 8)")
 	fbURL := fs.String("fb-url", "", "the Facebook collector's API address: send it the Facebook links of listed channels (D-065; empty: off)")
@@ -256,6 +257,9 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 		}
 		fb = &fbdisc.Sender{Pool: pool, URL: *fbURL, Key: key, Daily: *fbDaily, Log: log}
 		log.Info("facebook discovery on", "daily", *fbDaily)
+	}
+	if *outboxKeep < time.Hour {
+		return fmt.Errorf("scheduler: -outbox-keep %v is under an hour", *outboxKeep)
 	}
 	if *minStretch < 1 || *minStretch > capacity.MaxStretch {
 		return fmt.Errorf("scheduler: -min-stretch %v is not between 1 and %v", *minStretch, capacity.MaxStretch)
@@ -355,9 +359,10 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			return err
 		}},
 		{Name: "outbox prune", Every: time.Hour, Run: func() error {
-			// Sent events are copies made for sending: they go after 7 days
-			// (the owner, 7 November). Unsent ones stay until sent.
-			n, err := outbox.Prune(ctx, pool, time.Now().Add(-outbox.Keep))
+			// Sent events are copies made for sending: they go after
+			// -outbox-keep (7 days, the owner, 7 November). Unsent ones stay
+			// until sent.
+			n, err := outbox.Prune(ctx, pool, time.Now().Add(-*outboxKeep))
 			if n > 0 {
 				log.Info("sent outbox events deleted", "rows", n)
 			}

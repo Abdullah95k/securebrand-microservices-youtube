@@ -55,13 +55,13 @@ The current state of the YouTube collector, for the owner and the master session
   - `3ce6d20` (PR 106) adds incident switches: `scheduler.pauseTasks` and `scheduler.replicas: 0` (runbook §7). It also
     makes the commenter graph write only changed pairs. The master is deploying it with the commenter graph, privacy
     audit and enrichment order paused until PostgreSQL is stable.
-- **For the owner (not urgent): the outbox is yts's biggest table**, 4.6 GB of yts's 6.8 GB. The relay is off (no Kafka
-  yet), so every content event waits there, and with 40 exits it grows about 2–4 times faster. Options:
-  - (a) turn the relay on when Kafka is ready, so the outbox drains;
-  - (b) while the relay is off, keep only the newest unsent event per entity. Every reading stays in the snapshot
-    tables, so no data is lost, but Kafka would get the latest state rather than every step;
-  - (c) keep it and plan the disk for it.
-  yts suggests (b) until Kafka is there; it changes what the relay will publish, so it is the owner's decision.
+- **For the owner (not urgent): how long sent events stay in the outbox.** The outbox is yts's biggest table, 4.6 GB
+  of yts's 6.8 GB on 14 November. It holds events the relay has already sent to Kafka (nothing is waiting): the owner
+  set 7 days for them on 7 November, and the relay has run since then, so it levels off from 14 November at 7 days'
+  worth. With 40 exits that would be about 17–33 GB. A new chart value, `scheduler.outboxKeep` (default `168h`, the 7
+  days), lets the owner choose: 48 hours would keep it at about 5–9 GB, 24 hours at about 2.5–5 GB. Kafka keeps the
+  events; the copy in the outbox only serves a replay. yts suggests 48 hours. (Corrected the same morning: an earlier
+  note here said the relay was off; it has been on since 7 November.)
 - **The owner, 14 November: "add the suggested videos to the discovery as well".** Built: channels of suggested videos
   whose titles match the Iraq keywords become discovery candidates, at most 500 a day. Runbook §20.
 - **40 exits:** the owner's new list, two logins per port; still with `worker.workers=10` and
@@ -271,6 +271,8 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- The outbox keep (14 November): chart value `scheduler.outboxKeep` and scheduler flag `-outbox-keep` (default 168h,
+  unchanged: the owner's 7 days). Runbook §16.
 - Incident switches for the scheduler (14 November, the master's ask during the database restarts): chart values
   `scheduler.pauseTasks` (flag `-pause-tasks`) and `scheduler.replicas` (0 pauses it; the chart refuses more than 1).
   Production values unchanged. Runbook §7.

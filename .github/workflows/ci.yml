@@ -197,6 +197,7 @@ jobs:
           grep -q -- '-fb-url=https://fbs.invalid' out/everything.yaml || { echo "fbDiscovery.enabled=true gave the scheduler no -fb-url"; exit 1; }
           # The incident switches: off in production; a paused task list reaches the scheduler; replicas 0 pauses it.
           if grep -q -- '-pause-tasks=' out/production.yaml; then echo "no scheduler task may be paused in values-production.yaml"; exit 1; fi
+          grep -q -- '-outbox-keep=168h' out/production.yaml || { echo "production must keep sent outbox events 168h (the owner's 7 days) unless the owner changes it"; exit 1; }
           grep -q -- '"-pause-tasks=commenter graph,privacy audit"' out/everything.yaml || { echo "scheduler.pauseTasks did not reach the scheduler"; exit 1; }
           grep -A12 'name: yts-scheduler$' out/scheduler-paused.yaml | grep -q 'replicas: 0' || { echo "scheduler.replicas=0 did not pause the scheduler"; exit 1; }
           grep -A12 'name: yts-scheduler$' out/production.yaml | grep -q 'replicas: 1' || { echo "the scheduler must run in production"; exit 1; }

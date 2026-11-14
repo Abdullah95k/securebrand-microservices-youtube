@@ -141,3 +141,16 @@ func TestEraseAndExportCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The scheduler refuses an outbox keep under an hour and a stretch out of
+// range before it starts anything.
+func TestSchedulerRefusesBadFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"-outbox-keep=30m"},
+		{"-min-stretch=9"},
+	} {
+		if err := schedulerCmd(context.Background(), nil, quietLog, append([]string{"-metrics-addr="}, args...)); err == nil {
+			t.Errorf("scheduler %v: want a refusal", args)
+		}
+	}
+}

@@ -82,6 +82,8 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 			WHERE added_by = 'discovery' AND first_seen >= $1 GROUP BY 1`, []any{day}, []string{"kind"}},
 		{"yt_fb_candidates", "Facebook links of listed channels for the Facebook collector, by its answer (unsent: not sent yet).",
 			`SELECT COALESCE(result, 'unsent'), count(*) FROM fb_candidates GROUP BY 1`, nil, []string{"result"}},
+		{"yt_discovery_suggested_24h", "New discovery candidates from suggested videos in the last 24 hours.",
+			`SELECT count(*) FROM candidates WHERE 'suggested' = ANY(sources) AND first_found >= $1`, []any{day}, nil},
 		{"yt_keyword_suggestions_new", "Keyword suggestions waiting for a decision.", `SELECT count(*) FROM keyword_suggestions WHERE status = 'new'`, nil, nil},
 		{"yt_keywords_low_precision", "Keywords flagged for low precision today.", `SELECT count(*) FROM keyword_stats
 			WHERE day = $1::date AND matches >= 20 AND confirmed::float / matches < 0.3`, []any{now.UTC().Format("2006-01-02")}, nil},

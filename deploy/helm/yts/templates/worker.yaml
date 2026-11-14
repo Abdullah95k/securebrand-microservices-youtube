@@ -40,6 +40,7 @@ spec:
             - worker
             - -interval={{ .Values.worker.interval }}
             - -workers={{ .Values.worker.workers }}
+            - -suggested-daily={{ .Values.worker.suggestedDaily }}
             - -no-player={{ not .Values.worker.player }}
             - -comment-cap={{ .Values.worker.commentCap }}
             - -drain={{ .Values.worker.drain }}

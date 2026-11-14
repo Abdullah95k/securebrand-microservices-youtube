@@ -120,6 +120,7 @@ kubectl -n yts exec deploy/yts-scheduler -- ytcollect outbox check
 | `worker.drain` | `20s` | On shutdown, running jobs get this long; the grace period is 40 s |
 | `worker.rawSample`, `worker.raw30d` | `0.01`, `true` | Raw responses kept forever, and the 30-day rest |
 | `worker.mediaHold` | `[]` (production: `[author_avatar]`) | Image kinds not downloaded for now; their jobs stay queued |
+| `worker.suggestedDaily` | `500` | Most new discovery candidates a day from suggested videos (the owner, 14 November); 0 turns it off |
 | `worker.commentCap`, `worker.player` | `20000`, `true` | Comments per first read; the player endpoint |
 | `scheduler.minStretch` | `1` | Refresh tiers C, D and M at least this many times less often (1 to 8); 1: only as much as the capacity planner needs to fit the IPs. New-upload detection and tiers A and B are never slowed |
 | `scheduler.fbDiscovery.enabled`, `.url`, `.dailyLimit`, `.secret.name`, `.secret.key` | `false`, `""`, `200`, `""`, `api_key` | Facebook discovery (D-065): every 10 minutes the scheduler sends the Facebook links on listed channels' About panels and descriptions to the Facebook collector at `url`, each once, at most `dailyLimit` a day; the key is mounted from the Secret `secret.name` (key `secret.key`) |

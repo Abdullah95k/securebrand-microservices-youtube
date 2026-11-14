@@ -2,6 +2,7 @@ package ytparse
 
 import (
 	"strings"
+	"time"
 
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/jsonx"
 )
@@ -26,6 +27,9 @@ type WatchInfo struct {
 	CommentsToken string // opens the comment section
 	CommentCount  Count
 	LiveViewers   Count // "1,234 watching now" while live
+	// Suggested are the side list's videos that name their channel (the
+	// first page): their channels feed discovery (the owner, 14 November).
+	Suggested []VideoItem
 }
 
 // ParseWatch reads a "next" response for a video.
@@ -57,6 +61,7 @@ func ParseWatch(data any) WatchInfo {
 
 	w.Likes = parseLikes(data)
 	w.Chapters = parseChapters(data)
+	w.Suggested = parseSuggested(data, w.VideoID)
 
 	// Comment section: an itemSectionRenderer marked "comment-item-section".
 	for _, sec := range jsonx.FindMaps(data, "itemSectionRenderer") {
@@ -78,6 +83,24 @@ func ParseWatch(data any) WatchInfo {
 		}
 	}
 	return w
+}
+
+// parseSuggested reads the watch page's side list (secondaryResults): each
+// video that names its channel, the watched video itself left out.
+func parseSuggested(data any, self string) []VideoItem {
+	sec := jsonx.Get(data, "contents", "twoColumnWatchNextResults", "secondaryResults")
+	if sec == nil {
+		return nil
+	}
+	var out []VideoItem
+	for _, v := range ParseList(sec, time.Now()).Videos {
+		if v.VideoID == self || v.ChannelID == "" {
+			continue
+		}
+		v.Published, v.PublishedText = TimeEstimate{}, ""
+		out = append(out, v)
+	}
+	return out
 }
 
 // parseLikes prefers exact numbers (structured-description factoids and the

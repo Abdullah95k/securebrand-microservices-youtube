@@ -92,6 +92,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 	backfillDays := fs.Int("backfill-days", 365, "how many days of each channel's past uploads the backfill reads (the pilot starts with 7)")
 	rawSample := fs.Float64("raw-sample", 0.01, "share of ordinary raw responses kept forever under yts/keep/ (failures always are)")
 	raw30d := fs.Bool("raw-30d", true, "also write every other raw response under yts/30d/ (the bucket may expire them after 30 days)")
+	suggestedDaily := fs.Int("suggested-daily", discovery.DefaultSuggestedDaily, "most new discovery candidates a day from suggested videos (0: off)")
 	mediaHold := fs.String("media-hold", "", "image kinds not downloaded for now, comma-separated (thumb, avatar, banner, author_avatar, post_image): their jobs stay queued")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -147,7 +148,7 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 		return fmt.Errorf("-backfill-days must be between 1 and 3650, not %d", *backfillDays)
 	}
 	svc := &collect.Service{Pool: pool, Fetch: fetch, Sup: sup, Log: log, WithPlayer: !*noPlayer, Write: wr, Stretch: stretch.Value,
-		Window: time.Duration(*backfillDays) * 24 * time.Hour, Raw: raw}
+		Window: time.Duration(*backfillDays) * 24 * time.Hour, Raw: raw, SuggestedDaily: *suggestedDaily}
 	handlers := svc.Handlers()
 	rss := &detect.RSS{Pool: pool, Feeds: feeds.NewFetcher(fetch.Client), Write: wr, Log: log,
 		Recent: svc.RecentUploads}

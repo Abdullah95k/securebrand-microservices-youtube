@@ -880,3 +880,17 @@ it. Commenters are never read.
   `public_waiting`, `checked_recently`, `ignored`, or `rejected`), and `unsent`. The scheduler logs "facebook links" with the
   new and sent counts, and "facebook discovery paused" when it waits.
 - **Erasure:** erasing a channel deletes its rows here.
+
+## 20. Suggested videos in discovery
+
+The owner, 14 November: "for youtube, we need to add the suggested videos to the discovery as well, as it can lead to new
+channels that we didnt discover in other ways".
+
+- **Where they come from:** the side list of the watch page yts already reads at each video's first full reading (core channels'
+  videos, and mention channels' Iraq-relevant ones). No extra request.
+- **Which count:** a suggestion whose title matches the Iraq keywords, from a channel yts does not know yet. It becomes a
+  candidate with the source `suggested` and gets the usual candidate check (3 requests, P3), which lists it as Iraqi or
+  mention, or not at all, by the same rules as search finds. A suggestion of a candidate already waiting counts it again.
+- **The limit:** at most `worker.suggestedDaily` new candidates a day (UTC; 500, `-suggested-daily`; 0 turns it off).
+- **What to watch:** `yt_discovery_suggested_24h` (new candidates from suggestions in the last day) and the fill rate
+  `watch.suggestions`, which falls if YouTube's side list stops matching the parser.

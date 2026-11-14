@@ -58,6 +58,13 @@ groups:
         annotations:
           runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
           summary: "System metrics are not being refreshed (is the scheduler running?)"
+      - alert: CapacityPlanStale
+        expr: time() - yt_capacity_report_timestamp_seconds > 7200
+        for: 10m
+        annotations:
+          runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+          summary: "The newest capacity plan is over 2 hours old: the stretch and the IP advice are out of date"
+          description: "The planner runs hourly in the scheduler. Look in the scheduler's log for 'scheduler task failed' with task=capacity."
   - name: freshness
     rules:
       - alert: FreshnessDebtGrowing

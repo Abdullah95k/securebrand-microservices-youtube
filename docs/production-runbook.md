@@ -349,6 +349,8 @@ What to look at (plan §8.13):
 - `yt_pool_speed` below 1: the pool brake is on (many IPs blocked).
 - `yt_freshness_debt_hours`: work running late, per tier. If it grows, add proxy IPs (`yt_capacity_recommended_ips`).
 - `yt_capacity_stretch`: how many times less often tiers C, D and M are refreshed (1 = as planned). See below.
+- `yt_capacity_report_timestamp_seconds`: when the newest capacity plan was made; the `yt_capacity_*` values are from it.
+  The alert CapacityPlanStale fires when it is over 2 hours old.
 - `yt_fill_rate` against `yt_fill_rate_baseline`: a big drop means YouTube changed a page.
 - `yt_erasure_oldest_pending_seconds` and `yt_suppression_violations`: must stay low and 0.
 
@@ -367,6 +369,14 @@ the schedule asks for:
   checks, and videos of channels not on the list.
 
 A worker that shuts down marks itself stopped, so the pod that replaces it isn't counted twice.
+
+**The scheduler's tasks after a restart.** The scheduler runs its tasks one after another. Each task that runs an hour or more
+apart (the capacity plan, the archive, the privacy audit, the commenter graph, the tiers and the rest) keeps its last run in
+the settings table (`scheduler/last/<task>`). A restart, such as a deploy, therefore doesn't re-run the daily and weekly tasks,
+and the hourly ones, such as the capacity plan, don't wait behind them: they run when they are due. When several are due at
+once, the one with the shortest period goes first. The metrics, every minute, run at start as before. A task the restart cut
+short is run again by the next scheduler. Before 14 November every restart re-ran them all, the hourly plan last, so two
+deploys an hour apart could leave the plan hours old.
 
 **The order of the queue** (the owner, D-052, 11 November). Workers take due jobs by priority. Within a priority, tier A's jobs
 go first, then tier B's, then the rest (tiers C, D and M, and jobs of no listed channel). Within a tier, the oldest due job

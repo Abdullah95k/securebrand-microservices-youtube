@@ -29,6 +29,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/privacy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/sched"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/secrets"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/suggest"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/usage"
@@ -271,30 +272,24 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 		log.Info("webhooks on", "endpoints", len(wh.Cfg.Endpoints))
 		go wh.Run(ctx, 10*time.Second)
 	}
-	type task struct {
-		name  string
-		every time.Duration
-		run   func() error
-		last  time.Time
-	}
-	tasks := []*task{
-		{name: "metrics", every: time.Minute, run: func() error { return monitor.DB(ctx, pool, reg, time.Now()) }},
-		{name: "partitions", every: 24 * time.Hour, run: func() error { return db.EnsurePartitions(ctx, pool, time.Now(), 3) }},
-		{name: "rearm", every: time.Hour, run: func() error {
+	tasks := []*sched.Task{
+		{Name: "metrics", Every: time.Minute, Run: func() error { return monitor.DB(ctx, pool, reg, time.Now()) }},
+		{Name: "partitions", Every: 24 * time.Hour, Run: func() error { return db.EnsurePartitions(ctx, pool, time.Now(), 3) }},
+		{Name: "rearm", Every: time.Hour, Run: func() error {
 			n, err := registry.Rearm(ctx, pool)
 			if n > 0 {
 				log.Info("missing jobs re-added", "jobs", n)
 			}
 			return err
 		}},
-		{name: "search terms", every: time.Hour, run: func() error {
+		{Name: "search terms", Every: time.Hour, Run: func() error {
 			added, removed, err := discovery.SyncTerms(ctx, pool)
 			if added+removed > 0 {
 				log.Info("search rotation updated", "added", added, "removed", removed)
 			}
 			return err
 		}},
-		{name: "API data expiry", every: 24 * time.Hour, run: func() error {
+		{Name: "API data expiry", Every: 24 * time.Hour, Run: func() error {
 			e, err := discovery.ExpireAPIData(ctx, pool, time.Now())
 			if e != (discovery.APIExpiry{}) {
 				log.Info("official-API data past 30 days handled (YouTube's API rule)", "hits_deleted", e.Hits,
@@ -302,11 +297,11 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			}
 			return err
 		}},
-		{name: "commenter graph", every: 24 * time.Hour, run: func() error {
+		{Name: "commenter graph", Every: 24 * time.Hour, Run: func() error {
 			_, err := discovery.CommenterGraph(ctx, pool)
 			return err
 		}},
-		{name: "privacy audit", every: 24 * time.Hour, run: func() error {
+		{Name: "privacy audit", Every: 24 * time.Hour, Run: func() error {
 			s, err := privacyService(ctx, pool, log)
 			if err != nil {
 				return err
@@ -318,10 +313,10 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			log.Info("privacy audit done", "suppressed_found_and_erased", res.Total())
 			return db.SetSetting(ctx, pool, monitor.AuditKey, monitor.AuditResult{Violations: res.Total(), At: time.Now()})
 		}},
-		{name: "suppression list copy", every: time.Hour, run: func() error {
+		{Name: "suppression list copy", Every: time.Hour, Run: func() error {
 			return copySuppressionList(ctx, pool, log)
 		}},
-		{name: "archive", every: 24 * time.Hour, run: func() error {
+		{Name: "archive", Every: 24 * time.Hour, Run: func() error {
 			a, err := archiverOrNil(ctx, pool, log)
 			if a == nil || err != nil {
 				return err
@@ -329,7 +324,7 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			_, err = a.Run(ctx)
 			return err
 		}},
-		{name: "archive scrub", every: time.Hour, run: func() error {
+		{Name: "archive scrub", Every: time.Hour, Run: func() error {
 			a, err := archiverOrNil(ctx, pool, log)
 			if a == nil || err != nil {
 				return err
@@ -337,7 +332,7 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			_, err = a.Scrub(ctx)
 			return err
 		}},
-		{name: "retention", every: 24 * time.Hour, run: func() error {
+		{Name: "retention", Every: 24 * time.Hour, Run: func() error {
 			r, err := privacy.LoadRetention(ctx, pool)
 			if err != nil || r.Forever() && !r.RedactDeletedComments {
 				return err // everything is kept (the default)
@@ -346,8 +341,8 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			log.Info("retention settings applied", "rows", out)
 			return err
 		}},
-		{name: "database size", every: time.Hour, run: func() error { return usage.SampleSize(ctx, pool, time.Now()) }},
-		{name: "coverage roll-up", every: time.Hour, run: func() error {
+		{Name: "database size", Every: time.Hour, Run: func() error { return usage.SampleSize(ctx, pool, time.Now()) }},
+		{Name: "coverage roll-up", Every: time.Hour, Run: func() error {
 			// One JobCoverage per job kind and finished hour (fix 12), from
 			// the usage tables; hours that ended 10 minutes ago or more, so
 			// the hour's last jobs are in; two days back, once each.
@@ -358,7 +353,7 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			}
 			return err
 		}},
-		{name: "outbox prune", every: time.Hour, run: func() error {
+		{Name: "outbox prune", Every: time.Hour, Run: func() error {
 			// Sent events are copies made for sending: they go after 7 days
 			// (the owner, 7 November). Unsent ones stay until sent.
 			n, err := outbox.Prune(ctx, pool, time.Now().Add(-outbox.Keep))
@@ -367,7 +362,7 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			}
 			return err
 		}},
-		{name: "capacity", every: time.Hour, run: func() error {
+		{Name: "capacity", Every: time.Hour, Run: func() error {
 			r, err := capacity.PlanWith(ctx, pool, time.Now(), capacity.Options{MinStretch: *minStretch})
 			if err == nil {
 				log.Info("capacity plan", "supply_per_hour", int(r.SupplyPerHour), "demand_per_hour", int(r.DemandPerHour),
@@ -377,7 +372,7 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			}
 			return err
 		}},
-		{name: "keyword suggestions", every: 24 * time.Hour, run: func() error {
+		{Name: "keyword suggestions", Every: 24 * time.Hour, Run: func() error {
 			n, activated, err := suggest.Run(ctx, pool, time.Now())
 			if err != nil {
 				return err
@@ -392,7 +387,7 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			log.Info("keyword suggestions and precision", "suggested", n, "activated", activated, "low_precision_keywords", low)
 			return err
 		}},
-		{name: "facebook discovery", every: 10 * time.Minute, run: func() error {
+		{Name: "facebook discovery", Every: 10 * time.Minute, Run: func() error {
 			if fb == nil {
 				return nil
 			}
@@ -402,11 +397,11 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			}
 			return err
 		}},
-		{name: "enrichment order", every: 24 * time.Hour, run: func() error {
+		{Name: "enrichment order", Every: 24 * time.Hour, Run: func() error {
 			_, err := enrich.Prioritise(ctx, pool)
 			return err
 		}},
-		{name: "tiers", every: 7 * 24 * time.Hour, run: func() error {
+		{Name: "tiers", Every: 7 * 24 * time.Hour, Run: func() error {
 			n, err := discovery.RecomputeTiers(ctx, pool, time.Now())
 			if n > 0 {
 				log.Info("channel tiers recomputed", "moved", n)
@@ -415,22 +410,6 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 		}},
 	}
 	log.Info("scheduler running")
-	tick := time.NewTicker(time.Minute)
-	defer tick.Stop()
-	for {
-		for _, t := range tasks {
-			if time.Since(t.last) < t.every {
-				continue
-			}
-			t.last = time.Now()
-			if err := t.run(); err != nil && ctx.Err() == nil {
-				log.Warn("scheduler task failed", "task", t.name, "err", err)
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-tick.C:
-		}
-	}
+	(&sched.Runner{Q: pool, Log: log, Tasks: tasks}).Run(ctx)
+	return nil
 }

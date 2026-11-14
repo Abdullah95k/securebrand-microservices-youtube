@@ -149,9 +149,11 @@ func DB(ctx context.Context, pool *pgxpool.Pool, reg *metrics.Registry, now time
 	var stretch float32
 	var ips *int
 	var debt, detail []byte
-	err = pool.QueryRow(ctx, `SELECT supply_per_hour, demand_per_hour, stretch, recommended_ips, debt, detail FROM capacity_reports ORDER BY at DESC LIMIT 1`).
-		Scan(&supply, &demand, &stretch, &ips, &debt, &detail)
+	var planAt time.Time
+	err = pool.QueryRow(ctx, `SELECT at, supply_per_hour, demand_per_hour, stretch, recommended_ips, debt, detail FROM capacity_reports ORDER BY at DESC LIMIT 1`).
+		Scan(&planAt, &supply, &demand, &stretch, &ips, &debt, &detail)
 	if err == nil {
+		reg.Set("yt_capacity_report_timestamp_seconds", "When the newest capacity plan was made (the yt_capacity_* values are from it).", nil, float64(planAt.Unix()))
 		var parts struct {
 			Fixed       float64 `json:"fixed_per_hour"`
 			Stretchable float64 `json:"stretchable_per_hour"`

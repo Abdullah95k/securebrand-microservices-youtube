@@ -63,6 +63,10 @@ func TestDatabaseMetrics(t *testing.T) {
 	var b strings.Builder
 	_, _ = reg.WriteTo(&b)
 	out := b.String()
+	// The newest plan's time, for the CapacityPlanStale alert.
+	if want := "yt_capacity_report_timestamp_seconds " + strconv.FormatFloat(float64(now.Unix()), 'g', -1, 64) + "\n"; !strings.Contains(out, want) {
+		t.Errorf("metrics miss %q", want)
+	}
 	if m := regexp.MustCompile(`(?m)^yt_outbox_oldest_unsent_seconds (\S+)$`).FindStringSubmatch(out); m == nil {
 		t.Error("no yt_outbox_oldest_unsent_seconds")
 	} else if v, _ := strconv.ParseFloat(m[1], 64); v < 500 || v > 900 {

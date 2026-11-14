@@ -368,6 +368,7 @@ func (w *Writer) Video(ctx context.Context, v Video) (VideoOutcome, error) {
 	w.Fill.Observe("watch", "likes", v.Watch.Likes.OK)
 	w.Fill.Observe("watch", "comment_count", v.Watch.CommentCount.OK || v.Watch.CommentsToken == "")
 	w.Fill.Observe("watch", "date_text", v.Watch.DateText != "")
+	w.Fill.Observe("watch", "suggestions", len(v.Watch.Suggested) > 0)
 	if v.HasPlayer {
 		w.Fill.Observe("player", "publish_date", v.Player.PublishDate != "")
 		w.Fill.Observe("player", "category", v.Player.Category != "")

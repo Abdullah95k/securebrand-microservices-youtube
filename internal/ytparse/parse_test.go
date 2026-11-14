@@ -368,6 +368,39 @@ func TestParsePosts(t *testing.T) {
 	}
 }
 
+// The watch page's side list (the owner, 14 November): suggested videos
+// with their channel, in the older compactVideoRenderer and the 2026
+// lockup layout; the watched video and items without a channel are left out.
+func TestParseWatchSuggested(t *testing.T) {
+	lockup := func(id, ch string) M {
+		meta := M{"title": M{"content": "title " + id}}
+		if ch != "" {
+			meta["image"] = M{"decoratedAvatarViewModel": M{"rendererContext": M{"commandContext": M{"onTap": M{"innertubeCommand": M{
+				"browseEndpoint": M{"browseId": ch}}}}}}}
+		}
+		return M{"lockupViewModel": M{"contentId": id, "contentType": "LOCKUP_CONTENT_TYPE_VIDEO", "metadata": M{"lockupMetadataViewModel": meta}}}
+	}
+	d := doc(t, M{
+		"currentVideoEndpoint": M{"watchEndpoint": M{"videoId": "fakeWself"}},
+		"contents": M{"twoColumnWatchNextResults": M{"secondaryResults": M{"secondaryResults": M{"results": A{
+			M{"compactVideoRenderer": M{"videoId": "fakeWold", "title": M{"simpleText": "old layout"},
+				"ownerText": M{"runs": A{M{"text": "c", "navigationEndpoint": M{"browseEndpoint": M{"browseId": "UCfakeSUGGESTOLD0000001"}}}}}}},
+			lockup("fakeWnew", "UCfakeSUGGESTNEW0000001"),
+			lockup("fakeWself", "UCfakeSUGGESTSELF000001"),
+			lockup("fakeWnoch", ""),
+		}}}}},
+	})
+	w := ParseWatch(d)
+	var got []string
+	for _, v := range w.Suggested {
+		got = append(got, v.VideoID+"/"+v.ChannelID)
+	}
+	want := []string{"fakeWold/UCfakeSUGGESTOLD0000001", "fakeWnew/UCfakeSUGGESTNEW0000001"}
+	if !slices.Equal(got, want) {
+		t.Errorf("suggested = %v, want %v", got, want)
+	}
+}
+
 // A post's images (fix 21): one image, or several, the largest size of
 // each, in order.
 func TestParsePostImages(t *testing.T) {

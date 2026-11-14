@@ -182,6 +182,39 @@ func TestThumbnailsQueuedByAge(t *testing.T) {
 	}
 }
 
+// The owner, 14 November: suggested videos feed discovery. On a video's
+// first reading, a suggestion whose title matches the Iraq keywords, from a
+// channel yts does not know, becomes a candidate with a check queued; an
+// unrelated suggestion, a known channel and the day's limit hold it back.
+func TestSuggestedVideosFeedDiscovery(t *testing.T) {
+	ch := fakeChannel()
+	ch.Videos[0].Suggested = []fakeyt.FakeSuggestion{
+		{VideoID: "fakeSG1", Title: "أخبار بغداد العاجلة", ChannelID: "UCfakeSUGGESTED000000001", ChannelName: "a"},
+		{VideoID: "fakeSG2", Title: "cooking show", ChannelID: "UCfakeSUGGESTED000000002", ChannelName: "b"},
+		{VideoID: "fakeSG3", Title: "بغداد اليوم", ChannelID: chID, ChannelName: "listed"},
+		{VideoID: "fakeSG4", Title: "أخبار البصرة", ChannelID: "UCfakeSUGGESTED000000004", ChannelName: "d"},
+	}
+	r := newRig(t, []fakeyt.FakeChannel{ch})
+	r.svc.SuggestedDaily = 1
+	ctx := context.Background()
+	if err := registry.AddInput(ctx, r.pool, registry.Input{Input: "@fakecollect", Tier: policy.A}); err != nil {
+		t.Fatal(err)
+	}
+	r.work(t, 3*time.Second)
+	if n := r.count(t, `SELECT count(*) FROM candidates WHERE 'suggested' = ANY(sources)`); n != 1 {
+		t.Fatalf("%d candidates from suggestions; want 1 (the day's limit of 1)", n)
+	}
+	if n := r.count(t, `SELECT count(*) FROM candidates WHERE channel_id = 'UCfakeSUGGESTED000000001'`); n != 1 {
+		t.Error("the first Iraq-relevant suggestion from an unknown channel becomes a candidate")
+	}
+	if n := r.count(t, `SELECT count(*) FROM candidates WHERE channel_id IN ('UCfakeSUGGESTED000000002', $1)`, chID); n != 0 {
+		t.Error("an unrelated suggestion, or a channel yts knows, is not a candidate")
+	}
+	if n := r.count(t, `SELECT count(*) FROM schedule WHERE kind = 'candidate' AND entity_id = 'UCfakeSUGGESTED000000001' AND priority = 3`); n != 1 {
+		t.Error("the new candidate gets the usual check at P3")
+	}
+}
+
 func TestUnknownHandleAndErasedChannel(t *testing.T) {
 	r := newRig(t, []fakeyt.FakeChannel{fakeChannel()})
 	ctx := context.Background()

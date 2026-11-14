@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/discovery"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/innertube"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/media"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/phase0"
@@ -45,6 +46,9 @@ type Service struct {
 	MaxPages   int             // safety limit per tab (default 400)
 	Stretch    func() float64  // the capacity planner's stretch for C, D, M; nil = 1
 	Raw        *rawstore.Store // keeps the pages behind a parse failure; nil = off
+	// SuggestedDaily caps the new discovery candidates a day from suggested
+	// videos (the owner, 14 November); 0 = off.
+	SuggestedDaily int
 
 	recentTabs tabCache // tab parameters for RecentUploads
 }
@@ -378,6 +382,17 @@ func (s *Service) video(ctx context.Context, j queue.Job) (time.Time, error) {
 	age := time.Duration(0)
 	if !out.Published.IsZero() {
 		age = s.now().Sub(out.Published)
+	}
+	// A video's first full reading: its suggested videos' channels feed
+	// discovery (the owner, 14 November), from the page already read.
+	if lastChecked == nil && s.SuggestedDaily > 0 && len(res.Watch.Suggested) > 0 {
+		n, err := discovery.Suggested(ctx, s.Pool, s.Write.Match, res.Watch.Suggested, s.SuggestedDaily, s.now())
+		if err != nil {
+			return time.Time{}, err
+		}
+		if n > 0 && s.Log != nil {
+			s.Log.Debug("candidates from suggested videos", "video", j.EntityID, "new", n)
+		}
 	}
 	// The first reading moves the thumbnail queued at first sight up: a new
 	// video's at P1, a backfilled one's at P3, with the channel for the

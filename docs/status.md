@@ -8,7 +8,9 @@ The current state of the YouTube collector, for the owner and the master session
   quarantine rule: one block of any kind on 3 different UTC days within a week set an IP aside for good. The pilot ran across
   7, 8 and 9 November, so its 47 player blocks in about 393,000 requests took all 10 IPs. The exits themselves were fine.
   The master restarted the worker at 21:09Z on 10 November, which cleared it.
-- **Live by 13 November, 19:03 Iraq time (16:03Z): `8762275`** (platform PR 148), on the 10 IPs, with two overrides until
+- **Live since 14 November, 03:34 Iraq time (00:34Z): `f23914d`** (platform PR 158) on 40 exits, after `7b6c997` (the
+  player-length fill rate, PR 155). Before them: **`8762275` from 13 November, 19:03 Iraq time** (platform PR 148), on the
+  10 IPs, with two overrides until
   the new IPs come: `worker.workers=10` and `worker.mediaHold={thumb,author_avatar}`. So on 10 IPs it adds Facebook discovery
   (off until the collector's address and key exist), post images (spare time) and migrations 0020–0021. Listed channels'
   new or changed avatars and banners run at P2 (a few a day). The master's go-live check passed 8 of 9 lines; "media
@@ -34,6 +36,10 @@ The current state of the YouTube collector, for the owner and the master session
   until the master sets the address and the key's Secret (`scheduler.fbDiscovery`). No request to YouTube. Runbook §19.
 - **No new IPs for now** (the owner, 13 November: "for the time being keep running things and make sure its all smooth"):
   yts stays on its 10 IPs. When they come, the two overrides go; the rest is already deployed.
+- **The owner, 14 November: "add the suggested videos to the discovery as well".** Built: channels of suggested videos
+  whose titles match the Iraq keywords become discovery candidates, at most 500 a day. Runbook §20.
+- **40 exits:** the owner's new list, two logins per port; still with `worker.workers=10` and
+  `worker.mediaHold={thumb,author_avatar}` until the database shows 100 GB free.
 - **Community post images (fix 21) are built**, under the owner's "all platforms media" (the master's yes, 13 November).
   One request per image, in spare time like other images. Poll options and the linked video are still to do.
 - **Waiting:** from the master, ClickHouse bytes per yt event and PostgreSQL CPU and IOPS, to add analysis storage and
@@ -239,6 +245,10 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- Suggested videos in discovery (the owner, 14 November): the watch page's side list is parsed (no extra request); a
+  suggestion matching the Iraq keywords from an unknown channel becomes a candidate with the new source value `suggested`
+  (`candidates.sources`, no schema change), at most 500 a day (`worker.suggestedDaily`, `-suggested-daily`). New metric
+  `yt_discovery_suggested_24h`, new fill-rate field `watch.suggestions`.
 - The proxy list (14 November): plain `HOST:PORT:USER:PASS` lines are accepted, and an exit is its login and address, so
   two logins on one host and port are two exits (before, they were refused as duplicates and the worker would not start).
   Exit IDs (`px-…`, in metrics and `ytcollect proxies`) include the login now, so they changed once.

@@ -108,6 +108,9 @@ worker:
   # post_image):
   # their jobs stay queued and make no request until the kind is released.
   mediaHold: []
+  # Most new discovery candidates a day from suggested videos (the owner, 14
+  # November); 0: off. They come with the watch page yts already reads.
+  suggestedDaily: 500
   opsPort: 9101           # /metrics, /healthz, /readyz
   extraArgs: []
   goMemLimit: 850MiB

@@ -58,8 +58,25 @@ type FakeVideo struct {
 	LengthSec   int
 	Short       bool
 	Comments    []FakeComment
-	CommentsTxt string // displayed count, e.g. "12"
-	PublishDate string // player publishDate (RFC 3339); a fixed date when empty
+	CommentsTxt string           // displayed count, e.g. "12"
+	PublishDate string           // player publishDate (RFC 3339); a fixed date when empty
+	Suggested   []FakeSuggestion // the watch page's side list
+}
+
+// FakeSuggestion is a video in a watch page's side list.
+type FakeSuggestion struct {
+	VideoID, Title, ChannelID, ChannelName string
+}
+
+// suggestedLockup is a side-list video in the 2026 layout: the channel
+// avatar's link names the channel.
+func suggestedLockup(s FakeSuggestion) M {
+	return M{"lockupViewModel": M{"contentId": s.VideoID, "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+		"metadata": M{"lockupMetadataViewModel": M{"title": M{"content": s.Title},
+			"image": M{"decoratedAvatarViewModel": M{"rendererContext": M{"commandContext": M{"onTap": M{"innertubeCommand": M{
+				"browseEndpoint": M{"browseId": s.ChannelID}}}}}}},
+			"metadata": M{"contentMetadataViewModel": M{"metadataRows": A{M{"metadataParts": A{M{"text": M{"content": s.ChannelName}}}}}}},
+		}}}}
 }
 
 // FakeComment is a generated comment.
@@ -248,6 +265,10 @@ func shortAgo(s string) string {
 
 // Watch is the "next" response for a video.
 func Watch(c FakeChannel, v FakeVideo) M {
+	var side A
+	for _, s := range v.Suggested {
+		side = append(side, suggestedLockup(s))
+	}
 	return M{
 		"currentVideoEndpoint": M{"watchEndpoint": M{"videoId": v.ID}},
 		"contents": M{"twoColumnWatchNextResults": M{"results": M{"results": M{"contents": A{
@@ -259,7 +280,8 @@ func Watch(c FakeChannel, v FakeVideo) M {
 			M{"videoSecondaryInfoRenderer": M{"owner": M{"videoOwnerRenderer": M{"title": M{"runs": A{M{"text": c.Title}}}, "navigationEndpoint": M{"browseEndpoint": M{"browseId": c.ID}}}},
 				"attributedDescription": M{"content": "Description of " + v.Title}}},
 			M{"itemSectionRenderer": M{"sectionIdentifier": "comment-item-section", "contents": A{Token("COMMENTS_" + v.ID)}}},
-		}}}}},
+		}}},
+			"secondaryResults": M{"secondaryResults": M{"results": side}}}},
 		"engagementPanels": A{M{"engagementPanelSectionListRenderer": M{"panelIdentifier": "engagement-panel-comments-section",
 			"header": M{"engagementPanelTitleHeaderRenderer": M{"contextualInfo": M{"runs": A{M{"text": v.CommentsTxt}}}}}}}},
 	}

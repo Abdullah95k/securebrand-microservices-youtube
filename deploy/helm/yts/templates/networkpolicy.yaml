@@ -17,15 +17,23 @@ which then falls back to the values). */ -}}
 {{- end -}}
 {{- if not $svcPorts -}}{{- $svcPorts = $np.egress.managedServices.ports -}}{{- end -}}
 {{- /* The proxy ports, from the proxies secret at install time: the port of
-each line's URL (scheme://user:password@host:port …). Only ports are read. */ -}}
+each line's URL (scheme://user:password@host:port …), or the second field of a
+plain HOST:PORT:USER:PASS line. Only ports are read. */ -}}
 {{- $proxyPorts := list -}}
 {{- $px := lookup "v1" "Secret" .Release.Namespace .Values.secrets.proxies.name -}}
 {{- if and $px $px.data -}}
 {{- range $line := splitList "\n" (index $px.data .Values.secrets.proxies.key | default "" | b64dec) -}}
 {{- $l := trim $line -}}
 {{- if and $l (not (hasPrefix "#" $l)) -}}
-{{- $p := regexFind ":[0-9]+$" (first (splitList " " $l) | trimSuffix "/") | trimPrefix ":" -}}
-{{- if $p -}}{{- $proxyPorts = append $proxyPorts $p -}}{{- end -}}
+{{- $tok := first (splitList " " $l) | trimSuffix "/" -}}
+{{- $p := "" -}}
+{{- if contains "://" $tok -}}
+{{- $p = regexFind ":[0-9]+$" $tok | trimPrefix ":" -}}
+{{- else -}}
+{{- $parts := splitList ":" $tok -}}
+{{- if ge (len $parts) 2 -}}{{- $p = index $parts 1 -}}{{- end -}}
+{{- end -}}
+{{- if regexMatch "^[0-9]+$" $p -}}{{- $proxyPorts = append $proxyPorts $p -}}{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

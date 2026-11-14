@@ -131,7 +131,11 @@ func (p *Proxy) ScrubError(err error) string {
 //
 // country is the exit's ISO 3166-1 alpha-2 code (IQ, DE…), in either case.
 // or the word "direct" for the server's own IP. URL schemes http, https and
-// socks5 are supported. Errors give the line number but never the URL.
+// socks5 are supported; a provider's plain HOST:PORT:USER:PASS (or
+// HOST:PORT) is read as http://USER:PASS@HOST:PORT. An exit is its login and
+// address: two logins on one host and port are two exits (a provider gives
+// each login its own exit IP), and by default each is its own subnet group.
+// Errors give the line number but never the URL.
 func ParseList(lines []string) ([]*Proxy, error) {
 	var out []*Proxy
 	seen := map[string]int{}
@@ -176,7 +180,7 @@ func ParseList(lines []string) ([]*Proxy, error) {
 			p = &Proxy{kind: KindDirect, host: "", subnet: "direct"}
 			p.id = "direct"
 		} else {
-			u, err := url.Parse(fields[0])
+			u, err := url.Parse(plainToURL(fields[0]))
 			// Never wrap url.Parse errors: they contain the raw URL.
 			if err != nil || u.Host == "" {
 				return nil, fmt.Errorf("proxy line %d: invalid proxy URL", n)
@@ -190,8 +194,8 @@ func ParseList(lines []string) ([]*Proxy, error) {
 				return nil, fmt.Errorf("proxy line %d: proxy URL needs a port", n)
 			}
 			p = &Proxy{kind: kind, url: u, host: u.Host}
-			p.id = "px-" + shortHash(u.Host)
-			p.subnet = subnetLabel(u.Hostname(), u.Host)
+			p.id = "px-" + shortHash(exitKey(u))
+			p.subnet = subnetLabel(u.Hostname(), exitKey(u))
 		}
 		if subnetTag != "" {
 			p.subnet = "sn-" + shortHash("tag:"+subnetTag)
@@ -216,6 +220,31 @@ func ParseList(lines []string) ([]*Proxy, error) {
 // subnetLabel groups IPv4 addresses by /24 and IPv6 by /64. A proxy given by
 // hostname (for example a provider gateway where each port is a different
 // exit IP) is treated as its own subnet unless a subnet= tag says otherwise.
+// exitKey is what makes an exit: the login (if any) and host:port. Before
+// 14 November it was host:port alone, so two logins on one port collided.
+func exitKey(u *url.URL) string {
+	if u.User == nil || u.User.Username() == "" {
+		return u.Host
+	}
+	return u.User.Username() + "@" + u.Host
+}
+
+// plainToURL turns a provider's plain HOST:PORT:USER:PASS (or HOST:PORT)
+// into an http URL; anything else is returned as it is.
+func plainToURL(s string) string {
+	if strings.Contains(s, "://") || s == "direct" {
+		return s
+	}
+	parts := strings.SplitN(s, ":", 4)
+	switch len(parts) {
+	case 2:
+		return "http://" + parts[0] + ":" + parts[1]
+	case 4:
+		return "http://" + url.UserPassword(parts[2], parts[3]).String() + "@" + parts[0] + ":" + parts[1]
+	}
+	return s
+}
+
 func subnetLabel(hostname, hostport string) string {
 	if ip := net.ParseIP(hostname); ip != nil {
 		if v4 := ip.To4(); v4 != nil {

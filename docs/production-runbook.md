@@ -115,7 +115,9 @@ chmod 600 /etc/securebrand-youtube/database_url
 
 5. Add the proxies, one per line: `http://user:password@IP:PORT type=isp subnet=label country=XX`. `type` is `dc`, `isp` or `res`;
    `subnet` is optional (proxies with the same label rest together); `country` is the exit's two-letter ISO code (`IQ`, `DE`…), used
-   for the platform's `exit_country`:
+   for the platform's `exit_country`. A provider's plain `HOST:PORT:USER:PASS` line works too (read as http). An exit is its login
+   and address, so two logins on one host and port are two exits, each its own subnet group unless labelled. Since 14 November an
+   exit's ID includes its login, so the IDs of exits listed before changed once, and quarantines saved before then no longer apply:
 
 ```bash
 nano /etc/securebrand-youtube/proxies.txt

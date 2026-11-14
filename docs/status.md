@@ -239,6 +239,9 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- The proxy list (14 November): plain `HOST:PORT:USER:PASS` lines are accepted, and an exit is its login and address, so
+  two logins on one host and port are two exits (before, they were refused as duplicates and the worker would not start).
+  Exit IDs (`px-…`, in metrics and `ytcollect proxies`) include the login now, so they changed once.
 - Facebook discovery (D-065): migration `0021` adds the table `fb_candidates` (yts's own: the links sent and the
   collector's answers); the metric `yt_fb_candidates{result}`; the scheduler flags `-fb-url`, `-fb-key-file`, `-fb-daily`
   and the chart's `scheduler.fbDiscovery` and `networkPolicy.egress.fbDiscovery`.

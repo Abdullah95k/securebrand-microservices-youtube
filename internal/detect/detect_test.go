@@ -18,6 +18,7 @@ import (
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/kwstore"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/policy"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/proxypool"
+	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/queue"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/registry"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/worker"
 	"github.com/Abdullah95k/securebrand-microservices-youtube/internal/writer"
@@ -224,5 +225,40 @@ func TestFeedOutageReadsTabs(t *testing.T) {
 	}
 	if got := recent(); len(got) != 2 || feedsAfter != feedsBefore {
 		t.Errorf("breaker open: tabs read %d times, %d feed requests; want 2 and none", len(got), feedsAfter-feedsBefore)
+	}
+}
+
+// D-076: a mention channel's feed check reports how many of its latest
+// uploads relate to Iraq, for discovery to collect it in full at 10%; a core
+// channel's does not.
+func TestFeedReportsMentionShare(t *testing.T) {
+	yt, _, rss := Rig(t)
+	now := time.Now().Add(-10 * time.Minute)
+	yt.SetFeed(core, []fakeyt.FeedEntry{{VideoID: "fakeSc1", ChannelID: core, Title: "أخبار بغداد", Published: now}})
+	yt.SetFeed(mention, []fakeyt.FeedEntry{
+		{VideoID: "fakeSm1", ChannelID: mention, Title: "أخبار بغداد", Published: now},
+		{VideoID: "fakeSm2", ChannelID: mention, Title: "cooking show", Published: now},
+		{VideoID: "fakeSm3", ChannelID: mention, Title: "travel vlog", Published: now},
+	})
+	type report struct {
+		id              string
+		matching, total int
+	}
+	var mu sync.Mutex
+	var got []report
+	rss.MentionShare = func(_ context.Context, id string, matching, total int) error {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, report{id, matching, total})
+		return nil
+	}
+	h := rss.Handlers()[queue.KindRSS]
+	for _, id := range []string{core, mention} {
+		if _, err := h(context.Background(), queue.Job{Kind: queue.KindRSS, EntityID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(got) != 1 || got[0] != (report{mention, 1, 3}) {
+		t.Errorf("reports %+v; want only the mention channel's, 1 of 3", got)
 	}
 }

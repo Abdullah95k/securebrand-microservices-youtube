@@ -927,8 +927,33 @@ channels that we didnt discover in other ways".
 - **Where they come from:** the side list of the watch page yts already reads at each video's first full reading (core channels'
   videos, and mention channels' Iraq-relevant ones). No extra request.
 - **Which count:** a suggestion whose title matches the Iraq keywords, from a channel yts does not know yet. It becomes a
-  candidate with the source `suggested` and gets the usual candidate check (3 requests, P3), which lists it as Iraqi or
-  mention, or not at all, by the same rules as search finds. A suggestion of a candidate already waiting counts it again.
+  candidate with the source `suggested` and gets the usual candidate check (3 requests, P3), which lists it, or not, by the
+  same rules as search finds (§21). A suggestion of a candidate already waiting counts it again.
 - **The limit:** at most `worker.suggestedDaily` new candidates a day (UTC; 500, `-suggested-daily`; 0 turns it off).
 - **What to watch:** `yt_discovery_suggested_24h` (new candidates from suggestions in the last day) and the fill rate
   `watch.suggestions`, which falls if YouTube's side list stops matching the parser.
+
+## 21. Discovered channels: in full at 10%
+
+The owner, 14 November (D-076, option 2): "a foreign channel is collected in full once at least 10% of its recent videos relate
+to Iraq; below that it stays as now: its Iraq-related videos are still collected, but not its whole channel" (the same bar as
+Instagram's D-055).
+
+- **The check that admits a candidate is unchanged** (the country on its About panel is Iraq, its own page matches the
+  keywords, or any of its recent or found items match). Candidates still under check are not collected.
+- **An admitted channel is a core channel** when its country is Iraq, its own page matches, or **at least 10%** of its recent
+  uploads (the first page of its Videos tab) match; before D-076 that share was 30%. A core channel is tiered by size and
+  activity like a listed one (A from 1M subscribers, B from 100K, C below, D if nothing was uploaded in 180 days) and gets the
+  same jobs: channel page, feed and tab checks, posts, playlists, every video with its comments, and the full backfill.
+- **Below 10% it is a mention channel** (tier M), as before: its Iraq-related uploads are collected in full, the rest only
+  noted; no tab checks, no backfill.
+- **A mention channel moves to core once it reaches 10%.** Each feed check counts how many of the feed's latest uploads (about
+  15) relate to Iraq (title or description match the keywords, the same test that decides whether its upload is collected).
+  At 10% or more, a mention channel discovery admitted becomes core, with its tier, tab checks and backfill (P3); the worker's
+  log says "discovered mention channel made core (D-076)". The feed is read anyway (daily for tier M), so this costs no
+  request. Feeds are checked again when they change, and once after each worker restart. Mention channels the owner listed
+  (`ytcollect channels import -kind mention`), and any whose kind or tier was set by hand (`ytcollect channels set`), never
+  move.
+- **What it costs:** each moved channel is collected in full with its history, and a large one is tier A or B, which the
+  stretch never slows. Watch `yt_capacity_*` and `yt_freshness_debt_hours` after the change; `ytcollect health` lists
+  channels by tier.

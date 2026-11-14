@@ -7,8 +7,11 @@ metadata:
     {{- include "yts.labels" . | nindent 4 }}
     app.kubernetes.io/component: scheduler
 spec:
-  # One scheduler: no leader election yet (fix 15).
-  replicas: 1
+  # One scheduler: no leader election yet (fix 15). 0 pauses it.
+  {{- if not (has (int .Values.scheduler.replicas) (list 0 1)) }}
+  {{- fail "scheduler.replicas must be 0 (paused) or 1: there is no leader election" }}
+  {{- end }}
+  replicas: {{ int .Values.scheduler.replicas }}
   strategy:
     type: Recreate
   selector:
@@ -42,6 +45,9 @@ spec:
             - -fb-key-file=/etc/yts-fb-discovery/key
             - -fb-daily={{ .dailyLimit }}
             {{- end }}
+            {{- end }}
+            {{- with .Values.scheduler.pauseTasks }}
+            - {{ printf "-pause-tasks=%s" (join "," .) | quote }}
             {{- end }}
             {{- range .Values.scheduler.extraArgs }}
             - {{ . | quote }}

@@ -128,6 +128,18 @@ worker:
 # webhooks. One replica (no leader election yet, fix 15).
 scheduler:
   opsPort: 9102
+  # Incident switches; neither deletes anything (runbook §7).
+  # replicas: 0 pauses the whole scheduler. Collection goes on; the yt_*
+  # database metrics (MonitorStale fires), the capacity plan, outbox
+  # pruning, outgoing webhooks (they queue) and the hourly re-arm wait.
+  # 1 runs it; never more (no leader election).
+  replicas: 1
+  # Scheduler tasks not to run for now, by name, for example
+  # ["commenter graph", "privacy audit", "enrichment order", "tiers"].
+  # They run again as usual once removed. An unknown name stops the
+  # scheduler from starting (its log names the tasks), so a typo can't
+  # leave a heavy task running.
+  pauseTasks: []
   # Refresh tiers C, D and M at least this many times less often (1 to 8).
   # 1: only as much as the capacity planner needs to fit the IPs. New-upload
   # detection and tiers A and B are never slowed. Runbook §7.

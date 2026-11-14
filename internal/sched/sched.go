@@ -10,6 +10,7 @@ package sched
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -31,7 +32,8 @@ type Task struct {
 	Every time.Duration
 	Run   func() error
 
-	last time.Time
+	last   time.Time
+	paused bool
 }
 
 // Last is when the task last started (zero: not yet).
@@ -57,6 +59,40 @@ func (r *Runner) log() *slog.Logger {
 		return r.Log
 	}
 	return slog.New(slog.DiscardHandler)
+}
+
+// Pause stops the named tasks from running (the chart's
+// scheduler.pauseTasks, for an incident): they are skipped, not counted,
+// and run again as usual once no longer paused. A name that is no task is
+// refused, so a typo can't leave a heavy task running.
+func (r *Runner) Pause(names []string) error {
+	byName := map[string]*Task{}
+	for _, t := range r.Tasks {
+		byName[t.Name] = t
+	}
+	for _, n := range names {
+		t, ok := byName[n]
+		if !ok {
+			known := make([]string, 0, len(r.Tasks))
+			for _, t := range r.Tasks {
+				known = append(known, fmt.Sprintf("%q", t.Name))
+			}
+			return fmt.Errorf("no scheduler task %q to pause; the tasks are %s", n, strings.Join(known, ", "))
+		}
+		t.paused = true
+	}
+	return nil
+}
+
+// Paused names the paused tasks, in order.
+func (r *Runner) Paused() []string {
+	var out []string
+	for _, t := range r.Tasks {
+		if t.paused {
+			out = append(out, t.Name)
+		}
+	}
+	return out
 }
 
 // Load reads the last runs an earlier scheduler saved. A time later than
@@ -100,7 +136,7 @@ func (r *Runner) Tick(ctx context.Context) {
 	now := r.now()
 	var due []*Task
 	for _, t := range r.Tasks {
-		if now.Sub(t.last) >= t.Every {
+		if !t.paused && now.Sub(t.last) >= t.Every {
 			due = append(due, t)
 		}
 	}

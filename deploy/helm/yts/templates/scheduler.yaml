@@ -39,6 +39,7 @@ spec:
             - scheduler
             - -metrics-addr=:{{ .Values.scheduler.opsPort }}
             - -min-stretch={{ .Values.scheduler.minStretch }}
+            - -outbox-keep={{ required "scheduler.outboxKeep is required (168h: the owner's 7 days)" .Values.scheduler.outboxKeep }}
             {{- with .Values.scheduler.fbDiscovery }}
             {{- if .enabled }}
             - -fb-url={{ required "scheduler.fbDiscovery.url is required when fbDiscovery is enabled" .url }}

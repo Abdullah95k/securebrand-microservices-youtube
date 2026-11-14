@@ -55,11 +55,11 @@ The current state of the YouTube collector, for the owner and the master session
   - `3ce6d20` (PR 106) adds incident switches: `scheduler.pauseTasks` and `scheduler.replicas: 0` (runbook §7). It also
     makes the commenter graph write only changed pairs. The master is deploying it with the commenter graph, privacy
     audit and enrichment order paused until PostgreSQL is stable.
-- **The owner's rule of 14 November (D-076): "discovered pages should be treated in the same way"** as listed channels.
-  Built: an admitted channel is now always core, tiered by size and activity, with tab checks and the full backfill
-  (before, one with only a few matching items became a mention channel: no tab checks, no backfill, only Iraq-relevant
-  items in full). Earlier ones move by an hourly task. A large channel that mentioned Iraq once is now collected in
-  full, in tier A or B; runbook §21.
+- **The owner's rule of 14 November (D-076), option 2:** "a foreign channel is collected in full once at least 10% of its
+  recent videos relate to Iraq; below that it stays as now: its Iraq-related videos are still collected, but not its whole
+  channel". Built (PR 109): admitted channels are core at 10% (was 30%); mention channels discovery admitted move to core
+  when their feed reaches 10%, at no extra request. On 14 November there were 1,631 mention channels from discovery and
+  1,267 core channels (307 listed by the owner, 960 by discovery). Runbook §21.
 - **For the owner (not urgent): how long sent events stay in the outbox.** The outbox is yts's biggest table, 4.6 GB
   of yts's 6.8 GB on 14 November. It holds events the relay has already sent to Kafka (nothing is waiting): the owner
   set 7 days for them on 7 November, and the relay has run since then, so it levels off from 14 November at 7 days'
@@ -276,11 +276,10 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
-- Discovered channels (the owner, D-076, 14 November): every channel discovery admits is a core channel now, tiered by
-  size and activity like a listed one, with tab checks and the full backfill; none becomes a mention channel any more.
-  Mention channels discovery admitted before are moved to core by a new hourly scheduler task, "discovered channels as
-  core". The values of `channels.kind` and `channels.tier` are unchanged; only which value a discovered channel gets.
-  Runbook §21.
+- Discovered channels (the owner, D-076 option 2, 14 November): a non-Iraqi channel discovery admits is a core channel
+  once at least 10% of its recent uploads match (it was 30%); below that it stays a mention channel. A mention channel
+  discovery admitted moves to core when its feed shows 10% or more of its latest uploads matching. The values of
+  `channels.kind` and `channels.tier` are unchanged; only which value a discovered channel gets. Runbook §21.
 - The outbox keep (14 November): chart value `scheduler.outboxKeep` and scheduler flag `-outbox-keep` (default 168h,
   unchanged: the owner's 7 days). Runbook §16.
 - Incident switches for the scheduler (14 November, the master's ask during the database restarts): chart values

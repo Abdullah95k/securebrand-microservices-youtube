@@ -407,15 +407,6 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			_, err := enrich.Prioritise(ctx, pool)
 			return err
 		}},
-		{Name: "discovered channels as core", Every: time.Hour, Run: func() error {
-			// D-076: discovered channels are treated as listed ones; this
-			// moves those admitted as mention channels before it.
-			n, err := discovery.DiscoveredAsCore(ctx, pool, time.Now())
-			if n > 0 {
-				log.Info("discovered mention channels made core (D-076)", "channels", n)
-			}
-			return err
-		}},
 		{Name: "tiers", Every: 7 * 24 * time.Hour, Run: func() error {
 			n, err := discovery.RecomputeTiers(ctx, pool, time.Now())
 			if n > 0 {

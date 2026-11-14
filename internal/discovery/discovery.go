@@ -435,76 +435,64 @@ func Classify(country string, ownPageMatches bool, recentTitles []string, hitTit
 		return d
 	}
 	d.List = true
-	share := 0.0
-	if len(recentTitles) > 0 {
-		share = float64(recentMatching) / float64(len(recentTitles))
-	}
-	// Every admitted channel is a core channel, tiered by size and activity
-	// like a channel the owner lists (the owner, D-076, 14 November:
-	// "discovered pages should be treated in the same way"). Before, a
-	// channel with only a few matching items became a mention channel (tier
-	// M, no tab checks, no backfill, only relevant items in full).
-	d.Kind = registry.Core
 	switch {
 	case iraq:
-		d.Why = "country is Iraq"
-	case share >= 0.3:
-		d.Why = fmt.Sprintf("%d%% of recent items match", int(share*100))
+		d.Kind, d.Why = registry.Core, "country is Iraq"
+	case len(recentTitles) > 0 && recentMatching*100 >= CoreSharePct*len(recentTitles):
+		d.Kind, d.Why = registry.Core, fmt.Sprintf("%d%% of recent items match", recentMatching*100/len(recentTitles))
 	case ownPageMatches:
-		d.Why = "the channel's own page matches the keywords"
+		d.Kind, d.Why = registry.Core, "the channel's own page matches the keywords"
 	default:
-		d.Why = fmt.Sprintf("%d matching item(s)", d.Matching)
+		d.Kind, d.Why = registry.Mention, fmt.Sprintf("%d matching item(s)", d.Matching)
 	}
-	d.Tier = TierFor(subscribers, newestUpload, now)
+	if d.Kind == registry.Mention {
+		d.Tier = policy.M
+	} else {
+		d.Tier = TierFor(subscribers, newestUpload, now)
+	}
 	return d
 }
 
-// DiscoveredAsCore makes every channel discovery admitted as a mention
-// channel a core channel (D-076): it gets the core jobs, its full backfill
-// and tab checks among them, and its tier by size and activity, as a
-// listed channel does. Mention channels the owner listed, and any whose
-// kind or tier was set by hand, stay as they are. It returns how many it
-// changed; the scheduler runs it hourly, so there is nothing to do once
-// the channels admitted before D-076 have moved.
-func DiscoveredAsCore(ctx context.Context, q db.Querier, now time.Time) (int, error) {
-	rows, err := q.Query(ctx, `SELECT c.id, COALESCE(c.subscribers_min, 0), max(v.published_at)
+// CoreSharePct is the share of a non-Iraqi channel's recent items, in
+// percent, that must relate to Iraq for discovery to collect the channel in
+// full as a core channel (the owner, D-076, 14 November, option 2: "a
+// foreign channel is collected in full once at least 10% of its recent
+// videos relate to Iraq; below that it stays as now: its Iraq-related videos
+// are still collected, but not its whole channel"; the same bar as
+// Instagram's D-055). It was 30% before.
+const CoreSharePct = 10
+
+// MentionToCore makes a mention channel that discovery admitted a core
+// channel once at least CoreSharePct of its recent items relate to Iraq
+// (D-076): its feed check calls it with the feed's latest uploads and how
+// many of them match, so a channel moves as soon as enough of its uploads
+// do. It gets the core jobs, tab checks and its full backfill among them,
+// and its tier by size and activity, as a listed channel does. Mention
+// channels the owner listed, and any whose kind or tier was set by hand,
+// stay as they are. It reports whether the channel moved.
+func MentionToCore(ctx context.Context, q db.Querier, channelID string, matching, total int, now time.Time) (bool, error) {
+	if total == 0 || matching*100 < CoreSharePct*total {
+		return false, nil
+	}
+	var subs int64
+	var newest *time.Time
+	err := q.QueryRow(ctx, `SELECT COALESCE(c.subscribers_min, 0), max(v.published_at)
 		FROM channels c LEFT JOIN videos v ON v.channel_id = c.id
-		WHERE c.status = 'listed' AND c.kind = 'mention' AND c.added_by = 'discovery' AND NOT c.tier_manual
-		GROUP BY c.id ORDER BY c.id`)
+		WHERE c.id = $1 AND c.status = 'listed' AND c.kind = 'mention' AND c.added_by = 'discovery' AND NOT c.tier_manual
+		GROUP BY c.id`, channelID).Scan(&subs, &newest)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
-		return 0, err
+		return false, err
 	}
-	type row struct {
-		id     string
-		subs   int64
-		newest *time.Time
+	var last time.Time
+	if newest != nil {
+		last = *newest
 	}
-	var all []row
-	for rows.Next() {
-		var x row
-		if err := rows.Scan(&x.id, &x.subs, &x.newest); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		all = append(all, x)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	moved := 0
-	for _, x := range all {
-		var newest time.Time
-		if x.newest != nil {
-			newest = *x.newest
-		}
-		if err := registry.List(ctx, q, nil, x.id, registry.Input{Input: x.id, Kind: registry.Core,
-			Tier: TierFor(x.subs, newest, now), AddedBy: "discovery"}); err != nil {
-			return moved, err
-		}
-		moved++
-	}
-	return moved, nil
+	err = registry.List(ctx, q, nil, channelID, registry.Input{Input: channelID, Kind: registry.Core,
+		Tier: TierFor(subs, last, now), AddedBy: "discovery"})
+	return err == nil, err
 }
 
 // TierFor assigns a core channel's tier by size and activity (plan §6.1):

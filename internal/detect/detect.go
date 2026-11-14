@@ -38,7 +38,12 @@ type RSS struct {
 	// (collect.Service.RecentUploads). It replaces the feed while the feed
 	// service answers "not found"; nil: wait for the feed to come back.
 	Recent func(ctx context.Context, channelID string) (int, error)
-	once   sync.Once
+	// MentionShare gets a mention channel's latest feed uploads: how many
+	// there were and how many relate to Iraq (title or description match the
+	// keywords). The worker passes discovery.MentionToCore (D-076); nil:
+	// nothing.
+	MentionShare func(ctx context.Context, channelID string, matching, total int) error
+	once         sync.Once
 }
 
 func (r *RSS) now() time.Time {
@@ -98,7 +103,7 @@ func (r *RSS) feed(ctx context.Context, j queue.Job) (time.Time, error) {
 		return time.Time{}, err
 	}
 	br.Record(r.now(), true)
-	newCount := 0
+	newCount, total, matching := 0, 0, 0
 	for _, e := range res.Feed.Entries {
 		if e.VideoID == "" {
 			continue
@@ -109,6 +114,19 @@ func (r *RSS) feed(ctx context.Context, j queue.Job) (time.Time, error) {
 		}
 		if isNew {
 			newCount++
+		}
+		if kind == registry.Mention {
+			total++
+			if ok, _ := r.Write.Match(e.Title, e.Description); ok {
+				matching++
+			}
+		}
+	}
+	// A mention channel's latest uploads: once enough relate to Iraq, a
+	// channel discovery admitted is collected in full (D-076).
+	if kind == registry.Mention && r.MentionShare != nil {
+		if err := r.MentionShare(ctx, j.EntityID, matching, total); err != nil {
+			return time.Time{}, err
 		}
 	}
 	if newCount > 0 && r.Log != nil {

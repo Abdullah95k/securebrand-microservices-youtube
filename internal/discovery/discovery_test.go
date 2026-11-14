@@ -162,11 +162,11 @@ func TestSearchFindsCandidatesAndListsThem(t *testing.T) {
 	if n := count(t, pool, `SELECT count(*) FROM channels WHERE id = $1 AND kind = 'core' AND tier = 'B' AND added_by = 'discovery'`, chCore); n != 1 {
 		t.Error("the Iraq channel is core, tier B by its 250K subscribers")
 	}
-	// D-076: discovered channels are treated as listed ones, so even the
-	// channel with one Basra video in five is core, tiered by its size, with
-	// its backfill and tab checks.
+	// D-076: one Basra video in five is 20%, over the 10% bar, so the
+	// channel is core, tiered by its size, with its backfill and tab checks
+	// (at the old 30% bar it was a mention channel).
 	if n := count(t, pool, `SELECT count(*) FROM channels WHERE id = $1 AND kind = 'core' AND tier <> 'M' AND added_by = 'discovery'`, chMent); n != 1 {
-		t.Error("the channel with one Basra video in five is a core channel (D-076)")
+		t.Error("the channel with one Basra video in five (20%) is a core channel (D-076)")
 	}
 	for _, k := range []string{queue.KindBackfill, queue.KindTabs} {
 		if n := count(t, pool, `SELECT count(*) FROM schedule WHERE kind = $1 AND entity_id = $2`, k, chMent); n != 1 {

@@ -933,20 +933,27 @@ channels that we didnt discover in other ways".
 - **What to watch:** `yt_discovery_suggested_24h` (new candidates from suggestions in the last day) and the fill rate
   `watch.suggestions`, which falls if YouTube's side list stops matching the parser.
 
-## 21. Discovered channels are treated as listed ones
+## 21. Discovered channels: in full at 10%
 
-The owner, 14 November (D-076): "discovered pages should be treated in the same way" as the channels the owner lists.
+The owner, 14 November (D-076, option 2): "a foreign channel is collected in full once at least 10% of its recent videos relate
+to Iraq; below that it stays as now: its Iraq-related videos are still collected, but not its whole channel" (the same bar as
+Instagram's D-055).
 
-- **The check is unchanged.** A candidate is admitted when the country on its About panel is Iraq, or its own page matches the
-  keywords, or any of its recent or found items match. Candidates still under check are not collected.
-- **An admitted channel is a core channel,** tiered by size and activity like a listed one: A from 1M subscribers, B from 100K,
-  C below, D if nothing was uploaded in 180 days (the weekly "tiers" task moves both kinds alike). It gets the same jobs: the
-  channel page, feed and tab checks, posts, playlists, every video with its comments, and the full backfill. Before D-076, a
-  channel with only a few matching items became a mention channel (tier M: no tab checks, no backfill, only its Iraq-relevant
-  items in full).
-- **Channels admitted before D-076** as mention channels move to core by the scheduler's hourly task "discovered channels as
-  core" (its log: "discovered mention channels made core"), each with its tier and its backfill queued at P3. Mention channels
-  the owner listed (`ytcollect channels import -kind mention`), and any whose kind or tier was set by hand
-  (`ytcollect channels set`), stay as they are.
-- **What it costs:** a large channel that mentioned Iraq once is now collected in full, in tier A or B (which the stretch never
-  slows). Watch `yt_capacity_*` and `yt_freshness_debt_hours` after the change; `ytcollect health` lists channels by tier.
+- **The check that admits a candidate is unchanged** (the country on its About panel is Iraq, its own page matches the
+  keywords, or any of its recent or found items match). Candidates still under check are not collected.
+- **An admitted channel is a core channel** when its country is Iraq, its own page matches, or **at least 10%** of its recent
+  uploads (the first page of its Videos tab) match; before D-076 that share was 30%. A core channel is tiered by size and
+  activity like a listed one (A from 1M subscribers, B from 100K, C below, D if nothing was uploaded in 180 days) and gets the
+  same jobs: channel page, feed and tab checks, posts, playlists, every video with its comments, and the full backfill.
+- **Below 10% it is a mention channel** (tier M), as before: its Iraq-related uploads are collected in full, the rest only
+  noted; no tab checks, no backfill.
+- **A mention channel moves to core once it reaches 10%.** Each feed check counts how many of the feed's latest uploads (about
+  15) relate to Iraq (title or description match the keywords, the same test that decides whether its upload is collected).
+  At 10% or more, a mention channel discovery admitted becomes core, with its tier, tab checks and backfill (P3); the worker's
+  log says "discovered mention channel made core (D-076)". The feed is read anyway (daily for tier M), so this costs no
+  request. Feeds are checked again when they change, and once after each worker restart. Mention channels the owner listed
+  (`ytcollect channels import -kind mention`), and any whose kind or tier was set by hand (`ytcollect channels set`), never
+  move.
+- **What it costs:** each moved channel is collected in full with its history, and a large one is tier A or B, which the
+  stretch never slows. Watch `yt_capacity_*` and `yt_freshness_debt_hours` after the change; `ytcollect health` lists
+  channels by tier.

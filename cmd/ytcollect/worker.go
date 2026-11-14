@@ -151,7 +151,16 @@ func workerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args [
 		Window: time.Duration(*backfillDays) * 24 * time.Hour, Raw: raw, SuggestedDaily: *suggestedDaily}
 	handlers := svc.Handlers()
 	rss := &detect.RSS{Pool: pool, Feeds: feeds.NewFetcher(fetch.Client), Write: wr, Log: log,
-		Recent: svc.RecentUploads}
+		Recent: svc.RecentUploads,
+		// D-076: a mention channel discovery admitted is collected in full
+		// once 10% of its latest uploads relate to Iraq.
+		MentionShare: func(ctx context.Context, channelID string, matching, total int) error {
+			moved, err := discovery.MentionToCore(ctx, pool, channelID, matching, total, time.Now())
+			if moved {
+				log.Info("discovered mention channel made core (D-076)", "channel", channelID, "matching", matching, "of", total)
+			}
+			return err
+		}}
 	for k, h := range rss.Handlers() {
 		handlers[k] = h
 	}

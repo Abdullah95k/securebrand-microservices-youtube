@@ -132,7 +132,7 @@ func (p *Proxy) ScrubError(err error) string {
 // country is the exit's ISO 3166-1 alpha-2 code (IQ, DE…), in either case.
 // or the word "direct" for the server's own IP. URL schemes http, https and
 // socks5 are supported; a provider's plain HOST:PORT:USER:PASS (or
-// HOST:PORT) is read as http://USER:PASS@HOST:PORT. An exit is its login and
+// HOST:PORT) is read as http://USER:PASSWORD@HOST:PORT. An exit is its login and
 // address: two logins on one host and port are two exits (a provider gives
 // each login its own exit IP), and by default each is its own subnet group.
 // Errors give the line number but never the URL.

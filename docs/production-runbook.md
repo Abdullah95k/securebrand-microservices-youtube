@@ -378,6 +378,28 @@ once, the one with the shortest period goes first. The metrics, every minute, ru
 short is run again by the next scheduler. Before 14 November every restart re-ran them all, the hourly plan last, so two
 deploys an hour apart could leave the plan hours old.
 
+**Pausing the scheduler in an incident** (14 November, for a database under strain). Two chart values; neither deletes anything,
+and collection goes on:
+
+```yaml
+scheduler:
+  pauseTasks: ["commenter graph", "privacy audit", "enrichment order", "tiers"]
+```
+
+skips those tasks until they are removed from the list; then they run as usual (a paused task's last run is not changed). The
+heaviest on the database are the commenter graph (rewrites the whole commenter-to-channel table in one transaction) and the
+privacy audit (reads every ID of every table). The names are those in the scheduler's log ("scheduler task failed" lines); an
+unknown name stops the scheduler from starting, and its log lists the right ones.
+
+```yaml
+scheduler:
+  replicas: 0
+```
+
+pauses the whole scheduler. The worker keeps collecting. What waits: the `yt_*` database metrics (MonitorStale fires), the
+capacity plan, outbox pruning, outgoing webhooks (they queue) and the hourly re-arm of jobs. Set it back to 1 to resume; never
+more than 1.
+
 **The order of the queue** (the owner, D-052, 11 November). Workers take due jobs by priority. Within a priority, tier A's jobs
 go first, then tier B's, then the rest (tiers C, D and M, and jobs of no listed channel). Within a tier, the oldest due job
 goes first.

@@ -186,19 +186,27 @@ jobs:
             --set relay.enabled=true --set relay.canary=true \
             --set scheduler.fbDiscovery.enabled=true --set scheduler.fbDiscovery.url=https://fbs.invalid \
             --set scheduler.fbDiscovery.secret.name=fbs-discovery-key \
-            --set networkPolicy.egress.fbDiscovery.enabled=true --set networkPolicy.egress.fbDiscovery.podLabels.app=fbs-api > out/everything.yaml
+            --set networkPolicy.egress.fbDiscovery.enabled=true --set networkPolicy.egress.fbDiscovery.podLabels.app=fbs-api \
+            --set 'scheduler.pauseTasks={commenter graph,privacy audit}' > out/everything.yaml
+          helm template yts deploy/helm/yts -n yts --set image.repository=registry.invalid/yts --set scheduler.replicas=0 > out/scheduler-paused.yaml
           # The relay: off in the production values (the pilot has no Kafka), there when switched on.
           if grep -q 'name: yts-relay$' out/production.yaml; then echo "the relay must be off in values-production.yaml"; exit 1; fi
           grep -q 'name: yts-relay$' out/everything.yaml || { echo "relay.enabled=true rendered no relay"; exit 1; }
           # Facebook discovery (D-065): off unless switched on; then the scheduler has its address and key file.
           if grep -q -- '-fb-url=' out/production.yaml; then echo "facebook discovery must be off in values-production.yaml"; exit 1; fi
           grep -q -- '-fb-url=https://fbs.invalid' out/everything.yaml || { echo "fbDiscovery.enabled=true gave the scheduler no -fb-url"; exit 1; }
+          # The incident switches: off in production; a paused task list reaches the scheduler; replicas 0 pauses it.
+          if grep -q -- '-pause-tasks=' out/production.yaml; then echo "no scheduler task may be paused in values-production.yaml"; exit 1; fi
+          grep -q -- '"-pause-tasks=commenter graph,privacy audit"' out/everything.yaml || { echo "scheduler.pauseTasks did not reach the scheduler"; exit 1; }
+          grep -A12 'name: yts-scheduler$' out/scheduler-paused.yaml | grep -q 'replicas: 0' || { echo "scheduler.replicas=0 did not pause the scheduler"; exit 1; }
+          grep -A12 'name: yts-scheduler$' out/production.yaml | grep -q 'replicas: 1' || { echo "the scheduler must run in production"; exit 1; }
           # Every pod in production names the registry's pull secret (the cluster adds it only to the default account).
           test "$(grep -c 'imagePullSecrets:' out/production.yaml)" -ge 2 || { echo "production pods must name imagePullSecrets"; exit 1; }
       - name: the chart refuses unsafe or incomplete values
         run: |
           refuses() { if helm template yts deploy/helm/yts "$@" >/dev/null 2>&1; then echo "rendered, but must refuse: $*"; exit 1; fi; }
           refuses --set image.repository=registry.invalid/yts --set worker.replicas=2
+          refuses --set image.repository=registry.invalid/yts --set scheduler.replicas=2
           refuses --set image.repository=registry.invalid/yts --set storage.raw.enabled=true --set storage.raw.fromPlatformCredentials=false
           refuses --set image.repository=registry.invalid/yts --set websub.enabled=true
           refuses --set image.repository=registry.invalid/yts --set scheduler.fbDiscovery.enabled=true --set scheduler.fbDiscovery.secret.name=k

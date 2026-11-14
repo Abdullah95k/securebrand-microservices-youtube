@@ -237,6 +237,7 @@ func switchCmd(ctx context.Context, pool *pgxpool.Pool, out io.Writer, args []st
 func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("scheduler", flag.ContinueOnError)
 	metricsAddr := fs.String("metrics-addr", ":9102", "the ops port: /metrics, /healthz and /readyz (empty: off)")
+	pauseTasks := fs.String("pause-tasks", "", "scheduler tasks not to run for now, comma-separated by name (for an incident; nothing is deleted)")
 	minStretch := fs.Float64("min-stretch", 1, "refresh tiers C, D and M at least this many times less often (1: only as the capacity planner needs; at most 8)")
 	fbURL := fs.String("fb-url", "", "the Facebook collector's API address: send it the Facebook links of listed channels (D-065; empty: off)")
 	fbKeyFile := fs.String("fb-key-file", "/etc/yts-fb-discovery/key", "the file holding the Facebook collector's API key (with -fb-url)")
@@ -409,7 +410,25 @@ func schedulerCmd(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, arg
 			return err
 		}},
 	}
+	runner := &sched.Runner{Q: pool, Log: log, Tasks: tasks}
+	if err := runner.Pause(splitList(*pauseTasks)); err != nil {
+		return fmt.Errorf("scheduler: -pause-tasks: %w", err)
+	}
+	if p := runner.Paused(); len(p) > 0 {
+		log.Warn("scheduler tasks paused", "tasks", strings.Join(p, ", "))
+	}
 	log.Info("scheduler running")
-	(&sched.Runner{Q: pool, Log: log, Tasks: tasks}).Run(ctx)
+	runner.Run(ctx)
 	return nil
+}
+
+// splitList splits a comma-separated flag into its trimmed, non-empty parts.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

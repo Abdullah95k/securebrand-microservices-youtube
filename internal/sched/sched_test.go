@@ -114,3 +114,47 @@ func TestShutdownAndFutureTimes(t *testing.T) {
 		t.Errorf("an interrupted run is not saved: %v %v", ok, err)
 	}
 }
+
+// Paused tasks are skipped and not counted; a name that is no task is
+// refused, so a typo can't leave a heavy task running.
+func TestPause(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 14, 3, 0, 0, 0, time.UTC)
+	var ran []string
+	task := func(name string, every time.Duration) *sched.Task {
+		return &sched.Task{Name: name, Every: every, Run: func() error { ran = append(ran, name); return nil }}
+	}
+	r := &sched.Runner{Q: pool, Now: func() time.Time { return now }, Tasks: []*sched.Task{
+		task("metrics", time.Minute), task("capacity", time.Hour), task("commenter graph", 24*time.Hour), task("privacy audit", 24*time.Hour),
+	}}
+	if err := r.Pause([]string{"commenter graph", "privacy audit"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Paused(); !slices.Equal(got, []string{"commenter graph", "privacy audit"}) {
+		t.Errorf("Paused = %q", got)
+	}
+	r.Tick(ctx)
+	if want := []string{"metrics", "capacity"}; !slices.Equal(ran, want) {
+		t.Fatalf("ran %q, want %q", ran, want)
+	}
+	var saved time.Time
+	if ok, err := db.GetSetting(ctx, pool, sched.KeyPrefix+"commenter graph", &saved); err != nil || ok {
+		t.Errorf("a paused task is not counted: %v %v", ok, err)
+	}
+
+	// Unpaused (the next scheduler, without the list): it runs when due.
+	ran = nil
+	r2 := &sched.Runner{Q: pool, Now: func() time.Time { return now }, Tasks: []*sched.Task{task("commenter graph", 24*time.Hour)}}
+	if err := r2.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r2.Tick(ctx)
+	if want := []string{"commenter graph"}; !slices.Equal(ran, want) {
+		t.Fatalf("after unpausing ran %q, want %q", ran, want)
+	}
+
+	if err := r.Pause([]string{"comenter graph"}); err == nil {
+		t.Error("an unknown task name is refused")
+	}
+}

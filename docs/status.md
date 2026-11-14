@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **13 November 2026, evening (Iraq time)**.
+The current state of the YouTube collector, for the owner and the master session. Updated **14 November 2026, 05:20 Iraq time** (02:20Z).
 
 ## Where it stands
 
@@ -8,8 +8,9 @@ The current state of the YouTube collector, for the owner and the master session
   quarantine rule: one block of any kind on 3 different UTC days within a week set an IP aside for good. The pilot ran across
   7, 8 and 9 November, so its 47 player blocks in about 393,000 requests took all 10 IPs. The exits themselves were fine.
   The master restarted the worker at 21:09Z on 10 November, which cleared it.
-- **Live since 14 November, 03:34 Iraq time (00:34Z): `f23914d`** (platform PR 158) on 40 exits, after `7b6c997` (the
-  player-length fill rate, PR 155). Before them: **`8762275` from 13 November, 19:03 Iraq time** (platform PR 148), on the
+- **Live since 14 November, 04:56 Iraq time (01:56Z): `cb85201`** (platform PR 164, suggested videos in discovery), on
+  40 exits. Before it: `f23914d` from 03:34 Iraq time (00:34Z, platform PR 158), the first on 40 exits, after `7b6c997`
+  (the player-length fill rate, PR 155). Before them: **`8762275` from 13 November, 19:03 Iraq time** (platform PR 148), on the
   10 IPs, with two overrides until
   the new IPs come: `worker.workers=10` and `worker.mediaHold={thumb,author_avatar}`. So on 10 IPs it adds Facebook discovery
   (off until the collector's address and key exist), post images (spare time) and migrations 0020–0021. Listed channels'
@@ -34,8 +35,16 @@ The current state of the YouTube collector, for the owner and the master session
 - **The owner's decision of 13 November (D-065): "activate Facebook discovery".** Built: the scheduler sends the Facebook
   links on listed channels' About panels and descriptions to the Facebook collector, each once, at most 200 a day; off
   until the master sets the address and the key's Secret (`scheduler.fbDiscovery`). No request to YouTube. Runbook §19.
-- **No new IPs for now** (the owner, 13 November: "for the time being keep running things and make sure its all smooth"):
-  yts stays on its 10 IPs. When they come, the two overrides go; the rest is already deployed.
+- **40 exits since 14 November, 03:34 Iraq time.** On 13 November the owner said "for the time being keep running things
+  and make sure its all smooth"; on 14 November the proxy list was replaced with 40 exits (`yt_proxies_total` 40). The
+  two overrides (`worker.workers=10`, `worker.mediaHold={thumb,author_avatar}`) stay until PostgreSQL has at least
+  100 GB free; they go together.
+- **Open: the capacity plan still counts 10 exits** (supply 9,333 an hour, stretch 8, at 02:05Z). The gauges show the
+  newest saved plan. The likely cause is that the scheduler runs its daily tasks first after each restart (00:34Z,
+  01:56Z), which delays the hourly plan. A failing plan run is the other possibility. Asked the master for the plan rows,
+  the workers' announcements and the scheduler log. Proposed: keep each scheduler task's last run across restarts, and
+  alert when the newest plan is over 2 hours old. Meanwhile the stretch stays at 8, which is safe: tiers C, D and M are
+  only refreshed less often.
 - **The owner, 14 November: "add the suggested videos to the discovery as well".** Built: channels of suggested videos
   whose titles match the Iraq keywords become discovery candidates, at most 500 a day. Runbook §20.
 - **40 exits:** the owner's new list, two logins per port; still with `worker.workers=10` and

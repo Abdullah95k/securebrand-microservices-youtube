@@ -1,6 +1,6 @@
 # yts status
 
-The current state of the YouTube collector, for the owner and the master session. Updated **14 November 2026, 05:20 Iraq time** (02:20Z).
+The current state of the YouTube collector, for the owner and the master session. Updated **14 November 2026, 06:10 Iraq time** (03:10Z).
 
 ## Where it stands
 
@@ -8,8 +8,10 @@ The current state of the YouTube collector, for the owner and the master session
   quarantine rule: one block of any kind on 3 different UTC days within a week set an IP aside for good. The pilot ran across
   7, 8 and 9 November, so its 47 player blocks in about 393,000 requests took all 10 IPs. The exits themselves were fine.
   The master restarted the worker at 21:09Z on 10 November, which cleared it.
-- **Live since 14 November, 04:56 Iraq time (01:56Z): `cb85201`** (platform PR 164, suggested videos in discovery), on
-  40 exits. Before it: `f23914d` from 03:34 Iraq time (00:34Z, platform PR 158), the first on 40 exits, after `7b6c997`
+- **Live since 14 November, about 05:33 Iraq time (02:33Z): `beb6636`** (the scheduler keeps its tasks' last runs), on
+  40 exits; `3ce6d20` (incident switches, lighter commenter graph) is being deployed in platform PR 169 with three daily
+  tasks paused. Before them: `cb85201` from 04:56 Iraq time (01:56Z, platform PR 164, suggested videos in discovery).
+  Before it: `f23914d` from 03:34 Iraq time (00:34Z, platform PR 158), the first on 40 exits, after `7b6c997`
   (the player-length fill rate, PR 155). Before them: **`8762275` from 13 November, 19:03 Iraq time** (platform PR 148), on the
   10 IPs, with two overrides until
   the new IPs come: `worker.workers=10` and `worker.mediaHold={thumb,author_avatar}`. So on 10 IPs it adds Facebook discovery
@@ -39,14 +41,27 @@ The current state of the YouTube collector, for the owner and the master session
   and make sure its all smooth"; on 14 November the proxy list was replaced with 40 exits (`yt_proxies_total` 40). The
   two overrides (`worker.workers=10`, `worker.mediaHold={thumb,author_avatar}`) stay until PostgreSQL has at least
   100 GB free; they go together.
-- **Open: the capacity plan still counts 10 exits** (supply 9,333 an hour, stretch 8, at 02:05Z). The gauges show the
-  newest saved plan. The likely cause is that the scheduler runs its daily tasks first after each restart (00:34Z,
-  01:56Z), which delays the hourly plan. A failing plan run is the other possibility. Asked the master for the plan rows,
-  the workers' announcements and the scheduler log. **Built with the master's yes (02:14Z):** the scheduler keeps each
-  task's last run across restarts and runs due tasks the shortest period first, so a deploy no longer re-runs the daily
-  and weekly tasks or delays the hourly plan; a new metric gives the newest plan's time, and the alert CapacityPlanStale
-  fires when it is over 2 hours old (runbook §7). Meanwhile the stretch stays at 8, which is safe: tiers C, D and M are
-  only refreshed less often.
+- **The capacity plan counts 40 exits again** (fixed by `beb6636`, PR 105). After each restart the scheduler had re-run
+  its daily tasks before the hourly plan, so the plan stayed at 10 exits after the move to 40 (the worst monitor gap was
+  28 minutes). Since `beb6636` the scheduler keeps each task's last run across restarts and runs due tasks with the
+  shortest period first. Its first plan, at about 05:33 Iraq time, counted 37,333 requests an hour; the stretch then
+  came down to 5.33 and keeps falling by up to 1.5 times an hour. New alert: CapacityPlanStale (plan over 2 hours old).
+- **Incident, 14 November from about 05:20 Iraq time (02:20Z): the shared PostgreSQL restarted** (about 02:37Z and
+  02:51Z), and pods of all four collectors were unready. The cause isn't known yet: only the owner's DigitalOcean console
+  shows PostgreSQL's log. The master's prime suspect is tks's catch-up job, so the master stopped tks's scheduler.
+  Data on disk is 45.1 GB of 200 GB (yts 6.8 GB), so disk space for data isn't the cause. yts's part:
+  - three deploys in two hours each re-ran yts's daily tasks; the heaviest, the commenter graph, rewrote its whole
+    table (0.21 GB) each time. Since `beb6636` deploys no longer re-run them.
+  - `3ce6d20` (PR 106) adds incident switches: `scheduler.pauseTasks` and `scheduler.replicas: 0` (runbook §7). It also
+    makes the commenter graph write only changed pairs. The master is deploying it with the commenter graph, privacy
+    audit and enrichment order paused until PostgreSQL is stable.
+- **For the owner (not urgent): the outbox is yts's biggest table**, 4.6 GB of yts's 6.8 GB. The relay is off (no Kafka
+  yet), so every content event waits there, and with 40 exits it grows about 2–4 times faster. Options:
+  - (a) turn the relay on when Kafka is ready, so the outbox drains;
+  - (b) while the relay is off, keep only the newest unsent event per entity. Every reading stays in the snapshot
+    tables, so no data is lost, but Kafka would get the latest state rather than every step;
+  - (c) keep it and plan the disk for it.
+  yts suggests (b) until Kafka is there; it changes what the relay will publish, so it is the owner's decision.
 - **The owner, 14 November: "add the suggested videos to the discovery as well".** Built: channels of suggested videos
   whose titles match the Iraq keywords become discovery candidates, at most 500 a day. Runbook §20.
 - **40 exits:** the owner's new list, two logins per port; still with `worker.workers=10` and

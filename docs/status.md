@@ -42,8 +42,10 @@ The current state of the YouTube collector, for the owner and the master session
 - **Open: the capacity plan still counts 10 exits** (supply 9,333 an hour, stretch 8, at 02:05Z). The gauges show the
   newest saved plan. The likely cause is that the scheduler runs its daily tasks first after each restart (00:34Z,
   01:56Z), which delays the hourly plan. A failing plan run is the other possibility. Asked the master for the plan rows,
-  the workers' announcements and the scheduler log. Proposed: keep each scheduler task's last run across restarts, and
-  alert when the newest plan is over 2 hours old. Meanwhile the stretch stays at 8, which is safe: tiers C, D and M are
+  the workers' announcements and the scheduler log. **Built with the master's yes (02:14Z):** the scheduler keeps each
+  task's last run across restarts and runs due tasks the shortest period first, so a deploy no longer re-runs the daily
+  and weekly tasks or delays the hourly plan; a new metric gives the newest plan's time, and the alert CapacityPlanStale
+  fires when it is over 2 hours old (runbook §7). Meanwhile the stretch stays at 8, which is safe: tiers C, D and M are
   only refreshed less often.
 - **The owner, 14 November: "add the suggested videos to the discovery as well".** Built: channels of suggested videos
   whose titles match the Iraq keywords become discovery candidates, at most 500 a day. Runbook §20.
@@ -254,6 +256,10 @@ secret. The owner starts and stops the pilot; I give the commands, one per step,
 **Still open with the platform:** the proxy exits' addresses, once they are bought.
 
 **Changes to report (additions only):**
+- The scheduler's last runs (14 November, with the master's yes): new settings rows `scheduler/last/<task>` (yts's own) for
+  the tasks an hour or more apart; a restart no longer re-runs the daily and weekly tasks (so the tiers are recomputed
+  weekly as planned, not at every deploy). New metric `yt_capacity_report_timestamp_seconds`, new alert
+  `CapacityPlanStale` (24 alerts now).
 - Suggested videos in discovery (the owner, 14 November): the watch page's side list is parsed (no extra request); a
   suggestion matching the Iraq keywords from an unknown channel becomes a candidate with the new source value `suggested`
   (`candidates.sources`, no schema change), at most 500 a day (`worker.suggestedDaily`, `-suggested-daily`). New metric

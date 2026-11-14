@@ -13,7 +13,7 @@ The Helm chart for the YouTube collector (REQ-010 fix 14). Docker Compose on one
 | `yts-relay` Deployment | Publishes the outbox to the platform's Kafka: the contract's `content.*` messages (checked) and yts's `yt.*` messages, one transaction per batch (fix 12) | Off until Kafka is there (the pilot runs without it); then **1**, `Recreate` (one sends at a time) |
 | `yts-migrate` Job | The migrations, a hook before every install and upgrade, then the grants for the app and read-only roles | — |
 | ServiceMonitor | Scrapes `/metrics` on the worker (`:9101`), the scheduler (`:9102`) and the relay (`:9103`) | — |
-| PrometheusRule | The 23 alerts of `deploy/prometheus/alerts.yml`, each with a runbook link | — |
+| PrometheusRule | The 24 alerts of `deploy/prometheus/alerts.yml`, each with a runbook link | — |
 | NetworkPolicy | In: the monitoring namespace on the ops ports. Out: DNS; HTTPS; the managed PostgreSQL and Kafka in the VPC (`10.30.0.0/16`, London) on the ports read from `platform-credentials` at install, or given in the values (`5432`, `25073`) when the chart is rendered without the cluster (Argo CD); the schema registry (namespace `platform`, `app: schema-registry`, port 8080); the proxy exits on the ports read from `proxies.yaml` at install | — |
 
 Every pod runs as user and group 65532, never root, with a read-only root filesystem, no capabilities and no service-account

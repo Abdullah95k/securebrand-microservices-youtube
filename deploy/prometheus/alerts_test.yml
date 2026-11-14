@@ -114,3 +114,31 @@ tests:
               summary: "2 image(s) still stored past their deadline"
               description: "The relay could not delete them (its log: 'deleting an analysed file failed'), or it is stopped; yt_media_delete_failures_total counts the failures."
               runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#17-the-media-hand-off"
+  # The capacity plan: made an hour ago never fires; none for over 2 hours
+  # fires after 10 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'yt_capacity_report_timestamp_seconds'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 115m
+        alertname: CapacityPlanStale
+        exp_alerts: []
+      - eval_time: 125m
+        alertname: CapacityPlanStale
+        exp_alerts: []
+      - eval_time: 135m
+        alertname: CapacityPlanStale
+        exp_alerts:
+          - exp_annotations:
+              summary: "The newest capacity plan is over 2 hours old: the stretch and the IP advice are out of date"
+              description: "The planner runs hourly in the scheduler. Look in the scheduler's log for 'scheduler task failed' with task=capacity."
+              runbook_url: "https://github.com/Abdullah95k/securebrand-microservices-youtube/blob/main/docs/production-runbook.md#7-watching-it"
+  - interval: 1m
+    input_series:
+      - series: 'yt_capacity_report_timestamp_seconds'
+        values: '0+60x200'
+    alert_rule_test:
+      - eval_time: 190m
+        alertname: CapacityPlanStale
+        exp_alerts: []
